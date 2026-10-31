@@ -5,6 +5,22 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.1.1] - 2026-10-31
+
+### Ajouté
+- **Origine et Demandeur des films/séries (`sourceOrigin` & `requestedByDisplayName`)** :
+  - Distinction explicite entre une demande effectuée par un **utilisateur Overseerr** (`sourceOrigin: 'overseerr_user'`, ex: *« Demandé par jsuzanne le 31 octobre 2026 »*) et un film ajouté automatiquement via une **liste d'import Radarr/Sonarr** (`sourceOrigin: 'auto_list'`, ex: *« Ajouté automatiquement (liste) le 25 octobre 2026 »*).
+  - Résolution enrichie du nom d'utilisateur Overseerr (`plexUsername`, `displayName`, `username`, cache d'utilisateurs Overseerr par `id` ou préfixe d'email) dans `OverseerrConnector.getMediaDetail` et `getRequests`.
+  - Affichage du demandeur ou de l'origine automatique sur les fiches visuelles (`MediaCandidateCard.tsx`) ainsi que dans les réponses de l'assistant.
+
+### Corrigé
+- **Fin des listes de films systématiques dans les réponses de l'assistant (`DeepSeekOrchestratorService`)** :
+  - Suppression du ré-attachement automatique des cartes du tour précédent lorsque aucun outil média n'est appelé (`toolRounds === 0`), évitant d'afficher des fiches de films sous une réponse conversationnelle ou une question sur les accès serveurs.
+  - Ajout du paramètre `limit` sur `discover_and_recommend_media` et consignes explicites Singulier vs Pluriel dans `STATIC_FRENCH_SYSTEM_PROMPT` (*« conseille-moi un film »* ou *« quel est le dernier film ajouté »* renvoie désormais **1 seul film** au lieu d'une liste de 5).
+  - Désambiguïsation automatique des homonymes par année dans `filterRelevantCardsForReply` (ex: *Le Comte de Monte-Cristo (2024)* n'affiche plus simultanément les adaptations de 1954 et 1975 lorsque seule la version 2024 est citée).
+
+---
+
 ## [1.1.0] - 2026-10-31
 
 ### Ajouté

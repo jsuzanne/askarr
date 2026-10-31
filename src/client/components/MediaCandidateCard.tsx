@@ -145,6 +145,14 @@ export const MediaCandidateCard: React.FC<Props> = ({
   const requestedOrAddedDateFr = formatDateFr(
     localEvidence.requestState.requestedAt || acquisitionPipeline.addedAt || null
   );
+  const requesterName = localEvidence.requestState.requestedByDisplayName || null;
+  const sourceOrigin =
+    localEvidence.requestState.sourceOrigin ||
+    (requesterName
+      ? 'overseerr_user'
+      : acquisitionPipeline.state !== 'not_in_arr' && acquisitionPipeline.state !== 'unknown'
+        ? 'auto_list'
+        : null);
   const todayIso = new Date().toISOString().slice(0, 10);
   const isVodFuture = Boolean(
     identity.releaseDates.estimatedVodOrDvdDate && identity.releaseDates.estimatedVodOrDvdDate > todayIso
@@ -431,19 +439,46 @@ export const MediaCandidateCard: React.FC<Props> = ({
                   </span>
                 </div>
               )}
+
+            {requesterName && (
+              <div className="inline-flex items-center gap-1.5 text-xs text-amber-200/90 font-medium">
+                <Clock className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span>
+                  Demandé par <strong>{requesterName}</strong>
+                  {requestedOrAddedDateFr ? ` le ${requestedOrAddedDateFr}` : ''}
+                </span>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Dates de demande / sortie Cinéma / VOD / DVD si pas encore sur Plex */}
-        {catalogPresence.state !== 'available_now' && (requestedOrAddedDateFr || cinemaDateFr || vodDateFr) && (
-          <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-stone-200 bg-black/50 rounded-xl px-3.5 py-2 border border-amber-500/20">
-            {requestedOrAddedDateFr && (
-              <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
-                <Clock className="h-4 w-4 text-amber-400 shrink-0" />
-                <span>Demandé / mis en attente le : {requestedOrAddedDateFr}</span>
-              </span>
-            )}
-            {cinemaDateFr && (
+        {/* Origine de la demande / liste automatique & dates Cinéma / VOD / DVD si pas encore sur Plex */}
+        {catalogPresence.state !== 'available_now' &&
+          (requesterName || sourceOrigin === 'auto_list' || requestedOrAddedDateFr || cinemaDateFr || vodDateFr) && (
+            <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-stone-200 bg-black/50 rounded-xl px-3.5 py-2 border border-amber-500/20">
+              {requesterName ? (
+                <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
+                  <Clock className="h-4 w-4 text-amber-400 shrink-0" />
+                  <span>
+                    Demandé par <strong>{requesterName}</strong>
+                    {requestedOrAddedDateFr ? ` le ${requestedOrAddedDateFr}` : ''}
+                  </span>
+                </span>
+              ) : sourceOrigin === 'auto_list' ? (
+                <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
+                  <Clock className="h-4 w-4 text-amber-400 shrink-0" />
+                  <span>
+                    Ajouté automatiquement (liste)
+                    {requestedOrAddedDateFr ? ` le ${requestedOrAddedDateFr}` : ''}
+                  </span>
+                </span>
+              ) : requestedOrAddedDateFr ? (
+                <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
+                  <Clock className="h-4 w-4 text-amber-400 shrink-0" />
+                  <span>Demandé / mis en attente le : {requestedOrAddedDateFr}</span>
+                </span>
+              ) : null}
+              {cinemaDateFr && (
               <span className="inline-flex items-center gap-1.5">
                 <Clapperboard className="h-4 w-4 text-red-400 shrink-0" />
                 <span>Sortie en salle : {cinemaDateFr}</span>

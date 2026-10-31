@@ -103,6 +103,12 @@ export class MediaAggregatorService {
     includeSeasons?: boolean;
     checkIndexers?: boolean;
     knownPlexHint?: { serverNames: string[]; libraryTitle?: string };
+    knownRequestHint?: {
+      requestId: number;
+      requestedAt: string | null;
+      requestedByEmail: string | null;
+      requestedByDisplayName: string | null;
+    };
   }): Promise<MediaEvidence> {
     const provenance: ProvenanceEntry[] = [];
 
@@ -337,9 +343,15 @@ export class MediaAggregatorService {
       reqState = 'pending_approval';
     }
 
+    const effectiveRequestId = osDetail.requestInfo.latestRequestId ?? params.knownRequestHint?.requestId ?? null;
+    const effectiveRequestedByEmail =
+      osDetail.requestInfo.requestedByEmail || params.knownRequestHint?.requestedByEmail || null;
+    const effectiveRequestedBy =
+      osDetail.requestInfo.requestedByDisplayName || params.knownRequestHint?.requestedByDisplayName || null;
+
     const requestedByCurrentUser = Boolean(
       (params.currentUserOverseerrId && osDetail.requestInfo.requestedByUserId === params.currentUserOverseerrId) ||
-        (params.currentUserEmail && osDetail.requestInfo.requestedByEmail === params.currentUserEmail.toLowerCase())
+        (params.currentUserEmail && effectiveRequestedByEmail === params.currentUserEmail.toLowerCase())
     );
 
     // 6. Pipeline d'acquisition Radarr / Sonarr
@@ -520,7 +532,15 @@ export class MediaAggregatorService {
       episodeCoverage?.seasons.filter((s) => s.state === 'not_requested').map((s) => s.seasonNumber) || [];
 
     const arrAddedAt = radarrMovie?.added || sonarrSeries?.added || null;
-    const effectiveRequestedAt = osDetail.requestInfo.requestedAt || arrAddedAt || null;
+    const overseerrRequestedAt = osDetail.requestInfo.requestedAt || params.knownRequestHint?.requestedAt || null;
+    const effectiveRequestedAt = overseerrRequestedAt || arrAddedAt || null;
+    const hasOverseerrRequest =
+      effectiveRequestId !== null || effectiveRequestedBy !== null || overseerrRequestedAt !== null;
+    const sourceOrigin: 'overseerr_user' | 'auto_list' | null = hasOverseerrRequest
+      ? 'overseerr_user'
+      : acqState !== 'not_in_arr' && acqState !== 'unknown'
+        ? 'auto_list'
+        : null;
 
     if (
       reqState === 'not_requested' &&
@@ -540,6 +560,8 @@ export class MediaAggregatorService {
       acqState,
       reqState,
       requestedAt: effectiveRequestedAt,
+      requestedByDisplayName: effectiveRequestedBy,
+      sourceOrigin,
       estimatedAvailabilityDate,
       isEstimatedDate,
       queueProgressPercent,
@@ -587,10 +609,11 @@ export class MediaAggregatorService {
       },
       requestState: {
         state: reqState,
-        requestId: osDetail.requestInfo.latestRequestId,
+        requestId: effectiveRequestId,
         requestedAt: effectiveRequestedAt,
         requestedByCurrentUser,
-        requestedByDisplayName: osDetail.requestInfo.requestedByDisplayName
+        requestedByDisplayName: effectiveRequestedBy,
+        sourceOrigin
       },
       acquisitionPipeline: {
         state: acqState,
@@ -621,6 +644,8 @@ export class MediaAggregatorService {
     acqState: MediaEvidence['acquisitionPipeline']['state'];
     reqState: MediaEvidence['requestState']['state'];
     requestedAt?: string | null;
+    requestedByDisplayName?: string | null;
+    sourceOrigin?: 'overseerr_user' | 'auto_list' | null;
     estimatedAvailabilityDate: string | null;
     isEstimatedDate: boolean;
     queueProgressPercent: number | null;
@@ -650,6 +675,10 @@ export class MediaAggregatorService {
         ? `Bibliothèque « ${firstMatch.libraryTitle} » (serveurs Plex : ${serversList})`
         : `Bibliothèque « ${firstMatch.libraryTitle} » (serveur Plex : ${firstMatch.serverName})`;
 
+      const requesterNote = params.requestedByDisplayName
+        ? ` (Demandé par ${params.requestedByDisplayName})`
+        : '';
+
       return {
         canRequestNow: false,
         requestableSeasons: [],
@@ -657,7 +686,7 @@ export class MediaAggregatorService {
         userFriendlyStatusLabel: firstMatch.isSharedAcrossAllServers
           ? `Disponible sur Plex (${firstMatch.libraryTitle} • ${serversList})`
           : `Disponible sur Plex (${firstMatch.libraryTitle} • ${firstMatch.serverName})`,
-        userFriendlyExplanationFr: `Ce titre est déjà disponible sur Plex dans la ${locationText}.`,
+        userFriendlyExplanationFr: `Ce titre est déjà disponible sur Plex dans la ${locationText}.${requesterNote}`,
         statusTone: 'emerald'
       };
     }
@@ -695,17 +724,30 @@ export class MediaAggregatorService {
       const dateFr = formatFrenchDate(params.estimatedAvailabilityDate);
       const addedFr = formatFrenchDate(params.requestedAt ?? null);
       const estPrefix = params.isEstimatedDate ? 'Sortie VOD/DVD estimée vers le ' : 'Sortie VOD/DVD prévue le ';
-      const addedSuffix = addedFr ? ` • demandé le ${addedFr}` : '';
+      const originBadge = params.requestedByDisplayName
+        ? ` • demandé par ${params.requestedByDisplayName}${addedFr ? ` le ${addedFr}` : ''}`
+        : params.sourceOrigin === 'auto_list'
+          ? ` • ajouté auto (liste)${addedFr ? ` le ${addedFr}` : ''}`
+          : addedFr
+            ? ` • demandé le ${addedFr}`
+            : '';
+      const originPhrase = params.requestedByDisplayName
+        ? `demandé par ${params.requestedByDisplayName}${addedFr ? ` le ${addedFr}` : ''}`
+        : params.sourceOrigin === 'auto_list'
+          ? `ajouté automatiquement via une liste${addedFr ? ` le ${addedFr}` : ''}`
+          : addedFr
+            ? `programmé depuis le ${addedFr}`
+            : `programmé dans la liste d'attente`;
       return {
         canRequestNow: false,
         requestableSeasons: [],
         blockReason: 'ALREADY_REQUESTED_OR_MONITORED',
         userFriendlyStatusLabel: dateFr
-          ? `Dans la liste d'attente (${estPrefix}${dateFr}${addedSuffix})`
-          : `Dans la liste d'attente (en attente de sortie VOD/DVD${addedSuffix})`,
+          ? `Dans la liste d'attente (${estPrefix}${dateFr}${originBadge})`
+          : `Dans la liste d'attente (en attente de sortie VOD/DVD${originBadge})`,
         userFriendlyExplanationFr: dateFr
-          ? `Pas encore sur Plex, mais déjà programmé dans la liste d'attente${addedFr ? ` depuis le ${addedFr}` : ''} ! ${estPrefix}${dateFr} : il sera ajouté automatiquement dès sa disponibilité.`
-          : `Pas encore sur Plex, mais déjà programmé dans la liste d'attente${addedFr ? ` depuis le ${addedFr}` : ''} en attendant sa sortie numérique ou DVD.`,
+          ? `Pas encore sur Plex, mais déjà dans la liste d'attente (${originPhrase}) ! ${estPrefix}${dateFr} : il sera ajouté automatiquement dès sa disponibilité.`
+          : `Pas encore sur Plex, mais déjà dans la liste d'attente (${originPhrase}) en attendant sa sortie numérique ou DVD.`,
         statusTone: 'amber'
       };
     }
@@ -717,14 +759,21 @@ export class MediaAggregatorService {
     ) {
       const addedFr = formatFrenchDate(params.requestedAt ?? null);
       const dateFr = formatFrenchDate(params.estimatedAvailabilityDate);
+      const originShort = params.requestedByDisplayName
+        ? `demandé par ${params.requestedByDisplayName}${addedFr ? ` le ${addedFr}` : ''}`
+        : params.sourceOrigin === 'auto_list'
+          ? `ajouté auto (liste)${addedFr ? ` le ${addedFr}` : ''}`
+          : addedFr
+            ? `demandé le ${addedFr}`
+            : '';
       return {
         canRequestNow: false,
         requestableSeasons: [],
         blockReason: 'ALREADY_REQUESTED_OR_MONITORED',
-        userFriendlyStatusLabel: addedFr
-          ? `Déjà en liste d'attente (demandé le ${addedFr} • recherche auto)`
+        userFriendlyStatusLabel: originShort
+          ? `Déjà en liste d'attente (${originShort} • recherche auto)`
           : `Déjà demandé (en recherche automatique)`,
-        userFriendlyExplanationFr: `Ce titre n'est pas encore sur Plex, mais il est déjà dans la liste d'attente${addedFr ? ` (demandé le ${addedFr})` : ''}${dateFr ? ` — sortie VOD/DVD vers le ${dateFr}` : ''} et le serveur le recherche automatiquement.`,
+        userFriendlyExplanationFr: `Ce titre n'est pas encore sur Plex, mais il est déjà dans la liste d'attente${originShort ? ` (${originShort})` : ''}${dateFr ? ` — sortie VOD/DVD vers le ${dateFr}` : ''} et le serveur le recherche automatiquement.`,
         statusTone: 'amber'
       };
     }
@@ -900,9 +949,11 @@ export class MediaAggregatorService {
     plexLibraryFilter?: string;
     personFilter?: string;
     yearFilter?: number;
+    limit?: number;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
   }): Promise<MediaEvidence[]> {
+    const requestedLimit = params.limit && params.limit > 0 ? Math.min(8, params.limit) : undefined;
     if (params.scope === 'on_plex_now' || params.plexLibraryFilter) {
       const plexDisc = await this.plex.discoverOnPlex({
         mediaType: params.mediaType,
@@ -911,7 +962,7 @@ export class MediaAggregatorService {
         libraryFilter: params.plexLibraryFilter,
         personFilter: params.personFilter,
         yearFilter: params.yearFilter,
-        limit: 5
+        limit: requestedLimit ?? 5
       });
 
       const configuredServers =
@@ -1052,7 +1103,7 @@ export class MediaAggregatorService {
       if (aboveRating.length > 0) candidates = aboveRating;
     }
 
-    const top = candidates.slice(0, 4);
+    const top = candidates.slice(0, requestedLimit ?? 4);
     return Promise.all(
       top.map((c) =>
         this.buildMediaEvidence({
@@ -1082,7 +1133,21 @@ export class MediaAggregatorService {
         : Promise.resolve({ movies: [] as RadarrMovieStatus[], latencyMs: 0 })
     ]);
 
-    const merged = new Map<string, { tmdbId: number; mediaType: MediaType; addedAt: string; isWaitingHint: boolean }>();
+    const merged = new Map<
+      string,
+      {
+        tmdbId: number;
+        mediaType: MediaType;
+        addedAt: string;
+        isWaitingHint: boolean;
+        knownRequestHint?: {
+          requestId: number;
+          requestedAt: string | null;
+          requestedByEmail: string | null;
+          requestedByDisplayName: string | null;
+        };
+      }
+    >();
 
     if (radarrWaitingRes.status === 'fulfilled') {
       for (const m of radarrWaitingRes.value.movies) {
@@ -1103,15 +1168,25 @@ export class MediaAggregatorService {
         const key = `${r.mediaType}:${r.tmdbId}`;
         const existing = merged.get(key);
         const createdIso = r.createdAt ? r.createdAt.slice(0, 10) : '';
+        const reqHint = {
+          requestId: r.requestId,
+          requestedAt: r.createdAt,
+          requestedByEmail: r.requestedByEmail,
+          requestedByDisplayName: r.requestedByDisplayName
+        };
         if (!existing) {
           merged.set(key, {
             tmdbId: r.tmdbId,
             mediaType: r.mediaType,
             addedAt: createdIso,
-            isWaitingHint: r.mediaStatus !== 5
+            isWaitingHint: r.mediaStatus !== 5,
+            knownRequestHint: reqHint
           });
-        } else if (createdIso && (!existing.addedAt || createdIso > existing.addedAt)) {
-          existing.addedAt = createdIso;
+        } else {
+          existing.knownRequestHint = reqHint;
+          if (createdIso && (!existing.addedAt || createdIso > existing.addedAt)) {
+            existing.addedAt = createdIso;
+          }
         }
       }
     }
@@ -1130,7 +1205,8 @@ export class MediaAggregatorService {
             currentUserEmail: params.currentUserEmail,
             currentUserOverseerrId: params.currentUserOverseerrId,
             includeSeasons: item.mediaType === 'tv',
-            checkIndexers: false
+            checkIndexers: false,
+            knownRequestHint: item.knownRequestHint
           });
         } catch {
           return null;

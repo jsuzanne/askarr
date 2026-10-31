@@ -92,7 +92,93 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
     expect(ev.identity.topCast).toContain('Pierre Niney');
     expect(ev.identity.releaseDates.digitalRelease).toBe('2026-10-24');
     expect(ev.identity.releaseDates.physicalRelease).toBe('2026-11-06');
-    expect(ev.actionability.userFriendlyStatusLabel).toContain('Dans la liste d\'attente');
+    expect(ev.requestState.sourceOrigin).toBe('overseerr_user');
+    expect(ev.requestState.requestedByDisplayName).toBe('Alice');
+    expect(ev.actionability.userFriendlyStatusLabel).toContain("Dans la liste d'attente");
+    expect(ev.actionability.userFriendlyStatusLabel).toContain('demandé par Alice');
+  });
+
+  it('T-AGG-03: distinguishes a movie added automatically via a Radarr import list (auto_list) from an Overseerr user request', async () => {
+    const mockPlex = {
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'not_in_catalog',
+        serversQueried: ['NucVillers'],
+        matchedDetails: [],
+        matchedItems: [],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    const mockOverseerr = {
+      getMediaDetail: vi.fn().mockResolvedValue({
+        tmdbId: 777333,
+        mediaType: 'movie',
+        tvdbId: null,
+        imdbId: null,
+        titleFr: 'Dune : Troisième Partie',
+        originalTitle: 'Dune: Part Three',
+        year: 2026,
+        overviewFr: 'Suite de Dune.',
+        posterUrl: null,
+        genres: ['Science-Fiction'],
+        runtimeMinutes: 165,
+        voteAverage: 8.6,
+        directorOrCreator: 'Denis Villeneuve',
+        topCast: ['Timothée Chalamet'],
+        tmdbReleases: {
+          inCinemas: '2026-12-16',
+          digitalRelease: null,
+          physicalRelease: null
+        },
+        totalSeasons: 0,
+        seasonsMeta: [],
+        requestInfo: {
+          mediaStatus: null,
+          latestRequestId: null,
+          latestRequestStatus: null,
+          requestedAt: null,
+          requestedByUserId: null,
+          requestedByEmail: null,
+          requestedByDisplayName: null,
+          requestedSeasons: []
+        }
+      })
+    } as unknown as OverseerrConnector;
+
+    const mockRadarr = {
+      getMovieByTmdbId: vi.fn().mockResolvedValue({
+        movie: {
+          id: 99,
+          tmdbId: 777333,
+          title: 'Dune: Part Three',
+          monitored: true,
+          hasFile: false,
+          added: '2026-10-25',
+          status: 'announced',
+          inCinemas: '2026-12-16',
+          digitalRelease: null,
+          physicalRelease: null
+        }
+      }),
+      getQueueForMovie: vi.fn().mockResolvedValue(null)
+    } as unknown as RadarrConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      mockRadarr,
+      {} as unknown as SonarrConnector,
+      {} as unknown as ProwlarrConnector
+    );
+
+    const ev = await aggregator.buildMediaEvidence({
+      tmdbId: 777333,
+      mediaType: 'movie'
+    });
+
+    expect(ev.requestState.sourceOrigin).toBe('auto_list');
+    expect(ev.requestState.requestedByDisplayName).toBeNull();
+    expect(ev.actionability.userFriendlyStatusLabel).toContain('ajouté auto (liste)');
   });
 
   it('T-AGG-02: applies +120 days heuristic when a movie only has a theatrical release date', async () => {

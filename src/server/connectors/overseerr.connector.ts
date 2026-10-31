@@ -438,6 +438,23 @@ export class OverseerrConnector {
     const requests = (mediaInfo.requests as Array<Record<string, unknown>> | undefined) || [];
     const latestReq = requests[requests.length - 1];
     const reqBy = (latestReq?.requestedBy as Record<string, unknown> | undefined) || {};
+    const reqById = typeof reqBy.id === 'number' ? reqBy.id : null;
+    const reqByEmail = typeof reqBy.email === 'string' ? reqBy.email.toLowerCase() : null;
+    const cachedUser =
+      reqById !== null && this.usersCache
+        ? this.usersCache.users.find((u) => u.id === reqById)
+        : undefined;
+    const emailPrefix = (reqByEmail || cachedUser?.email || '').split('@')[0] || '';
+    const resolvedRequesterName =
+      String(
+        reqBy.plexUsername ||
+          reqBy.displayName ||
+          reqBy.username ||
+          cachedUser?.plexUsername ||
+          cachedUser?.displayName ||
+          emailPrefix ||
+          ''
+      ).trim() || null;
 
     const mediaInfoSeasons = (mediaInfo.seasons as Array<{ seasonNumber?: number; status?: number }> | undefined) || [];
     const statusBySeason = new Map<number, number>();
@@ -489,9 +506,9 @@ export class OverseerrConnector {
         latestRequestId: typeof latestReq?.id === 'number' ? latestReq.id : null,
         latestRequestStatus: typeof latestReq?.status === 'number' ? latestReq.status : null,
         requestedAt: typeof latestReq?.createdAt === 'string' ? latestReq.createdAt : null,
-        requestedByUserId: typeof reqBy.id === 'number' ? reqBy.id : null,
-        requestedByEmail: typeof reqBy.email === 'string' ? reqBy.email.toLowerCase() : null,
-        requestedByDisplayName: String(reqBy.plexUsername || reqBy.displayName || '') || null,
+        requestedByUserId: reqById,
+        requestedByEmail: reqByEmail || cachedUser?.email || null,
+        requestedByDisplayName: resolvedRequesterName,
         requestedSeasons: Array.from(new Set(requestedSeasons))
       }
     };
@@ -609,6 +626,8 @@ export class OverseerrConnector {
     return (data.results || []).map((r) => {
       const media = (r.media as Record<string, unknown> | undefined) || {};
       const reqBy = (r.requestedBy as Record<string, unknown> | undefined) || {};
+      const reqByEmail = typeof reqBy.email === 'string' ? reqBy.email.toLowerCase() : null;
+      const emailPrefix = reqByEmail ? reqByEmail.split('@')[0] : '';
       const seasons = ((r.seasons as Array<{ seasonNumber?: number }> | undefined) || [])
         .map((s) => Number(s.seasonNumber || 0))
         .filter((n) => n > 0);
@@ -619,8 +638,10 @@ export class OverseerrConnector {
         mediaType: r.type === 'tv' ? 'tv' : 'movie',
         tmdbId: Number(media.tmdbId || 0),
         mediaStatus: Number(media.status || 1),
-        requestedByEmail: typeof reqBy.email === 'string' ? reqBy.email.toLowerCase() : null,
-        requestedByDisplayName: String(reqBy.plexUsername || reqBy.displayName || 'Ami'),
+        requestedByEmail: reqByEmail,
+        requestedByDisplayName: String(
+          reqBy.plexUsername || reqBy.displayName || reqBy.username || emailPrefix || 'Ami'
+        ),
         seasons
       };
     });

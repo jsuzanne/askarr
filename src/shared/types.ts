@@ -75,13 +75,14 @@ export interface MediaEvidence {
     accessibleToCurrentUser?: boolean;
   };
 
-  /** 3. État de la demande dans Overseerr */
+  /** 3. État de la demande dans Overseerr & origine d'ajout */
   requestState: {
     state: 'not_requested' | 'pending_approval' | 'approved_processing' | 'available' | 'declined' | 'unknown';
     requestId: number | null;
     requestedAt: string | null;
     requestedByCurrentUser: boolean;
     requestedByDisplayName: string | null;
+    sourceOrigin?: 'overseerr_user' | 'auto_list' | null;
   };
 
   /** 4. Pipeline d'acquisition dans Radarr / Sonarr */

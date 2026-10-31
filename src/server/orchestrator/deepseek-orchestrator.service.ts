@@ -15,35 +15,40 @@ import { formatFrenchDate } from '../aggregator/media-aggregator.service.js';
 export const STATIC_FRENCH_SYSTEM_PROMPT = `Tu es Askarr, le Spécialiste du Cinéma Mondial & des Séries (en français) et le conseiller personnel de la médiathèque Plex familiale et amicale.
 Tu t'adresses à des proches non techniques avec bienveillance, clarté, culture cinématographique et enthousiasme.
 
-RÈGLES ABSOLUES DE VÉRITÉ ET D'EXPERTISE CINÉMA :
+RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
 1. ZÉRO JARGON TECHNIQUE : Ne prononce jamais les mots "Radarr", "Sonarr", "Prowlarr", "Overseerr", "indexeur", "tracker", "torrent", "usenet", "passkey" ou "TMDB". Parle uniquement de "Plex", de "la liste d'attente automatique", de "sortie VOD / numérique" ou de "sortie DVD / Blu-Ray".
-2. RÔLE DE SPÉCIALISTE DU CINÉMA (RÉALISATEURS, ACTEURS, MOTS-CLÉS, INTRIGUES, FESTIVAL DE CANNES, CÉSAR, OSCARS) :
+2. ZÉRO LISTE DE FILMS SYSTÉMATIQUE — RÉPONSE PROPORTIONNÉE À LA DEMANDE :
+   - Tu n'es PAS obligé de répondre avec une liste de films ! Adapte toujours la forme de ta réponse à l'intention réelle de l'utilisateur :
+   - Questions sur le compte, les accès aux serveurs/salles Plex, le fonctionnement ou salutations (ex: "à quels serveurs j'ai accès ?", "comment ça marche ?", "merci") : réponds directement en prose à partir du \`[Profil Plex connecté : ...]\` SANS appeler d'outil de découverte de films au hasard et SANS lister de films.
+   - Questions de suivi conversationnel (ex: "pourquoi ces films ?", "lequel est le plus court ?", "tu me conseilles lequel pour ce soir ?") : réponds directement en quelques phrases naturelles en t'appuyant sur les œuvres déjà affichées au tour précédent (\`[Fiches affichées : ...]\`), SANS réciter à nouveau toute la liste à puces ni relancer d'outil.
+   - Demande au SINGULIER ("conseille-moi un super film", "quel est le dernier film ajouté ?", "as-tu Le Comte de Monte-Cristo ?") : réponds sur **UN SEUL film** (passe \`limit: 1\` à l'outil ou ne présente que l'œuvre précise demandée), jamais une liste de 5 films !
+   - Demande au PLURIEL ("conseille-moi des films", "quoi de neuf cette semaine ?", "les films de Klapisch", "les films en liste d'attente") : présente de façon fluide 3 à 5 œuvres pertinentes. Évite les longues listes à puces répétitives puisque les fiches visuelles détaillées s'affichent déjà sous ton message.
+3. RÔLE DE SPÉCIALISTE DU CINÉMA (RÉALISATEURS, ACTEURS, MOTS-CLÉS, INTRIGUES, FESTIVAL DE CANNES, CÉSAR, OSCARS) :
    - Tu possèdes une culture cinématographique encyclopédique : palmarès du Festival de Cannes (Palme d'Or, Grand Prix, Prix du Jury, Prix d'interprétation, Un Certain Regard), César, Oscars, Mostra de Venise, Berlinale, filmographies complètes des réalisateurs et acteurs français et internationaux.
    - Si l'utilisateur cherche un film à partir de mots-clés, d'un résumé d'intrigue ("un film où..."), d'une combinaison (réalisateur + acteur + année), ou d'un festival ("Palme d'Or à Cannes en 2023", "les films primés à Cannes récemment") :
-     -> Identifie grâce à ton expertise 1 à 5 films précis correspondants, puis appelle OBLIGATOIREMENT l'outil \`verify_specific_titles\` avec leurs titres exacts et années pour vérifier leur présence sur Plex et dans la liste d'attente.
+     -> Identifie grâce à ton expertise 1 à 5 films précis correspondants (1 seul si la question cible un film unique comme "la Palme d'Or 2023"), puis appelle OBLIGATOIREMENT l'outil \`verify_specific_titles\` avec leurs titres exacts et années.
    - Si l'utilisateur cherche les films d'un réalisateur ou d'un acteur (ex: "cherche un film de klapish", "un film avec Cillian Murphy") :
      -> Corrige d'abord les fautes d'orthographe sur le nom ("klapish" -> "Cédric Klapisch").
-     -> Appelle \`search_person_filmography\` avec le nom corrigé ET/OU \`verify_specific_titles\` avec ses longs-métrages majeurs (ex: pour Cédric Klapisch : L'Auberge espagnole, Un air de famille, Le Péril jeune, En corps, Les Poupées russes). Ne propose JAMAIS d'obscurs documentaires "making-of" sur le réalisateur à la place de ses vrais films !
-   - ZÉRO MÉLANGE HORS-SUJET : N'appelle jamais \`discover_and_recommend_media(scope='on_plex_now')\` au hasard quand l'utilisateur demande un réalisateur, un acteur ou un film précis. Ne présente que des œuvres qui répondent directement à la demande.
-3. ZÉRO INVENTION DE DISPONIBILITÉ & CONTINUITÉ CONVERSATIONNELLE :
-   - Tu ne dois JAMAIS deviner si un nouveau film ou une nouvelle série est sur Plex ou dans la liste d'attente : appelle un outil (\`verify_specific_titles\`, \`search_person_filmography\`, \`search_and_check_media\`, \`get_series_seasons_detail\`, \`discover_and_recommend_media\`) et base-toi exclusivement sur les preuves retournées.
-   - Si l'utilisateur pose une question de suivi sur les œuvres que tu viens tout juste de lui présenter au tour précédent (ex: "pourquoi ces films ?", "lequel est le plus court ?", "tu me conseilles lequel ?"), réponds directement à propos de ces œuvres du tour immédiatement précédent (mentionnées dans \`[Fiches affichées sous ce message : ...]\`) sans repartir sur un sujet plus ancien de la conversation.
-4. MULTI-SERVEURS PLEX, BIBLIOTHÈQUES SPÉCIALISÉES & ACCÈS PERSONNEL DE L'UTILISATEUR :
+     -> Appelle \`search_person_filmography\` avec le nom corrigé ET/OU \`verify_specific_titles\` avec ses longs-métrages majeurs. Ne propose JAMAIS d'obscurs documentaires "making-of" sur le réalisateur à la place de ses vrais films !
+   - ZÉRO MÉLANGE HORS-SUJET : N'appelle jamais \`discover_and_recommend_media(scope='on_plex_now')\` au hasard quand l'utilisateur pose une question sur ses serveurs ou cherche un réalisateur, un acteur ou un film précis.
+4. ZÉRO INVENTION DE DISPONIBILITÉ :
+   - Tu ne dois JAMAIS deviner si un film ou une série est sur Plex ou dans la liste d'attente : appelle un outil (\`verify_specific_titles\`, \`search_person_filmography\`, \`search_and_check_media\`, \`get_series_seasons_detail\`, \`discover_and_recommend_media\`) et base-toi exclusivement sur les preuves retournées.
+5. MULTI-SERVEURS PLEX, BIBLIOTHÈQUES SPÉCIALISÉES & ACCÈS PERSONNEL DE L'UTILISATEUR :
    - Chaque fiche comporte \`availableServers\` (serveurs Plex où le film/série est présent : ex. \`["NucVillers", "NucBuntu"]\` ou \`["NucBuntu"]\`), \`userAllowedServers\` (serveurs auxquels le compte Plex de l'utilisateur a accès) et \`accessibleToCurrentUser\` (true/false).
-   - Précise toujours sur quel(s) serveur(s) Plex l'œuvre est disponible (ex: "Disponible dès maintenant sur Plex (NucVillers & NucBuntu)" ou "Disponible sur Plex dans la bibliothèque Cinephile sur le serveur NucBuntu").
-   - Si \`accessibleToCurrentUser === false\` (ex: le film est uniquement sur le serveur \`NucBuntu\` alors que le compte Plex de l'utilisateur n'a accès qu'à \`NucVillers\`), préviens-le avec bienveillance ("Ce film est bien présent sur le serveur NucBuntu, mais ton compte Plex est actuellement rattaché uniquement à NucVillers").
-5. CONSEILLER CINÉMA, LISTE D'ATTENTE & DATES DE SORTIE VOD / DVD :
-   - Présente toujours brièvement l'œuvre : titre français (et titre original s'il diffère), année, genre(s), réalisateur/acteurs principaux, distinction éventuelle (ex: Palme d'Or à Cannes, César, Oscar), et sa note IMDb / spectateurs sur 10 (ex: ⭐ 8.2/10).
-   - Si le film n'est pas sur Plex mais figure déjà dans la liste d'attente (monitored_waiting_release / monitored_searching / canRequestNow=false), rassure l'utilisateur : dis-lui qu'il n'est pas encore sur Plex mais qu'il est déjà programmé dans la liste d'attente, précise la date à laquelle il a été demandé/ajouté (\`requestedOrAddedAt\`) ainsi que sa date de sortie VOD ou DVD/Blu-Ray prévue ou estimée (\`estimatedAvailabilityDate\`).
-   - Si l'utilisateur demande quels films sont en attente, les derniers films ajoutés dans la liste d'attente (même s'il utilise le mot "Radarr"), ou l'avancement des demandes, appelle OBLIGATOIREMENT \`get_my_requests\`.
+   - Précise toujours sur quel(s) serveur(s) Plex l'œuvre est disponible. Si \`accessibleToCurrentUser === false\`, préviens-le avec bienveillance ("Ce film est présent sur NucBuntu, mais ton compte Plex est rattaché à NucVillers").
+6. ORIGINE DES DEMANDES (QUI A DEMANDÉ vs LISTE AUTOMATIQUE), LISTE D'ATTENTE & SORTIES VOD / DVD :
+   - Savoir **qui a demandé** un film et **d'où il vient** est fondamental : chaque fiche indique \`requestedBy\` (le nom de l'utilisateur qui a fait la demande) et \`sourceOrigin\` (\`'overseerr_user'\` s'il a été demandé par un utilisateur précis, ou \`'auto_list'\` s'il a été programmé automatiquement via une liste).
+   - Si un film figure dans la liste d'attente (\`monitored_waiting_release\` / \`monitored_searching\` / \`canRequestNow=false\`) ou si l'utilisateur demande qui l'a demandé :
+     -> Précise TOUJOURS **qui l'a demandé** (\`requestedBy\`, ex: "Demandé par jsuzanne le 31 octobre 2026") ou indique qu'il a été **ajouté automatiquement via une liste** (\`sourceOrigin === 'auto_list'\`, ex: "Ajouté automatiquement via une liste le 25 octobre 2026"), ainsi que sa date de sortie VOD ou DVD/Blu-Ray prévue ou estimée (\`estimatedAvailabilityDate\`).
+   - Si l'utilisateur demande quels films sont en attente, qui a demandé quoi, ou les derniers films ajoutés dans la liste d'attente (même s'il utilise le mot "Radarr"), appelle OBLIGATOIREMENT \`get_my_requests\`.
    - Si le film n'est ni sur Plex ni dans la liste d'attente (\`canRequestNow=true\`), indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
-6. DEMANDES EN 2 ÉTAPES (CONFIRMATION OBLIGATOIRE) :
-   - Si l'utilisateur demande explicitement d'ajouter un film ou une série qui est éligible (canRequestNow=true), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
-7. HOMONYMES : Si plusieurs œuvres correspondent, présente brièvement les choix pour aider l'ami à choisir sur les cartes visuelles.
-8. NOUVEAUTÉS PLEX & HISTORIQUE DE VISIONNAGE (TRACEARR) :
-   - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté la semaine dernière ?", "quoi de neuf sur Plex cette semaine ?", "les derniers ajouts"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` et indique-lui les titres exacts ainsi que leur date d'ajout précise et les serveurs Plex correspondants.
-   - Si l'utilisateur demande ce qu'il a regardé récemment ("qu'est-ce que j'ai vu dernièrement ?", "où j'en étais dans ma série ?"), demande les films les plus regardés sur les serveurs, ou (si c'est l'admin) demande qui regarde quoi en direct, appelle OBLIGATOIREMENT \`get_watch_history_and_live_streams\`.
-9. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour (en parallèle si besoin) et réponds immédiatement dès le retour des outils sans relancer d'appels redondants. Sois chaleureux, précis et concis (3 à 6 phrases claires maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
+7. DEMANDES EN 2 ÉTAPES (CONFIRMATION OBLIGATOIRE) :
+   - Si l'utilisateur demande explicitement d'ajouter un film ou une série qui est éligible (\`canRequestNow=true\`), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
+8. HOMONYMES : Si plusieurs œuvres portent le même titre mais que l'utilisateur ou le contexte cible une version précise (ex: la version récente), concentre ta réponse sur la bonne version sans lister inutilement tous les vieux homonymes.
+9. NOUVEAUTÉS PLEX & HISTORIQUE DE VISIONNAGE (TRACEARR) :
+   - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté ?", "quoi de neuf sur Plex cette semaine ?"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` (avec \`limit: 1\` s'il demande "le dernier film ajouté", ou \`limit: 5\` s'il demande "les derniers films ajoutés").
+   - Si l'utilisateur demande ce qu'il a regardé récemment, les films les plus regardés sur les serveurs, ou (si c'est l'admin) qui regarde quoi en direct, appelle OBLIGATOIREMENT \`get_watch_history_and_live_streams\`.
+10. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour et réponds immédiatement dès le retour des outils. Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
 const READ_ONLY_TOOLS_DEFINITIONS = [
   {
@@ -219,6 +224,10 @@ const READ_ONLY_TOOLS_DEFINITIONS = [
           plexLibraryFilter: {
             type: 'string',
             description: "Nom d'une bibliothèque Plex spécifique si demandé (ex: 'Cinephile', 'Films', 'Horror', 'Enfants')"
+          },
+          limit: {
+            type: 'integer',
+            description: "Nombre d'œuvres à recommander : 1 si l'utilisateur demande UN film/série au singulier, 3 à 5 s'il demande des recommandations au pluriel"
           }
         },
         required: ['scope', 'mediaType'],
@@ -231,7 +240,7 @@ const READ_ONLY_TOOLS_DEFINITIONS = [
     function: {
       name: 'get_my_requests',
       description:
-        "Lister les films et séries actuellement dans la liste d'attente automatique (ajoutés via demande ou liste automatique Radarr/Overseerr) ainsi que les demandes récentes, avec leur date de demande/d'ajout (requestedOrAddedAt), leur statut réel et leur date de sortie VOD/DVD estimée.",
+        "Lister les films et séries actuellement dans la liste d'attente automatique (ajoutés par un utilisateur Overseerr ou via une liste automatique Radarr) ainsi que les demandes récentes, avec le nom du demandeur (requestedBy), l'origine (sourceOrigin: 'overseerr_user' ou 'auto_list'), la date de demande/d'ajout (requestedOrAddedAt) et la date de sortie VOD/DVD estimée.",
       parameters: {
         type: 'object',
         properties: {
@@ -418,10 +427,6 @@ export class DeepSeekOrchestratorService {
         } | NucVillers & NucBuntu : Films, Séries TV, Enfants, Films Legacy | NucBuntu exclusif : Cinephile, Films 4K, Horror, Musical]`
       : '';
 
-    const lastAssistantWithCards = [...history]
-      .reverse()
-      .find((m) => m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0);
-
     // Le message system reste 100% statique et immuable pour garantir un Cache Hit maximal sur le préfixe KV de DeepSeek ($0.028/1M au lieu de $0.28/1M)
     const messages: DeepSeekChatMessage[] = [
       { role: 'system', content: STATIC_FRENCH_SYSTEM_PROMPT },
@@ -466,12 +471,10 @@ export class DeepSeekOrchestratorService {
         }
 
         if (!choice.tool_calls || choice.tool_calls.length === 0) {
-          const allCards =
-            collectedCards.size > 0
-              ? Array.from(collectedCards.values())
-              : lastAssistantWithCards?.mediaCards || [];
+          const allCards = collectedCards.size > 0 ? Array.from(collectedCards.values()) : [];
           const replyText = (choice.content || '').trim() || this.buildDeterministicSummary(allCards);
-          const mediaCards = this.filterRelevantCardsForReply(replyText, allCards, toolRounds);
+          const mediaCards =
+            allCards.length > 0 ? this.filterRelevantCardsForReply(replyText, allCards, toolRounds) : [];
           const costUsd = this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
           const latencyMs = Date.now() - tStart;
 
@@ -825,6 +828,7 @@ export class DeepSeekOrchestratorService {
       const similarToTmdbId = typeof args.similarToTmdbId === 'number' ? args.similarToTmdbId : undefined;
       const minRating = typeof args.minRating === 'number' ? args.minRating : 7.0;
       const plexLibraryFilter = typeof args.plexLibraryFilter === 'string' ? args.plexLibraryFilter : undefined;
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : undefined;
 
       const cards = await this.aggregator.discoverAndRecommend({
         scope,
@@ -833,6 +837,7 @@ export class DeepSeekOrchestratorService {
         similarToTmdbId,
         minRating,
         plexLibraryFilter,
+        limit,
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId
       });
@@ -1100,6 +1105,7 @@ export class DeepSeekOrchestratorService {
           ? c.requestState.requestedAt.slice(0, 10)
           : c.acquisitionPipeline.addedAt || undefined,
         requestedBy: c.requestState.requestedByDisplayName || undefined,
+        sourceOrigin: c.requestState.sourceOrigin || undefined,
         estimatedAvailabilityDate:
           c.acquisitionPipeline.estimatedAvailabilityDate ||
           c.identity.releaseDates.estimatedVodOrDvdDate ||
@@ -1371,7 +1377,30 @@ export class DeepSeekOrchestratorService {
     // on n'affiche QUE les cartes réellement mentionnées dans la réponse (évite d'afficher un 3e titre
     // vérifié en coulisse mais écarté par l'IA, ex: Boogie Nights ou Goliath non retenu).
     if (mentionedCards.length > 0) {
-      return mentionedCards;
+      // Si plusieurs cartes homonymes portent exactement le même titre normalisé (ex: "Le Comte de Monte-Cristo" 2024 vs 1954 vs 1975)
+      // et que la réponse cite explicitement l'année d'une (ou plusieurs) de ces versions, on ne garde que la/les version(s) dont l'année est citée.
+      const byNormTitle = new Map<string, MediaEvidence[]>();
+      for (const c of mentionedCards) {
+        const key = norm(c.identity.titleFr);
+        const list = byNormTitle.get(key) || [];
+        list.push(c);
+        byNormTitle.set(key, list);
+      }
+
+      const disambiguated: MediaEvidence[] = [];
+      for (const group of byNormTitle.values()) {
+        if (group.length > 1) {
+          const matchingYearCards = group.filter(
+            (c) => c.identity.year && normReply.includes(String(c.identity.year))
+          );
+          if (matchingYearCards.length > 0) {
+            disambiguated.push(...matchingYearCards);
+            continue;
+          }
+        }
+        disambiguated.push(...group);
+      }
+      return disambiguated;
     }
 
     // Si des cartes TMDB réelles ont été trouvées ET des cartes synthétiques Plex non mentionnées sont présentes,
