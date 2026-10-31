@@ -519,6 +519,16 @@ export class MediaAggregatorService {
     const requestableSeasons =
       episodeCoverage?.seasons.filter((s) => s.state === 'not_requested').map((s) => s.seasonNumber) || [];
 
+    const arrAddedAt = radarrMovie?.added || sonarrSeries?.added || null;
+    const effectiveRequestedAt = osDetail.requestInfo.requestedAt || arrAddedAt || null;
+
+    if (
+      reqState === 'not_requested' &&
+      (acqState === 'monitored_waiting_release' || acqState === 'monitored_searching' || acqState === 'downloading')
+    ) {
+      reqState = 'approved_processing';
+    }
+
     const actionability = this.computeUserFriendlyActionability({
       mediaType: osDetail.mediaType,
       catalogState,
@@ -529,6 +539,7 @@ export class MediaAggregatorService {
       accessibleToCurrentUser,
       acqState,
       reqState,
+      requestedAt: effectiveRequestedAt,
       estimatedAvailabilityDate,
       isEstimatedDate,
       queueProgressPercent,
@@ -577,7 +588,7 @@ export class MediaAggregatorService {
       requestState: {
         state: reqState,
         requestId: osDetail.requestInfo.latestRequestId,
-        requestedAt: osDetail.requestInfo.requestedAt,
+        requestedAt: effectiveRequestedAt,
         requestedByCurrentUser,
         requestedByDisplayName: osDetail.requestInfo.requestedByDisplayName
       },
@@ -586,6 +597,7 @@ export class MediaAggregatorService {
         externalServiceId: radarrMovie?.id || sonarrSeries?.id || null,
         monitored: radarrMovie ? radarrMovie.monitored : sonarrSeries ? sonarrSeries.monitored : null,
         hasFile: radarrMovie ? radarrMovie.hasFile : null,
+        addedAt: arrAddedAt || (effectiveRequestedAt ? effectiveRequestedAt.slice(0, 10) : null),
         estimatedAvailabilityDate,
         estimatedAvailabilityReason,
         queueProgressPercent,
@@ -608,6 +620,7 @@ export class MediaAggregatorService {
     accessibleToCurrentUser?: boolean;
     acqState: MediaEvidence['acquisitionPipeline']['state'];
     reqState: MediaEvidence['requestState']['state'];
+    requestedAt?: string | null;
     estimatedAvailabilityDate: string | null;
     isEstimatedDate: boolean;
     queueProgressPercent: number | null;
@@ -680,17 +693,19 @@ export class MediaAggregatorService {
 
     if (params.acqState === 'monitored_waiting_release') {
       const dateFr = formatFrenchDate(params.estimatedAvailabilityDate);
+      const addedFr = formatFrenchDate(params.requestedAt ?? null);
       const estPrefix = params.isEstimatedDate ? 'Sortie VOD/DVD estimée vers le ' : 'Sortie VOD/DVD prévue le ';
+      const addedSuffix = addedFr ? ` • demandé le ${addedFr}` : '';
       return {
         canRequestNow: false,
         requestableSeasons: [],
         blockReason: 'ALREADY_REQUESTED_OR_MONITORED',
         userFriendlyStatusLabel: dateFr
-          ? `Dans la liste d'attente (${estPrefix}${dateFr})`
-          : `Dans la liste d'attente (en attente de sortie VOD/DVD)`,
+          ? `Dans la liste d'attente (${estPrefix}${dateFr}${addedSuffix})`
+          : `Dans la liste d'attente (en attente de sortie VOD/DVD${addedSuffix})`,
         userFriendlyExplanationFr: dateFr
-          ? `Pas encore sur Plex, mais déjà programmé dans la liste d'attente ! ${estPrefix}${dateFr} : il sera ajouté automatiquement dès sa disponibilité.`
-          : `Pas encore sur Plex, mais déjà programmé dans la liste d'attente en attendant sa sortie numérique ou DVD.`,
+          ? `Pas encore sur Plex, mais déjà programmé dans la liste d'attente${addedFr ? ` depuis le ${addedFr}` : ''} ! ${estPrefix}${dateFr} : il sera ajouté automatiquement dès sa disponibilité.`
+          : `Pas encore sur Plex, mais déjà programmé dans la liste d'attente${addedFr ? ` depuis le ${addedFr}` : ''} en attendant sa sortie numérique ou DVD.`,
         statusTone: 'amber'
       };
     }
@@ -700,12 +715,16 @@ export class MediaAggregatorService {
       params.reqState === 'approved_processing' ||
       params.reqState === 'pending_approval'
     ) {
+      const addedFr = formatFrenchDate(params.requestedAt ?? null);
+      const dateFr = formatFrenchDate(params.estimatedAvailabilityDate);
       return {
         canRequestNow: false,
         requestableSeasons: [],
         blockReason: 'ALREADY_REQUESTED_OR_MONITORED',
-        userFriendlyStatusLabel: `Déjà demandé (en recherche automatique)`,
-        userFriendlyExplanationFr: `Ce titre n'est pas encore sur Plex, mais il est déjà dans la liste d'attente et le serveur le recherche automatiquement.`,
+        userFriendlyStatusLabel: addedFr
+          ? `Déjà en liste d'attente (demandé le ${addedFr} • recherche auto)`
+          : `Déjà demandé (en recherche automatique)`,
+        userFriendlyExplanationFr: `Ce titre n'est pas encore sur Plex, mais il est déjà dans la liste d'attente${addedFr ? ` (demandé le ${addedFr})` : ''}${dateFr ? ` — sortie VOD/DVD vers le ${dateFr}` : ''} et le serveur le recherche automatiquement.`,
         statusTone: 'amber'
       };
     }
@@ -1046,5 +1065,79 @@ export class MediaAggregatorService {
         })
       )
     );
+  }
+
+  public async getWaitingListAndRequests(params: {
+    currentUserEmail?: string;
+    currentUserOverseerrId?: number | null;
+    onlyCurrentUser?: boolean;
+    limit?: number;
+  }): Promise<MediaEvidence[]> {
+    const limit = Math.min(8, Math.max(1, params.limit || 5));
+
+    const [overseerrRes, radarrWaitingRes] = await Promise.allSettled([
+      this.overseerr.getRequests(params.onlyCurrentUser ? params.currentUserOverseerrId : undefined, 10),
+      !params.onlyCurrentUser && typeof this.radarr.getRecentWaitingMovies === 'function'
+        ? this.radarr.getRecentWaitingMovies(10)
+        : Promise.resolve({ movies: [] as RadarrMovieStatus[], latencyMs: 0 })
+    ]);
+
+    const merged = new Map<string, { tmdbId: number; mediaType: MediaType; addedAt: string; isWaitingHint: boolean }>();
+
+    if (radarrWaitingRes.status === 'fulfilled') {
+      for (const m of radarrWaitingRes.value.movies) {
+        if (!m.tmdbId || m.tmdbId <= 0) continue;
+        const key = `movie:${m.tmdbId}`;
+        merged.set(key, {
+          tmdbId: m.tmdbId,
+          mediaType: 'movie',
+          addedAt: m.added || '',
+          isWaitingHint: !m.hasFile
+        });
+      }
+    }
+
+    if (overseerrRes.status === 'fulfilled') {
+      for (const r of overseerrRes.value) {
+        if (!r.tmdbId || r.tmdbId <= 0) continue;
+        const key = `${r.mediaType}:${r.tmdbId}`;
+        const existing = merged.get(key);
+        const createdIso = r.createdAt ? r.createdAt.slice(0, 10) : '';
+        if (!existing) {
+          merged.set(key, {
+            tmdbId: r.tmdbId,
+            mediaType: r.mediaType,
+            addedAt: createdIso,
+            isWaitingHint: r.mediaStatus !== 5
+          });
+        } else if (createdIso && (!existing.addedAt || createdIso > existing.addedAt)) {
+          existing.addedAt = createdIso;
+        }
+      }
+    }
+
+    const candidates = Array.from(merged.values()).sort((a, b) => {
+      if (a.isWaitingHint !== b.isWaitingHint) return a.isWaitingHint ? -1 : 1;
+      return (b.addedAt || '').localeCompare(a.addedAt || '');
+    });
+
+    const enriched = await Promise.all(
+      candidates.slice(0, limit).map(async (item) => {
+        try {
+          return await this.buildMediaEvidence({
+            tmdbId: item.tmdbId,
+            mediaType: item.mediaType,
+            currentUserEmail: params.currentUserEmail,
+            currentUserOverseerrId: params.currentUserOverseerrId,
+            includeSeasons: item.mediaType === 'tv',
+            checkIndexers: false
+          });
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return enriched.filter((e): e is MediaEvidence => e !== null);
   }
 }

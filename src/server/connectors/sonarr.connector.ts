@@ -14,6 +14,7 @@ export interface SonarrSeriesStatus {
   year: number | null;
   status: string;
   monitored: boolean;
+  added?: string | null;
   nextAiring: string | null;
   seasons: SonarrSeasonStatus[];
 }
@@ -111,6 +112,7 @@ export class SonarrConnector {
         year: typeof raw.year === 'number' ? raw.year : null,
         status: String(raw.status || 'continuing'),
         monitored: Boolean(raw.monitored),
+        added: typeof raw.added === 'string' && raw.added.length >= 10 ? raw.added.slice(0, 10) : null,
         nextAiring: typeof raw.nextAiring === 'string' ? raw.nextAiring.slice(0, 10) : null,
         seasons
       },

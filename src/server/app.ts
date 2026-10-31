@@ -352,36 +352,23 @@ export async function createApp(deps: AppDependencies): Promise<{
     return { items: cards };
   });
 
-  // 6. Mes demandes en direct (0 token IA)
+  // 6. Mes demandes & liste d'attente en direct (0 token IA)
   app.get('/api/requests/mine', async (req) => {
     const { session } = await resolveUserSession(req);
-    const filterUserId = session.role === 'admin' ? undefined : session.overseerr.overseerrUserId;
-    const rawRequests = await overseerr.getRequests(filterUserId, 12);
-    const enriched = await Promise.all(
-      rawRequests.slice(0, 8).map(async (r) => {
-        try {
-          const evidence = await aggregator.buildMediaEvidence({
-            tmdbId: r.tmdbId,
-            mediaType: r.mediaType,
-            currentUserEmail: session.email,
-            currentUserOverseerrId: session.overseerr.overseerrUserId,
-            includeSeasons: r.mediaType === 'tv',
-            checkIndexers: false
-          });
-          return {
-            requestId: r.requestId,
-            createdAt: r.createdAt,
-            requestedByDisplayName: r.requestedByDisplayName,
-            requestedSeasons: r.seasons,
-            evidence
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
+    const items = await aggregator.getWaitingListAndRequests({
+      currentUserEmail: session.email,
+      currentUserOverseerrId: session.overseerr.overseerrUserId,
+      onlyCurrentUser: false,
+      limit: 8
+    });
     return {
-      items: enriched.filter((x) => x !== null)
+      items: items.map((evidence, idx) => ({
+        requestId: evidence.requestState.requestId || -(idx + 1),
+        createdAt: evidence.requestState.requestedAt || evidence.acquisitionPipeline.addedAt || new Date().toISOString(),
+        requestedByDisplayName: evidence.requestState.requestedByDisplayName || 'Liste auto',
+        requestedSeasons: [],
+        evidence
+      }))
     };
   });
 

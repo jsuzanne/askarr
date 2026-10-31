@@ -98,6 +98,7 @@ export interface MediaEvidence {
     externalServiceId: number | null;
     monitored: boolean | null;
     hasFile: boolean | null;
+    addedAt?: string | null;
     estimatedAvailabilityDate: string | null;
     estimatedAvailabilityReason: 'digital_release' | 'physical_release' | 'cinema_release' | 'estimated_from_cinema' | 'next_airing' | null;
     queueProgressPercent: number | null;

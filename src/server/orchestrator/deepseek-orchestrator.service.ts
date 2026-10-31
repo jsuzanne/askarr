@@ -32,10 +32,11 @@ RÈGLES ABSOLUES DE VÉRITÉ ET D'EXPERTISE CINÉMA :
    - Chaque fiche comporte \`availableServers\` (serveurs Plex où le film/série est présent : ex. \`["NucVillers", "NucBuntu"]\` ou \`["NucBuntu"]\`), \`userAllowedServers\` (serveurs auxquels le compte Plex de l'utilisateur a accès) et \`accessibleToCurrentUser\` (true/false).
    - Précise toujours sur quel(s) serveur(s) Plex l'œuvre est disponible (ex: "Disponible dès maintenant sur Plex (NucVillers & NucBuntu)" ou "Disponible sur Plex dans la bibliothèque Cinephile sur le serveur NucBuntu").
    - Si \`accessibleToCurrentUser === false\` (ex: le film est uniquement sur le serveur \`NucBuntu\` alors que le compte Plex de l'utilisateur n'a accès qu'à \`NucVillers\`), préviens-le avec bienveillance ("Ce film est bien présent sur le serveur NucBuntu, mais ton compte Plex est actuellement rattaché uniquement à NucVillers").
-5. CONSEILLER CINÉMA & DATES DE SORTIE VOD / DVD :
+5. CONSEILLER CINÉMA, LISTE D'ATTENTE & DATES DE SORTIE VOD / DVD :
    - Présente toujours brièvement l'œuvre : titre français (et titre original s'il diffère), année, genre(s), réalisateur/acteurs principaux, distinction éventuelle (ex: Palme d'Or à Cannes, César, Oscar), et sa note IMDb / spectateurs sur 10 (ex: ⭐ 8.2/10).
-   - Si le film n'est pas sur Plex mais figure déjà dans la liste d'attente (monitored_waiting_release / monitored_searching), rassure l'utilisateur : dis-lui qu'il n'est pas encore sur Plex mais qu'il est déjà programmé dans la liste d'attente, et indique sa date de sortie VOD ou DVD/Blu-Ray (ou la date estimée ~4 mois après la sortie cinéma).
-   - Si le film n'est ni sur Plex ni dans la liste d'attente, indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
+   - Si le film n'est pas sur Plex mais figure déjà dans la liste d'attente (monitored_waiting_release / monitored_searching / canRequestNow=false), rassure l'utilisateur : dis-lui qu'il n'est pas encore sur Plex mais qu'il est déjà programmé dans la liste d'attente, précise la date à laquelle il a été demandé/ajouté (\`requestedOrAddedAt\`) ainsi que sa date de sortie VOD ou DVD/Blu-Ray prévue ou estimée (\`estimatedAvailabilityDate\`).
+   - Si l'utilisateur demande quels films sont en attente, les derniers films ajoutés dans la liste d'attente (même s'il utilise le mot "Radarr"), ou l'avancement des demandes, appelle OBLIGATOIREMENT \`get_my_requests\`.
+   - Si le film n'est ni sur Plex ni dans la liste d'attente (\`canRequestNow=true\`), indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
 6. DEMANDES EN 2 ÉTAPES (CONFIRMATION OBLIGATOIRE) :
    - Si l'utilisateur demande explicitement d'ajouter un film ou une série qui est éligible (canRequestNow=true), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
 7. HOMONYMES : Si plusieurs œuvres correspondent, présente brièvement les choix pour aider l'ami à choisir sur les cartes visuelles.
@@ -229,11 +230,18 @@ const READ_ONLY_TOOLS_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'get_my_requests',
-      description: "Lister les demandes récentes de l'utilisateur et leur avancement réel.",
+      description:
+        "Lister les films et séries actuellement dans la liste d'attente automatique (ajoutés via demande ou liste automatique Radarr/Overseerr) ainsi que les demandes récentes, avec leur date de demande/d'ajout (requestedOrAddedAt), leur statut réel et leur date de sortie VOD/DVD estimée.",
       parameters: {
         type: 'object',
         properties: {
-          limit: { type: 'integer', default: 8 }
+          scope: {
+            type: 'string',
+            enum: ['all_waiting_and_recent', 'mine_only'],
+            description:
+              "'all_waiting_and_recent' (par défaut) pour voir tous les derniers films/séries en liste d'attente et demandes récentes, 'mine_only' si l'utilisateur demande uniquement ses propres demandes"
+          },
+          limit: { type: 'integer', default: 6 }
         },
         additionalProperties: false
       }
@@ -833,17 +841,26 @@ export class DeepSeekOrchestratorService {
     }
 
     if (fnName === 'get_my_requests') {
-      const reqs = await this.overseerr.getRequests(params.overseerrUserId, 6);
-      const enriched = await Promise.all(
-        reqs.slice(0, 4).map((r) =>
-          this.aggregator.buildMediaEvidence({
-            tmdbId: r.tmdbId,
-            mediaType: r.mediaType,
-            currentUserEmail: params.userEmail,
-            currentUserOverseerrId: params.overseerrUserId
-          })
-        )
-      );
+      const onlyCurrentUser = args.scope === 'mine_only';
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : 5;
+      const enriched =
+        typeof this.aggregator.getWaitingListAndRequests === 'function'
+          ? await this.aggregator.getWaitingListAndRequests({
+              currentUserEmail: params.userEmail,
+              currentUserOverseerrId: params.overseerrUserId,
+              onlyCurrentUser,
+              limit
+            })
+          : await Promise.all(
+              (await this.overseerr.getRequests(params.overseerrUserId, 6)).slice(0, 4).map((r) =>
+                this.aggregator.buildMediaEvidence({
+                  tmdbId: r.tmdbId,
+                  mediaType: r.mediaType,
+                  currentUserEmail: params.userEmail,
+                  currentUserOverseerrId: params.overseerrUserId
+                })
+              )
+            );
       params.onCardsCollected(enriched);
       return this.compactCardsForLlm(enriched);
     }
@@ -1076,9 +1093,17 @@ export class DeepSeekOrchestratorService {
         availableServers: c.catalogPresence.availableServers,
         plexLibraries: libs.length > 0 ? libs : undefined,
         accessibleToCurrentUser: c.catalogPresence.accessibleToCurrentUser,
+        statusLabel: c.actionability.userFriendlyStatusLabel,
         pipelineState:
           c.acquisitionPipeline.state !== 'not_in_arr' ? c.acquisitionPipeline.state : undefined,
-        estimatedAvailabilityDate: c.acquisitionPipeline.estimatedAvailabilityDate || undefined,
+        requestedOrAddedAt: c.requestState.requestedAt
+          ? c.requestState.requestedAt.slice(0, 10)
+          : c.acquisitionPipeline.addedAt || undefined,
+        requestedBy: c.requestState.requestedByDisplayName || undefined,
+        estimatedAvailabilityDate:
+          c.acquisitionPipeline.estimatedAvailabilityDate ||
+          c.identity.releaseDates.estimatedVodOrDvdDate ||
+          undefined,
         releaseDates:
           c.catalogPresence.state !== 'available_now' ? c.identity.releaseDates : undefined,
         seasonsSummary: c.episodeCoverage?.seasons.map((s) => ({

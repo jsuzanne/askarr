@@ -7,6 +7,7 @@ export interface RadarrMovieStatus {
   monitored: boolean;
   minimumAvailability: string;
   hasFile: boolean;
+  added?: string | null;
   inCinemas: string | null;
   digitalRelease: string | null;
   physicalRelease: string | null;
@@ -74,6 +75,23 @@ export class RadarrConnector {
     }
   }
 
+  private mapRawMovie(raw: Record<string, unknown>, fallbackTmdbId?: number): RadarrMovieStatus {
+    return {
+      id: Number(raw.id),
+      tmdbId: Number(raw.tmdbId || fallbackTmdbId || 0),
+      title: String(raw.title || ''),
+      year: typeof raw.year === 'number' ? raw.year : null,
+      status: String(raw.status || 'released'),
+      monitored: Boolean(raw.monitored),
+      minimumAvailability: String(raw.minimumAvailability || 'released'),
+      hasFile: Boolean(raw.hasFile),
+      added: typeof raw.added === 'string' && raw.added.length >= 10 ? raw.added.slice(0, 10) : null,
+      inCinemas: typeof raw.inCinemas === 'string' ? raw.inCinemas.slice(0, 10) : null,
+      digitalRelease: typeof raw.digitalRelease === 'string' ? raw.digitalRelease.slice(0, 10) : null,
+      physicalRelease: typeof raw.physicalRelease === 'string' ? raw.physicalRelease.slice(0, 10) : null
+    };
+  }
+
   public async getMovieByTmdbId(tmdbId: number): Promise<{ movie: RadarrMovieStatus | null; latencyMs: number }> {
     const t0 = Date.now();
     const items = await this.getJson<Array<Record<string, unknown>>>(`/api/v3/movie?tmdbId=${encodeURIComponent(String(tmdbId))}`);
@@ -82,19 +100,53 @@ export class RadarrConnector {
       return { movie: null, latencyMs: Date.now() - t0 };
     }
     return {
-      movie: {
-        id: Number(raw.id),
-        tmdbId: Number(raw.tmdbId || tmdbId),
-        title: String(raw.title || ''),
-        year: typeof raw.year === 'number' ? raw.year : null,
-        status: String(raw.status || 'released'),
-        monitored: Boolean(raw.monitored),
-        minimumAvailability: String(raw.minimumAvailability || 'released'),
-        hasFile: Boolean(raw.hasFile),
-        inCinemas: typeof raw.inCinemas === 'string' ? raw.inCinemas.slice(0, 10) : null,
-        digitalRelease: typeof raw.digitalRelease === 'string' ? raw.digitalRelease.slice(0, 10) : null,
-        physicalRelease: typeof raw.physicalRelease === 'string' ? raw.physicalRelease.slice(0, 10) : null
-      },
+      movie: this.mapRawMovie(raw, tmdbId),
+      latencyMs: Date.now() - t0
+    };
+  }
+
+  public async getRecentWaitingMovies(limit = 6): Promise<{ movies: RadarrMovieStatus[]; latencyMs: number }> {
+    const t0 = Date.now();
+    const collected = new Map<number, RadarrMovieStatus>();
+
+    const startIso = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const endIso = new Date(Date.now() + 270 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const [wantedRes, calendarRes] = await Promise.allSettled([
+      this.getJson<{ records?: Array<Record<string, unknown>> }>(
+        `/api/v3/wanted/missing?page=1&pageSize=${encodeURIComponent(String(Math.max(limit * 2, 12)))}&sortKey=added&sortDirection=descending&monitored=true`
+      ),
+      this.getJson<Array<Record<string, unknown>>>(
+        `/api/v3/calendar?start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}&unmonitored=false`
+      )
+    ]);
+
+    if (wantedRes.status === 'fulfilled' && Array.isArray(wantedRes.value?.records)) {
+      for (const raw of wantedRes.value.records) {
+        const mapped = this.mapRawMovie(raw);
+        if (mapped.tmdbId > 0 && mapped.monitored && !mapped.hasFile) {
+          collected.set(mapped.tmdbId, mapped);
+        }
+      }
+    }
+
+    if (calendarRes.status === 'fulfilled' && Array.isArray(calendarRes.value)) {
+      for (const raw of calendarRes.value) {
+        const mapped = this.mapRawMovie(raw);
+        if (mapped.tmdbId > 0 && mapped.monitored && !mapped.hasFile && !collected.has(mapped.tmdbId)) {
+          collected.set(mapped.tmdbId, mapped);
+        }
+      }
+    }
+
+    const sorted = Array.from(collected.values()).sort((a, b) => {
+      const aDate = a.added || '';
+      const bDate = b.added || '';
+      return bDate.localeCompare(aDate);
+    });
+
+    return {
+      movies: sorted.slice(0, limit),
       latencyMs: Date.now() - t0
     };
   }

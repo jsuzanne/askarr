@@ -142,6 +142,9 @@ export const MediaCandidateCard: React.FC<Props> = ({
 
   const vodDateFr = formatDateFr(identity.releaseDates.estimatedVodOrDvdDate);
   const cinemaDateFr = formatDateFr(identity.releaseDates.inCinemas);
+  const requestedOrAddedDateFr = formatDateFr(
+    localEvidence.requestState.requestedAt || acquisitionPipeline.addedAt || null
+  );
   const todayIso = new Date().toISOString().slice(0, 10);
   const isVodFuture = Boolean(
     identity.releaseDates.estimatedVodOrDvdDate && identity.releaseDates.estimatedVodOrDvdDate > todayIso
@@ -431,9 +434,15 @@ export const MediaCandidateCard: React.FC<Props> = ({
           </div>
         )}
 
-        {/* Dates de sortie Cinéma / VOD / DVD si pas encore sur Plex */}
-        {catalogPresence.state !== 'available_now' && (cinemaDateFr || vodDateFr) && (
+        {/* Dates de demande / sortie Cinéma / VOD / DVD si pas encore sur Plex */}
+        {catalogPresence.state !== 'available_now' && (requestedOrAddedDateFr || cinemaDateFr || vodDateFr) && (
           <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-stone-200 bg-black/50 rounded-xl px-3.5 py-2 border border-amber-500/20">
+            {requestedOrAddedDateFr && (
+              <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
+                <Clock className="h-4 w-4 text-amber-400 shrink-0" />
+                <span>Demandé / mis en attente le : {requestedOrAddedDateFr}</span>
+              </span>
+            )}
             {cinemaDateFr && (
               <span className="inline-flex items-center gap-1.5">
                 <Clapperboard className="h-4 w-4 text-red-400 shrink-0" />
