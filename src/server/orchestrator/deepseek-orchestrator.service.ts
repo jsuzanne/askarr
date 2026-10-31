@@ -42,7 +42,7 @@ RÈGLES ABSOLUES DE VÉRITÉ ET D'EXPERTISE CINÉMA :
 8. NOUVEAUTÉS PLEX & HISTORIQUE DE VISIONNAGE (TRACEARR) :
    - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté la semaine dernière ?", "quoi de neuf sur Plex cette semaine ?", "les derniers ajouts"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` et indique-lui les titres exacts ainsi que leur date d'ajout précise et les serveurs Plex correspondants.
    - Si l'utilisateur demande ce qu'il a regardé récemment ("qu'est-ce que j'ai vu dernièrement ?", "où j'en étais dans ma série ?"), demande les films les plus regardés sur les serveurs, ou (si c'est l'admin) demande qui regarde quoi en direct, appelle OBLIGATOIREMENT \`get_watch_history_and_live_streams\`.
-9. CONCISION : Sois chaleureux, précis et concis (3 à 6 phrases claires maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
+9. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour (en parallèle si besoin) et réponds immédiatement dès le retour des outils sans relancer d'appels redondants. Sois chaleureux, précis et concis (3 à 6 phrases claires maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
 const READ_ONLY_TOOLS_DEFINITIONS = [
   {
@@ -322,7 +322,7 @@ const READ_ONLY_TOOLS_DEFINITIONS = [
   }
 ];
 
-export const MAX_TOOL_ROUNDS = 3;
+export const MAX_TOOL_ROUNDS = 2;
 export const MAX_PROWLARR_CALLS_PER_TURN = 1;
 
 interface DeepSeekChatMessage {
@@ -403,26 +403,21 @@ export class DeepSeekOrchestratorService {
     const tStart = Date.now();
 
     const userAccessContext = params.plexAccess
-      ? `\n\n[PROFIL PLEX DE L'UTILISATEUR CONNECTÉ]\n` +
-        `- Email : ${params.userEmail}${params.plexAccess.plexUsername ? ` (Compte Plex : ${params.plexAccess.plexUsername})` : ''}\n` +
-        `- Serveurs Plex Askarr autorisés sur son compte : ${
+      ? `\n[Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Salles autorisées : ${
           params.plexAccess.askarrServerNames.length > 0
             ? params.plexAccess.askarrServerNames.join(', ')
-            : 'Aucun serveur Askarr détecté sur ce compte'
-        }\n` +
-        `- Rappel des bibliothèques par serveur :\n` +
-        `  • NucVillers & NucBuntu (bibliothèques partagées) : Films, Séries TV, Enfants, Films Legacy, True Crimes, VideoDivers.\n` +
-        `  • NucBuntu uniquement (bibliothèques exclusives) : Cinephile, Films 4K, Horror, Musical.\n` +
-        `Si l'utilisateur demande à quels films ou serveurs il a accès, indique-lui clairement ses serveurs Plex (${params.plexAccess.askarrServerNames.join(' & ') || 'aucun'}) et les bibliothèques correspondantes, et utilise discover_and_recommend(scope="on_plex_now") pour lui montrer quelques pépites actuellement disponibles sur ses serveurs.`
+            : 'Aucune'
+        } | NucVillers & NucBuntu : Films, Séries TV, Enfants, Films Legacy | NucBuntu exclusif : Cinephile, Films 4K, Horror, Musical]`
       : '';
 
     const lastAssistantWithCards = [...history]
       .reverse()
       .find((m) => m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0);
 
+    // Le message system reste 100% statique et immuable pour garantir un Cache Hit maximal sur le préfixe KV de DeepSeek ($0.028/1M au lieu de $0.28/1M)
     const messages: DeepSeekChatMessage[] = [
-      { role: 'system', content: STATIC_FRENCH_SYSTEM_PROMPT + userAccessContext },
-      ...history.slice(-4).map((m) => {
+      { role: 'system', content: STATIC_FRENCH_SYSTEM_PROMPT },
+      ...history.slice(-2).map((m) => {
         let content = m.content;
         if (m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0) {
           const cardsSummary = m.mediaCards
@@ -431,14 +426,14 @@ export class DeepSeekOrchestratorService {
                 `${c.identity.titleFr}${c.identity.year ? ` (${c.identity.year})` : ''} [tmdbId=${c.identity.tmdbId}, état=${c.catalogPresence.state}]`
             )
             .join(' | ');
-          content += `\n[Fiches affichées sous ce message : ${cardsSummary}]`;
+          content += `\n[Fiches affichées : ${cardsSummary}]`;
         }
         return {
           role: m.role as 'user' | 'assistant',
           content
         };
       }),
-      { role: 'user', content: params.message }
+      { role: 'user', content: params.message + userAccessContext }
     ];
 
     try {
@@ -868,62 +863,83 @@ export class DeepSeekOrchestratorService {
             allowedServers,
             daysBack,
             mediaType,
-            limit: 20
+            limit: 15
           })
         : [];
 
       const topForCards = recentItems.slice(0, cardLimit);
-      const cards: MediaEvidence[] = [];
 
-      for (const item of topForCards) {
-        try {
-          if (item.tmdbId && item.tmdbId > 0) {
-            const ev = await this.aggregator.buildMediaEvidence({
-              tmdbId: item.tmdbId,
-              mediaType: item.mediaType,
-              currentUserEmail: params.userEmail,
-              currentUserOverseerrId: params.overseerrUserId
-            });
-            cards.push(ev);
-          } else {
+      // Enrichissement en parallèle en réutilisant directement les serveurs Plex fournis par Tracearr (zéro requête Plex/Radarr redondante)
+      const enrichedResults = await Promise.all(
+        topForCards.map(async (item) => {
+          try {
+            const knownPlexHint =
+              item.serverNames && item.serverNames.length > 0
+                ? { serverNames: item.serverNames }
+                : undefined;
+
+            if (item.tmdbId && item.tmdbId > 0) {
+              return await this.aggregator.buildMediaEvidence({
+                tmdbId: item.tmdbId,
+                mediaType: item.mediaType,
+                currentUserEmail: params.userEmail,
+                currentUserOverseerrId: params.overseerrUserId,
+                knownPlexHint
+              });
+            }
             const verified = await this.aggregator.verifySpecificTitles({
               items: [
                 {
                   title: item.title,
                   year: item.year ?? undefined,
-                  mediaType: item.mediaType
+                  mediaType: item.mediaType,
+                  knownPlexHint
                 }
               ],
               currentUserEmail: params.userEmail,
               currentUserOverseerrId: params.overseerrUserId
             });
-            if (verified.length > 0) {
-              cards.push(verified[0]);
-            }
+            return verified[0] ?? null;
+          } catch {
+            return null;
           }
-        } catch {
-          // Ignorer un item isolé en cas d'erreur d'enrichissement
-        }
-      }
+        })
+      );
 
+      const cards = enrichedResults.filter((c): c is MediaEvidence => c !== null);
       if (cards.length > 0) {
         params.onCardsCollected(cards);
+      }
+
+      const cardByTitle = new Map<string, MediaEvidence>();
+      for (const c of cards) {
+        cardByTitle.set(c.identity.titleFr.toLowerCase(), c);
+        cardByTitle.set(c.identity.originalTitle.toLowerCase(), c);
       }
 
       return {
         daysBackInspected: daysBack,
         totalRecentFound: recentItems.length,
-        recentAdditionsChronological: recentItems.slice(0, 15).map((r) => ({
-          title: r.title,
-          year: r.year,
-          mediaType: r.mediaType,
-          tmdbId: r.tmdbId,
-          addedAtIso: r.addedAt.slice(0, 10),
-          addedAtFrench: formatFrenchDate(r.addedAt),
-          daysAgo: r.daysAgo,
-          servers: r.serverNames
-        })),
-        enrichedCards: this.compactCardsForLlm(cards)
+        recentAdditions: recentItems.slice(0, 12).map((r) => {
+          const matchedCard =
+            cards.find((c) => c.identity.tmdbId === r.tmdbId) ||
+            cardByTitle.get(r.title.toLowerCase());
+          return {
+            titleFr: matchedCard?.identity.titleFr || r.title,
+            year: matchedCard?.identity.year ?? r.year,
+            mediaType: r.mediaType,
+            tmdbId: matchedCard?.identity.tmdbId ?? r.tmdbId,
+            director: matchedCard?.identity.directorOrCreator || undefined,
+            topCast: matchedCard?.identity.topCast?.slice(0, 2) || undefined,
+            ratingSur10:
+              matchedCard?.identity.ratings.imdbOrAudienceRating ??
+              matchedCard?.identity.ratings.tmdbVoteAverage ??
+              undefined,
+            addedAtFrench: formatFrenchDate(r.addedAt),
+            daysAgo: r.daysAgo,
+            servers: r.serverNames
+          };
+        })
       };
     }
 
@@ -942,30 +958,37 @@ export class DeepSeekOrchestratorService {
         this.tracearr.getWatchHistory({
           plexUsername:
             scope === 'my_history' ? params.plexAccess?.plexUsername || undefined : undefined,
-          limit: 25
+          limit: 20
         }),
         this.tracearr.getActiveStreams()
       ]);
 
       if (enrichTopCards && myOrGlobalHistory.length > 0) {
         const seenTmdb = new Set<number>();
-        const cards: MediaEvidence[] = [];
-        for (const h of myOrGlobalHistory) {
-          if (h.tmdbId && h.tmdbId > 0 && !seenTmdb.has(h.tmdbId) && cards.length < 4) {
-            seenTmdb.add(h.tmdbId);
+        const toEnrich = myOrGlobalHistory.filter((h) => {
+          if (!h.tmdbId || h.tmdbId <= 0 || seenTmdb.has(h.tmdbId) || seenTmdb.size >= 4) {
+            return false;
+          }
+          seenTmdb.add(h.tmdbId);
+          return true;
+        });
+
+        const enriched = await Promise.all(
+          toEnrich.map(async (h) => {
             try {
-              const ev = await this.aggregator.buildMediaEvidence({
-                tmdbId: h.tmdbId,
+              return await this.aggregator.buildMediaEvidence({
+                tmdbId: h.tmdbId!,
                 mediaType: h.mediaType,
                 currentUserEmail: params.userEmail,
-                currentUserOverseerrId: params.overseerrUserId
+                currentUserOverseerrId: params.overseerrUserId,
+                knownPlexHint: h.serverName ? { serverNames: [h.serverName] } : undefined
               });
-              cards.push(ev);
             } catch {
-              // Ignorer
+              return null;
             }
-          }
-        }
+          })
+        );
+        const cards = enriched.filter((c): c is MediaEvidence => c !== null);
         if (cards.length > 0) {
           params.onCardsCollected(cards);
         }
@@ -981,7 +1004,7 @@ export class DeepSeekOrchestratorService {
               transcodes: liveStreams.transcodes,
               directPlays: liveStreams.directPlays
             },
-        recentWatchHistory: myOrGlobalHistory.slice(0, 15).map((h) => ({
+        recentWatchHistory: myOrGlobalHistory.slice(0, 12).map((h) => ({
           title: h.title,
           year: h.year,
           mediaType: h.mediaType,
@@ -1033,41 +1056,43 @@ export class DeepSeekOrchestratorService {
   }
 
   private compactCardsForLlm(cards: MediaEvidence[]): unknown {
-    return cards.map((c) => ({
-      tmdbId: c.identity.tmdbId,
-      mediaType: c.identity.mediaType,
-      titleFr: c.identity.titleFr,
-      originalTitle: c.identity.originalTitle,
-      year: c.identity.year,
-      genres: c.identity.genres,
-      directorOrCreator: c.identity.directorOrCreator,
-      topCast: c.identity.topCast,
-      ratingSur10: c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage,
-      overviewFr: c.identity.overviewFr ? c.identity.overviewFr.slice(0, 220) : null,
-      releaseDates: c.identity.releaseDates,
-      plexState: c.catalogPresence.state,
-      availableServers: c.catalogPresence.availableServers,
-      userAccessibleServers: c.catalogPresence.userAccessibleServers,
-      userAllowedServers: c.catalogPresence.userAllowedServers,
-      accessibleToCurrentUser: c.catalogPresence.accessibleToCurrentUser,
-      plexLocations: c.catalogPresence.matchedItems.map((m) => ({
-        serverName: m.serverName,
-        library: m.libraryTitle,
-        sharedAcrossAllPlexServers: m.isSharedAcrossAllServers
-      })),
-      pipelineState: c.acquisitionPipeline.state,
-      estimatedAvailabilityDate: c.acquisitionPipeline.estimatedAvailabilityDate,
-      seasonsSummary: c.episodeCoverage?.seasons.map((s) => ({
-        season: s.seasonNumber,
-        state: s.state,
-        episodesOnPlex: `${s.plexEpisodeCount}/${s.totalEpisodeCount}`
-      })),
-      indexerSearch: c.indexerSearch.queried ? c.indexerSearch : undefined,
-      canRequestNow: c.actionability.canRequestNow,
-      requestableSeasons: c.actionability.requestableSeasons,
-      statusLabelFr: c.actionability.userFriendlyStatusLabel,
-      explanationFr: c.actionability.userFriendlyExplanationFr
-    }));
+    return cards.map((c) => {
+      const libs = Array.from(
+        new Set(c.catalogPresence.matchedItems.map((m) => m.libraryTitle).filter(Boolean))
+      );
+      return {
+        tmdbId: c.identity.tmdbId,
+        mediaType: c.identity.mediaType,
+        titleFr: c.identity.titleFr,
+        originalTitle:
+          c.identity.originalTitle !== c.identity.titleFr ? c.identity.originalTitle : undefined,
+        year: c.identity.year,
+        genres: c.identity.genres.slice(0, 3),
+        directorOrCreator: c.identity.directorOrCreator || undefined,
+        topCast: c.identity.topCast.slice(0, 3),
+        ratingSur10:
+          c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage ?? undefined,
+        plexState: c.catalogPresence.state,
+        availableServers: c.catalogPresence.availableServers,
+        plexLibraries: libs.length > 0 ? libs : undefined,
+        accessibleToCurrentUser: c.catalogPresence.accessibleToCurrentUser,
+        pipelineState:
+          c.acquisitionPipeline.state !== 'not_in_arr' ? c.acquisitionPipeline.state : undefined,
+        estimatedAvailabilityDate: c.acquisitionPipeline.estimatedAvailabilityDate || undefined,
+        releaseDates:
+          c.catalogPresence.state !== 'available_now' ? c.identity.releaseDates : undefined,
+        seasonsSummary: c.episodeCoverage?.seasons.map((s) => ({
+          s: s.seasonNumber,
+          state: s.state,
+          ep: `${s.plexEpisodeCount}/${s.totalEpisodeCount}`
+        })),
+        canRequestNow: c.actionability.canRequestNow,
+        requestableSeasons:
+          c.actionability.requestableSeasons.length > 0
+            ? c.actionability.requestableSeasons
+            : undefined
+      };
+    });
   }
 
   public async getAccountBalance(): Promise<DeepSeekBalanceDTO> {
@@ -1165,13 +1190,11 @@ export class DeepSeekOrchestratorService {
       const body: Record<string, unknown> = {
         model: this.config.deepseekModel,
         messages,
+        tools: READ_ONLY_TOOLS_DEFINITIONS,
+        tool_choice: includeTools ? 'auto' : 'none',
         temperature: 0.2,
-        max_tokens: 550
+        max_tokens: 450
       };
-      if (includeTools) {
-        body.tools = READ_ONLY_TOOLS_DEFINITIONS;
-        body.tool_choice = 'auto';
-      }
 
       const res = await this.fetchImpl(`${this.config.deepseekBaseUrl}/chat/completions`, {
         method: 'POST',

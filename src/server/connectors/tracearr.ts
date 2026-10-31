@@ -62,11 +62,27 @@ export interface TracearrHealthStatus {
   error?: string;
 }
 
+interface TracearrRawRecentEntry {
+  server_id: string;
+  media_type: string;
+  title: string;
+  year: number | null;
+  added_at: string;
+  removed_at: string | null;
+  tmdb_id: number | null;
+  imdb_id: string | null;
+  rating_key: string | null;
+}
+
 export class TracearrConnector {
   private baseUrl: string;
   private apiKey: string;
   private readonly fetchFn: typeof fetch;
   private serverNameCache: { map: Map<string, string>; expiresAt: number } | null = null;
+  private recentlyAddedRawCache: {
+    items: TracearrRawRecentEntry[];
+    expiresAt: number;
+  } | null = null;
 
   constructor(baseUrl: string, apiKey: string, fetchFn: typeof fetch = fetch) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
@@ -78,6 +94,7 @@ export class TracearrConnector {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.apiKey = apiKey.trim();
     this.serverNameCache = null;
+    this.recentlyAddedRawCache = null;
   }
 
   isConfigured(): boolean {
@@ -192,30 +209,28 @@ export class TracearrConnector {
     if (!this.isConfigured()) return [];
 
     try {
-      const [serverMap, res] = await Promise.all([
-        this.getServerNameMap(),
-        this.fetchFn(`${this.baseUrl}/api/v2/public/recently-added?limit=100`, {
+      const serverMapPromise = this.getServerNameMap();
+      let rawItems: TracearrRawRecentEntry[];
+
+      if (this.recentlyAddedRawCache && Date.now() < this.recentlyAddedRawCache.expiresAt) {
+        rawItems = this.recentlyAddedRawCache.items;
+      } else {
+        const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/recently-added?limit=100`, {
           headers: this.getHeaders(),
           signal: AbortSignal.timeout(6000)
-        })
-      ]);
+        });
+        if (!res.ok) return [];
+        const json = (await res.json()) as {
+          data?: TracearrRawRecentEntry[];
+        };
+        rawItems = json.data ?? [];
+        this.recentlyAddedRawCache = {
+          items: rawItems,
+          expiresAt: Date.now() + 3 * 60_000
+        };
+      }
 
-      if (!res.ok) return [];
-
-      const json = (await res.json()) as {
-        data?: Array<{
-          server_id: string;
-          media_type: string;
-          title: string;
-          year: number | null;
-          added_at: string;
-          removed_at: string | null;
-          tmdb_id: number | null;
-          imdb_id: string | null;
-          rating_key: string | null;
-        }>;
-      };
-
+      const serverMap = await serverMapPromise;
       const now = Date.now();
       const maxFutureMs = now + 24 * 3600_000; // Ignorer les fichiers avec mtime corrompu (ex: année 2098)
       const minPastMs = options?.daysBack ? now - options.daysBack * 86400_000 : 0;
@@ -223,7 +238,7 @@ export class TracearrConnector {
 
       const deduped = new Map<string, TracearrRecentItem>();
 
-      for (const raw of json.data ?? []) {
+      for (const raw of rawItems) {
         if (raw.removed_at) continue;
         const addedMs = new Date(raw.added_at).getTime();
         if (!Number.isFinite(addedMs) || addedMs > maxFutureMs) continue;

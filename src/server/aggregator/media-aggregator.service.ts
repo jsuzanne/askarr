@@ -102,6 +102,7 @@ export class MediaAggregatorService {
     currentUserOverseerrId?: number | null;
     includeSeasons?: boolean;
     checkIndexers?: boolean;
+    knownPlexHint?: { serverNames: string[]; libraryTitle?: string };
   }): Promise<MediaEvidence> {
     const provenance: ProvenanceEntry[] = [];
 
@@ -127,17 +128,47 @@ export class MediaAggregatorService {
       throw err;
     }
 
+    const hasKnownPlexHint =
+      params.knownPlexHint &&
+      Array.isArray(params.knownPlexHint.serverNames) &&
+      params.knownPlexHint.serverNames.length > 0;
+
     // 2. En parallèle : Fédération Multi-Serveurs Plex + Radarr (si film) ou Sonarr (si série)
-    const plexPromise = this.plex.findMediaAcrossServers({
-      tmdbId: osDetail.tmdbId,
-      tvdbId: osDetail.tvdbId,
-      imdbId: osDetail.imdbId,
-      titleFr: osDetail.titleFr,
-      originalTitle: osDetail.originalTitle,
-      year: osDetail.year,
-      mediaType: osDetail.mediaType,
-      includeSeasons: Boolean(params.includeSeasons || osDetail.mediaType === 'tv')
-    });
+    // Si Tracearr nous a déjà fourni les serveurs Plex exacts (knownPlexHint), on évite les 5 requêtes Plex + Radarr redondantes !
+    const plexPromise = hasKnownPlexHint
+      ? Promise.resolve({
+          state: 'available_now' as const,
+          serversQueried: params.knownPlexHint!.serverNames,
+          matchedItems: params.knownPlexHint!.serverNames.map((srv) => {
+            const links = buildPlexDeepLinks(srv, '');
+            return {
+              serverName: srv,
+              ratingKey: '',
+              title: osDetail.titleFr,
+              originalTitle: osDetail.originalTitle,
+              year: osDetail.year,
+              libraryTitle:
+                params.knownPlexHint!.libraryTitle ||
+                (osDetail.mediaType === 'tv' ? 'Séries TV' : 'Films'),
+              isSharedAcrossAllServers: params.knownPlexHint!.serverNames.length > 1,
+              machineIdentifier: links.machineIdentifier,
+              plexWebUrl: 'https://app.plex.tv/desktop/',
+              plexIosDeepLink: 'plex://'
+            };
+          }),
+          matchedDetails: [] as PlexMetadataDetail[],
+          provenance: [] as ProvenanceEntry[]
+        })
+      : this.plex.findMediaAcrossServers({
+          tmdbId: osDetail.tmdbId,
+          tvdbId: osDetail.tvdbId,
+          imdbId: osDetail.imdbId,
+          titleFr: osDetail.titleFr,
+          originalTitle: osDetail.originalTitle,
+          year: osDetail.year,
+          mediaType: osDetail.mediaType,
+          includeSeasons: Boolean(params.includeSeasons || osDetail.mediaType === 'tv')
+        });
 
     let radarrMovie = null as RadarrMovieStatus | null;
     let radarrQueue = null as RadarrQueueItem | null;
@@ -148,6 +179,9 @@ export class MediaAggregatorService {
     let sonarrError = false;
 
     const arrPromise = (async () => {
+      if (hasKnownPlexHint) {
+        return;
+      }
       if (osDetail.mediaType === 'movie') {
         const t0 = Date.now();
         try {
@@ -754,7 +788,12 @@ export class MediaAggregatorService {
   }
 
   public async verifySpecificTitles(params: {
-    items: Array<{ title: string; year?: number; mediaType?: 'movie' | 'tv' | 'auto' }>;
+    items: Array<{
+      title: string;
+      year?: number;
+      mediaType?: 'movie' | 'tv' | 'auto';
+      knownPlexHint?: { serverNames: string[]; libraryTitle?: string };
+    }>;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
   }): Promise<MediaEvidence[]> {
@@ -811,7 +850,8 @@ export class MediaAggregatorService {
             currentUserEmail: params.currentUserEmail,
             currentUserOverseerrId: params.currentUserOverseerrId,
             includeSeasons: best.mediaType === 'tv',
-            checkIndexers: false
+            checkIndexers: false,
+            knownPlexHint: item.knownPlexHint
           });
         } catch {
           return null;
