@@ -49,6 +49,7 @@ import type {
 } from '../shared/types.js';
 import { MediaCandidateCard } from './components/MediaCandidateCard.js';
 import { RichMarkdownText } from './components/RichMarkdownText.js';
+import { APP_VERSION, APP_RELEASE_DATE } from '../shared/version.js';
 
 interface UiMessage {
   id: string;
@@ -1090,10 +1091,16 @@ export function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               <h1 className="font-cinema text-2xl sm:text-3xl tracking-wider bg-gradient-to-b from-amber-100 via-amber-300 to-amber-500 bg-clip-text text-transparent leading-none">
                 ASKARR
               </h1>
+              <span
+                className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded bg-stone-900/90 text-amber-300/90 border border-amber-500/30 whitespace-nowrap"
+                title={`Askarr v${APP_VERSION} — Sortie du ${APP_RELEASE_DATE}`}
+              >
+                v{APP_VERSION}
+              </span>
               <span className="hidden md:inline-flex font-cinema tracking-widest text-xs px-2.5 py-0.5 rounded-md bg-gradient-to-r from-red-900/90 to-red-800/80 text-amber-200 border border-amber-400/40 shadow-sm whitespace-nowrap">
                 {workspaceMode === 'user' ? '🍿 GRAND CINÉMA' : '🎬 RÉGIE ADMIN'}
               </span>

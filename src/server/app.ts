@@ -19,6 +19,7 @@ import { MediaAggregatorService } from './aggregator/media-aggregator.service.js
 import { DeepSeekOrchestratorService } from './orchestrator/deepseek-orchestrator.service.js';
 import { ApiTracer } from './utils/api-tracer.js';
 import type { UserSessionInfo, AdminSettingsDTO, PlexSharedUserDTO } from '../shared/types.js';
+import { APP_VERSION, APP_RELEASE_DATE } from '../shared/version.js';
 import type { JWTVerifyGetKey } from 'jose';
 
 export interface AppDependencies {
@@ -183,6 +184,8 @@ export async function createApp(deps: AppDependencies): Promise<{
   app.get('/api/health/live', async () => ({
     status: 'ok',
     service: 'askarr',
+    version: APP_VERSION,
+    releaseDate: APP_RELEASE_DATE,
     phase: 'G4_FULL_WRITE_AND_CF_SYNC',
     timestamp: new Date().toISOString()
   }));

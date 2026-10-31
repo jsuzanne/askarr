@@ -1,0 +1,52 @@
+# Journal des modifications (Changelog)
+
+Toutes les modifications notables apportées au projet **Askarr** sont documentées dans ce fichier.
+Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Versionnage Sémantique (SemVer)](https://semver.org/lang/fr/).
+
+---
+
+## [1.1.0] - 2026-10-31
+
+### Ajouté
+- **File d'attente unifiée Radarr & Overseerr (`getWaitingListAndRequests`)** :
+  - Interrogation parallèle de l'API Radarr (`/api/v3/wanted/missing` et `/api/v3/calendar`) et d'Overseerr (`/api/v1/request`) pour lister l'ensemble des films en attente de fichier (`!hasFile`), qu'ils aient été demandés par un utilisateur sur Overseerr ou ajoutés automatiquement par une liste Radarr.
+  - Extraction de la date d'ajout Radarr/Sonarr (`added`) fusionnée avec la date de demande Overseerr (`requestedAt`).
+  - Affichage explicite des **3 états de disponibilité** pour chaque film ou série :
+    1. **Disponible sur Plex** (`available_now`) avec boutons de lecture directe Web et iOS.
+    2. **Déjà en liste d'attente** (`monitored_waiting_release` / `monitored_searching` / `already_requested`) avec **date de mise en attente** et **date de sortie VOD/DVD estimée**.
+    3. **Non listé / Demandable** (`canRequestNow = true`) avec proposition de programmation en 2 clics.
+- **Intégration Tracearr API v2 (`/api/v1/public/*`)** :
+  - Nouveaux outils IA `get_recent_plex_additions`, `get_watch_history` et `get_active_streams`.
+  - Suivi des derniers films/séries ajoutés sur les serveurs Plex (`NucVillers`, `NucBuntu`, etc.), de l'historique de lecture et des sessions en direct.
+  - Panneau de supervision Tracearr dans la **Régie Admin** (`Santé Projecteurs` et `Paramètres & Identités`).
+- **Système de versionnage sémantique incrémental** :
+  - Source de vérité centralisée dans `src/shared/version.ts` et `package.json`.
+  - Affichage du badge `v1.1.0` dans le fronton de l'application et exposition dans la sonde `/api/health/live`.
+  - Scripts `npm run version:patch`, `npm run version:minor` et `npm run version:major` pour incrémenter automatiquement la version.
+
+### Optimisé
+- **Cache KV Préfixe DeepSeek & Compaction des Payloads LLM** :
+  - Prompt système français 100 % statique en préfixe et injection du contexte dynamique utilisateur dans le message utilisateur afin de maximiser le taux de *Prompt Cache Hit* sur DeepSeek (`deepseek-chat`).
+  - Compaction des cartes médias envoyées au LLM (`compactCardsForLlm`) : réduction de ~75 % des tokens d'entrée par tour de tool-calling.
+  - Court-circuit des requêtes Radarr/Sonarr/Prowlarr redondantes pour les médias issus de Tracearr déjà présents sur Plex.
+
+### Corrigé
+- **Ergonomie & Interface Grand Cinéma** :
+  - Ajout d'un dock inférieur opaque sous la barre de saisie du chat pour masquer proprement le défilement des messages et cartes en arrière-plan.
+  - Suppression du bouton redondant « Nouvelle discussion » en bas de page (conservé dans la barre de sous-navigation supérieure).
+  - Déduplication de la liste des serveurs Plex dans l'en-tête utilisateur et correction de l'alignement des boutons de suggestions rapides.
+
+---
+
+## [1.0.0] - 2026-10-31
+
+### Ajouté
+- **Version initiale d'Askarr « Grand Cinéma »** :
+  - Copilote conversationnel IA propulsé par **DeepSeek** (`deepseek-chat`) avec orchestration multi-outils et garde-fous anti-hallucination.
+  - **Fédération Multi-Serveurs Plex** : interrogation simultanée des serveurs configurés ou auto-découverts via `plex.tv`, vérification des permissions par ami Plex, et liens profonds directs (`app.plex.tv` + `plex://preplay/...` sur iOS).
+  - **Connecteurs Overseerr, Radarr, Sonarr & Prowlarr** : enrichissement croisé (notes IMDb/TMDB, dates de sortie cinéma et VOD/DVD, estimation +4 mois après sortie salle, surveillance `monitored`, recherche d'indexeurs).
+  - **Programmation en 2 clics** : jeton de confirmation idempotent à durée de vie limitée (`prepared_actions`) pour lancer une demande Overseerr et réactiver automatiquement le suivi Radarr/Sonarr.
+  - **Authentification Zero Trust Cloudflare Access** : vérification cryptographique RS256 des JWT `Cf-Access-Jwt-Assertion`, synchronisation de l'annuaire `plex.tv` avec les règles/groupes Cloudflare Access et historique de révisions avec rollback SQLite.
+  - **Invitations VIP par Email (Google SMTP)** : envoi de billets d'invitation HTML au design Grand Cinéma aux nouveaux membres ajoutés.
+  - **Régie Admin complète** : gestion des accès VIP, tableau de bord de santé des connecteurs, traceur d'appels API en temps réel, suivi de consommation/solde DeepSeek, retours utilisateurs et configuration à chaud persistée dans SQLite.
+  - **Conteneurisation Docker** : image multi-stage Node 22 sur le port `4880` avec sonde `HEALTHCHECK`.
