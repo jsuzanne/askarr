@@ -228,7 +228,34 @@ export interface DeepSeekBalanceDTO {
   error?: string;
 }
 
+export type LlmProviderId = 'deepseek' | 'gemini' | 'groq' | 'mistral' | 'openrouter';
+export type LlmRoutingMode = 'manual' | 'priority_cascade' | 'load_balance';
+
+export interface LlmProviderStatusDTO {
+  id: LlmProviderId;
+  label: string;
+  baseUrl: string;
+  model: string;
+  isFree: boolean;
+  configured: boolean;
+  keyPortalUrl: string;
+  descriptionFr: string;
+}
+
+export interface LlmModelBenchmarkDTO {
+  model: string;
+  callsCount: number;
+  avgLatencyMs: number;
+  totalTokens: number;
+  totalCostUsd: number;
+}
+
 export interface LlmTurnUsageDTO {
+  providerId?: LlmProviderId;
+  providerLabel?: string;
+  model?: string;
+  isFreeProvider?: boolean;
+  failoverFrom?: string;
   promptTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
@@ -286,6 +313,20 @@ export interface AdminEditableSettingsDTO {
   deepseekModel: string;
   deepseekApiKeyMasked: string;
   deepseekApiKeyConfigured?: boolean;
+  llmRoutingMode?: LlmRoutingMode;
+  llmManualProvider?: LlmProviderId;
+  geminiModel?: string;
+  geminiApiKeyMasked?: string;
+  geminiApiKeyConfigured?: boolean;
+  groqModel?: string;
+  groqApiKeyMasked?: string;
+  groqApiKeyConfigured?: boolean;
+  mistralModel?: string;
+  mistralApiKeyMasked?: string;
+  mistralApiKeyConfigured?: boolean;
+  openrouterModel?: string;
+  openrouterApiKeyMasked?: string;
+  openrouterApiKeyConfigured?: boolean;
   aiDailyTokenCap: number;
   aiMonthlyBudgetUsd: number;
 }
@@ -337,7 +378,14 @@ export interface AdminSettingsDTO {
         cacheHitRatioPercent: number;
         isOverQuota: boolean;
         recentCalls: LlmUsageCallEntryDTO[];
+        modelBenchmarks?: LlmModelBenchmarkDTO[];
       };
+    };
+    llmRouter?: {
+      routingMode: LlmRoutingMode;
+      manualProvider: LlmProviderId;
+      activeProvidersCount: number;
+      providers: LlmProviderStatusDTO[];
     };
   };
 }

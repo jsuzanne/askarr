@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import type { LlmProviderId, LlmRoutingMode } from '../../shared/types.js';
 
 const envPath = path.resolve(process.cwd(), '.env');
 const qualEnvPath = path.resolve(process.cwd(), '.env.qualification');
@@ -48,6 +49,16 @@ export interface AppConfig {
   deepseekPriceInputCacheMissPer1M: number;
   deepseekPriceInputCacheHitPer1M: number;
   deepseekPriceOutputPer1M: number;
+  llmRoutingMode?: LlmRoutingMode;
+  llmManualProvider?: LlmProviderId;
+  geminiApiKey?: string;
+  geminiModel?: string;
+  groqApiKey?: string;
+  groqModel?: string;
+  mistralApiKey?: string;
+  mistralModel?: string;
+  openrouterApiKey?: string;
+  openrouterModel?: string;
   aiDailyTokenCap: number;
   aiMonthlyBudgetUsd: number;
 }
@@ -150,6 +161,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     deepseekPriceInputCacheMissPer1M: Number(env.DEEPSEEK_PRICE_INPUT_CACHE_MISS_PER_1M_USD || 0.27),
     deepseekPriceInputCacheHitPer1M: Number(env.DEEPSEEK_PRICE_INPUT_CACHE_HIT_PER_1M_USD || 0.07),
     deepseekPriceOutputPer1M: Number(env.DEEPSEEK_PRICE_OUTPUT_PER_1M_USD || 1.10),
+    llmRoutingMode:
+      env.LLM_ROUTING_MODE === 'manual' || env.LLM_ROUTING_MODE === 'load_balance'
+        ? env.LLM_ROUTING_MODE
+        : 'priority_cascade',
+    llmManualProvider:
+      env.LLM_MANUAL_PROVIDER === 'gemini' ||
+      env.LLM_MANUAL_PROVIDER === 'groq' ||
+      env.LLM_MANUAL_PROVIDER === 'mistral' ||
+      env.LLM_MANUAL_PROVIDER === 'openrouter'
+        ? env.LLM_MANUAL_PROVIDER
+        : 'deepseek',
+    geminiApiKey: env.GEMINI_API_KEY || '',
+    geminiModel: env.GEMINI_MODEL || 'gemini-2.5-flash',
+    groqApiKey: env.GROQ_API_KEY || '',
+    groqModel: env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    mistralApiKey: env.MISTRAL_API_KEY || '',
+    mistralModel: env.MISTRAL_MODEL || 'mistral-small-latest',
+    openrouterApiKey: env.OPENROUTER_API_KEY || '',
+    openrouterModel: env.OPENROUTER_MODEL || 'deepseek/deepseek-chat-v3-0324:free',
     aiDailyTokenCap: Number(env.AI_DAILY_TOKEN_CAP || 2500000),
     aiMonthlyBudgetUsd: Number(env.AI_MONTHLY_BUDGET_USD || 10.0)
   };

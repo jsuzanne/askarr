@@ -5,6 +5,9 @@ import type { OverseerrConnector } from '../connectors/overseerr.connector.js';
 import type { TracearrConnector } from '../connectors/tracearr.js';
 import type {
   DeepSeekBalanceDTO,
+  LlmProviderId,
+  LlmProviderStatusDTO,
+  LlmRoutingMode,
   LlmTurnUsageDTO,
   MediaEvidence,
   PreparedActionDTO,
@@ -50,7 +53,7 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - Si l'utilisateur demande ce qu'il a regardé récemment, les films les plus regardés sur les serveurs, ou (si c'est l'admin) qui regarde quoi en direct, appelle OBLIGATOIREMENT \`get_watch_history_and_live_streams\`.
 10. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour et réponds immédiatement dès le retour des outils. Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
-const READ_ONLY_TOOLS_DEFINITIONS = [
+export const READ_ONLY_TOOLS_DEFINITIONS = [
   {
     type: 'function',
     function: {
@@ -353,7 +356,47 @@ interface DeepSeekChatMessage {
   tool_call_id?: string;
 }
 
+export interface InternalLlmProvider {
+  id: LlmProviderId;
+  label: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  isFree: boolean;
+  keyPortalUrl: string;
+  descriptionFr: string;
+}
+
+function stripUnsupportedJsonSchemaKeys(obj: unknown): unknown {
+  if (Array.isArray(obj)) {
+    return obj.map(stripUnsupportedJsonSchemaKeys);
+  }
+  if (obj && typeof obj === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (k === 'additionalProperties' || k === 'default') {
+        continue;
+      }
+      out[k] = stripUnsupportedJsonSchemaKeys(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
+export function sanitizeToolsForProvider(
+  tools: typeof READ_ONLY_TOOLS_DEFINITIONS,
+  providerId: LlmProviderId
+): unknown[] {
+  if (providerId === 'deepseek') {
+    return tools;
+  }
+  return stripUnsupportedJsonSchemaKeys(tools) as unknown[];
+}
+
 export class DeepSeekOrchestratorService {
+  private roundRobinCounter = 0;
+
   constructor(
     private readonly config: AppConfig,
     private readonly db: AskarrDatabase,
@@ -362,6 +405,104 @@ export class DeepSeekOrchestratorService {
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly tracearr?: TracearrConnector
   ) {}
+
+  public getAllProviders(): InternalLlmProvider[] {
+    return [
+      {
+        id: 'gemini',
+        label: 'Google Gemini',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        apiKey: (this.config.geminiApiKey || '').trim(),
+        model: (this.config.geminiModel || 'gemini-2.5-flash').trim(),
+        isFree: true,
+        keyPortalUrl: 'https://aistudio.google.com/apikey',
+        descriptionFr: 'Google AI Studio — 100% Gratuit (sans CB), 1M contexte, excellent en français & cinéma'
+      },
+      {
+        id: 'groq',
+        label: 'Groq Cloud',
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: (this.config.groqApiKey || '').trim(),
+        model: (this.config.groqModel || 'llama-3.3-70b-versatile').trim(),
+        isFree: true,
+        keyPortalUrl: 'https://console.groq.com/keys',
+        descriptionFr: 'Groq LPU — 100% Gratuit (sans CB), vitesse fulgurante (~300 ms), Llama 3.3 70B'
+      },
+      {
+        id: 'mistral',
+        label: 'Mistral AI',
+        baseUrl: 'https://api.mistral.ai/v1',
+        apiKey: (this.config.mistralApiKey || '').trim(),
+        model: (this.config.mistralModel || 'mistral-small-latest').trim(),
+        isFree: true,
+        keyPortalUrl: 'https://console.mistral.ai/api-keys',
+        descriptionFr: 'Mistral La Plateforme (Plan Experiment) — 100% Gratuit, plume française & cinéma européen'
+      },
+      {
+        id: 'openrouter',
+        label: 'OpenRouter Free',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: (this.config.openrouterApiKey || '').trim(),
+        model: (this.config.openrouterModel || 'deepseek/deepseek-chat-v3-0324:free').trim(),
+        isFree: true,
+        keyPortalUrl: 'https://openrouter.ai/settings/keys',
+        descriptionFr: 'OpenRouter — 100% Gratuit sur tous les modèles suffixés par :free'
+      },
+      {
+        id: 'deepseek',
+        label: 'DeepSeek',
+        baseUrl: (this.config.deepseekBaseUrl || 'https://api.deepseek.com').replace(/\/+$/, ''),
+        apiKey: (this.config.deepseekApiKey || '').trim(),
+        model: (this.config.deepseekModel || 'deepseek-chat').trim(),
+        isFree: false,
+        keyPortalUrl: 'https://platform.deepseek.com/api_keys',
+        descriptionFr: 'DeepSeek V3 Officiel — ~$0.0011/req avec Cache KV (-90%), secours haute fiabilité'
+      }
+    ];
+  }
+
+  public getProviderStatuses(): LlmProviderStatusDTO[] {
+    return this.getAllProviders().map((p) => ({
+      id: p.id,
+      label: p.label,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      isFree: p.isFree,
+      configured: Boolean(p.apiKey),
+      keyPortalUrl: p.keyPortalUrl,
+      descriptionFr: p.descriptionFr
+    }));
+  }
+
+  public hasAnyConfiguredProvider(): boolean {
+    return this.getAllProviders().some((p) => Boolean(p.apiKey));
+  }
+
+  public selectProviderCandidates(isOverPaidQuota = false): InternalLlmProvider[] {
+    const configured = this.getAllProviders().filter(
+      (p) => Boolean(p.apiKey) && (!isOverPaidQuota || p.isFree)
+    );
+    if (configured.length === 0) return [];
+
+    const mode: LlmRoutingMode = this.config.llmRoutingMode || 'priority_cascade';
+    if (mode === 'manual') {
+      const targetId: LlmProviderId = this.config.llmManualProvider || 'deepseek';
+      const primary = configured.find((p) => p.id === targetId);
+      const others = configured.filter((p) => p.id !== targetId);
+      return primary ? [primary, ...others] : configured;
+    }
+
+    if (mode === 'load_balance') {
+      const idx = this.roundRobinCounter++ % configured.length;
+      return [...configured.slice(idx), ...configured.slice(0, idx)];
+    }
+
+    // Mode 'priority_cascade' (par défaut) : Gratuit d'abord (Gemini -> Groq -> Mistral -> OpenRouter) puis DeepSeek en secours
+    const priorityOrder: LlmProviderId[] = ['gemini', 'groq', 'mistral', 'openrouter', 'deepseek'];
+    return [...configured].sort(
+      (a, b) => priorityOrder.indexOf(a.id) - priorityOrder.indexOf(b.id)
+    );
+  }
 
   public async handleUserMessage(params: {
     userEmail: string;
@@ -398,7 +539,8 @@ export class DeepSeekOrchestratorService {
     });
 
     const budget = this.db.getLlmBudgetStats(this.config.aiDailyTokenCap, this.config.aiMonthlyBudgetUsd);
-    if (!this.config.deepseekApiKey || budget.isOverQuota) {
+    const candidateProviders = this.selectProviderCandidates(budget.isOverQuota);
+    if (candidateProviders.length === 0) {
       return this.runDirectSearchFallback({
         convId,
         userEmail: params.userEmail,
@@ -417,6 +559,9 @@ export class DeepSeekOrchestratorService {
     let totalCacheMissTokens = 0;
     let totalCompletionTokens = 0;
     let toolRounds = 0;
+    let activeProviderIndex = 0;
+    let usedProvider: InternalLlmProvider = candidateProviders[0];
+    let failoverFromLabel: string | undefined;
     const tStart = Date.now();
 
     const userAccessContext = params.plexAccess
@@ -452,7 +597,18 @@ export class DeepSeekOrchestratorService {
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         const allowTools = round < MAX_TOOL_ROUNDS;
-        const response = await this.callDeepSeek(messages, allowTools);
+        const callResult = await this.callLlmWithFailover(
+          messages,
+          allowTools,
+          candidateProviders,
+          activeProviderIndex
+        );
+        const response = callResult.response;
+        activeProviderIndex = callResult.providerIndex;
+        usedProvider = callResult.provider;
+        if (callResult.failoverFrom && !failoverFromLabel) {
+          failoverFromLabel = callResult.failoverFrom;
+        }
 
         const usage = response.usage || {};
         const pTokens = Number(usage.prompt_tokens || 0);
@@ -475,13 +631,19 @@ export class DeepSeekOrchestratorService {
           const replyText = (choice.content || '').trim() || this.buildDeterministicSummary(allCards);
           const mediaCards =
             allCards.length > 0 ? this.filterRelevantCardsForReply(replyText, allCards, toolRounds) : [];
-          const costUsd = this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
+          const costUsd = usedProvider.isFree
+            ? 0
+            : this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
           const latencyMs = Date.now() - tStart;
+          const ledgerModel =
+            usedProvider.id === 'deepseek'
+              ? usedProvider.model
+              : `${usedProvider.id}/${usedProvider.model}`;
 
           this.db.recordLlmUsage({
             userEmail: params.userEmail,
             conversationId: convId,
-            model: this.config.deepseekModel,
+            model: ledgerModel,
             toolRounds,
             promptTokens: totalPromptTokens,
             promptCacheHitTokens: totalCacheHitTokens,
@@ -508,6 +670,11 @@ export class DeepSeekOrchestratorService {
             preparedAction: latestPreparedAction,
             provenance: collectedProvenance,
             llmUsage: {
+              providerId: usedProvider.id,
+              providerLabel: usedProvider.label,
+              model: usedProvider.model,
+              isFreeProvider: usedProvider.isFree,
+              failoverFrom: failoverFromLabel,
               promptTokens: totalPromptTokens,
               cacheHitTokens: totalCacheHitTokens,
               cacheMissTokens: totalCacheMissTokens,
@@ -521,7 +688,7 @@ export class DeepSeekOrchestratorService {
           };
         }
 
-        // Exécution des tool_calls retournés par DeepSeek
+        // Exécution des tool_calls retournés par le LLM actif
         toolRounds++;
         messages.push({
           role: 'assistant',
@@ -573,13 +740,19 @@ export class DeepSeekOrchestratorService {
       const allCards = Array.from(collectedCards.values());
       const replyText = this.buildDeterministicSummary(allCards);
       const mediaCards = this.filterRelevantCardsForReply(replyText, allCards, toolRounds);
-      const costUsd = this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
+      const costUsd = usedProvider.isFree
+        ? 0
+        : this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
       const latencyMs = Date.now() - tStart;
+      const ledgerModel =
+        usedProvider.id === 'deepseek'
+          ? usedProvider.model
+          : `${usedProvider.id}/${usedProvider.model}`;
 
       this.db.recordLlmUsage({
         userEmail: params.userEmail,
         conversationId: convId,
-        model: this.config.deepseekModel,
+        model: ledgerModel,
         toolRounds,
         promptTokens: totalPromptTokens,
         promptCacheHitTokens: totalCacheHitTokens,
@@ -606,6 +779,11 @@ export class DeepSeekOrchestratorService {
         preparedAction: latestPreparedAction,
         provenance: collectedProvenance,
         llmUsage: {
+          providerId: usedProvider.id,
+          providerLabel: usedProvider.label,
+          model: usedProvider.model,
+          isFreeProvider: usedProvider.isFree,
+          failoverFrom: failoverFromLabel,
           promptTokens: totalPromptTokens,
           cacheHitTokens: totalCacheHitTokens,
           cacheMissTokens: totalCacheMissTokens,
@@ -1208,7 +1386,46 @@ export class DeepSeekOrchestratorService {
     );
   }
 
-  private async callDeepSeek(
+  private async callLlmWithFailover(
+    messages: DeepSeekChatMessage[],
+    includeTools: boolean,
+    candidates: InternalLlmProvider[],
+    startIndex: number
+  ): Promise<{
+    response: {
+      choices?: Array<{ message?: DeepSeekChatMessage }>;
+      usage?: Record<string, number>;
+    };
+    provider: InternalLlmProvider;
+    providerIndex: number;
+    failoverFrom?: string;
+  }> {
+    let lastError: unknown;
+    const initialProvider = candidates[startIndex] || candidates[0];
+
+    for (let i = startIndex; i < candidates.length; i++) {
+      const provider = candidates[i];
+      try {
+        const response = await this.callProviderEndpoint(provider, messages, includeTools);
+        if (!response.choices || response.choices.length === 0 || !response.choices[0]?.message) {
+          throw new Error(`${provider.id.toUpperCase()}_EMPTY_CHOICE`);
+        }
+        return {
+          response,
+          provider,
+          providerIndex: i,
+          failoverFrom: i > startIndex && initialProvider ? `${initialProvider.label} (${initialProvider.model})` : undefined
+        };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error('ALL_LLM_PROVIDERS_FAILED');
+  }
+
+  private async callProviderEndpoint(
+    provider: InternalLlmProvider,
     messages: DeepSeekChatMessage[],
     includeTools: boolean
   ): Promise<{
@@ -1219,30 +1436,114 @@ export class DeepSeekOrchestratorService {
     const timer = setTimeout(() => controller.abort(), 14000);
     try {
       const body: Record<string, unknown> = {
-        model: this.config.deepseekModel,
+        model: provider.model,
         messages,
-        tools: READ_ONLY_TOOLS_DEFINITIONS,
-        tool_choice: includeTools ? 'auto' : 'none',
         temperature: 0.2,
         max_tokens: 450
       };
 
-      const res = await this.fetchImpl(`${this.config.deepseekBaseUrl}/chat/completions`, {
+      if (provider.id === 'deepseek') {
+        body.tools = READ_ONLY_TOOLS_DEFINITIONS;
+        body.tool_choice = includeTools ? 'auto' : 'none';
+      } else if (includeTools) {
+        body.tools = sanitizeToolsForProvider(READ_ONLY_TOOLS_DEFINITIONS, provider.id);
+        body.tool_choice = 'auto';
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json'
+      };
+      if (provider.id === 'openrouter') {
+        headers['HTTP-Referer'] = 'https://askarr.local';
+        headers['X-Title'] = 'Askarr Cinema Concierge';
+      }
+
+      const res = await this.fetchImpl(`${provider.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.config.deepseekApiKey}`,
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify(body),
         signal: controller.signal
       });
 
       if (!res.ok) {
-        throw new Error(`DEEPSEEK_HTTP_${res.status}`);
+        throw new Error(`LLM_${provider.id.toUpperCase()}_HTTP_${res.status}`);
       }
       return (await res.json()) as {
         choices?: Array<{ message?: DeepSeekChatMessage }>;
         usage?: Record<string, number>;
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  public async testProviderConnection(providerId: LlmProviderId): Promise<{
+    ok: boolean;
+    latencyMs: number;
+    detail: string;
+    model: string;
+  }> {
+    const provider = this.getAllProviders().find((p) => p.id === providerId);
+    if (!provider || !provider.apiKey) {
+      return {
+        ok: false,
+        latencyMs: 0,
+        detail: `Clé API ${provider?.label || providerId} non configurée`,
+        model: provider?.model || ''
+      };
+    }
+
+    const t0 = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json'
+      };
+      if (provider.id === 'openrouter') {
+        headers['HTTP-Referer'] = 'https://askarr.local';
+        headers['X-Title'] = 'Askarr Cinema Concierge';
+      }
+
+      const res = await this.fetchImpl(`${provider.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: provider.model,
+          messages: [{ role: 'user', content: 'Réponds uniquement par le mot OK.' }],
+          max_tokens: 10,
+          temperature: 0
+        }),
+        signal: controller.signal
+      });
+
+      const latencyMs = Date.now() - t0;
+      if (!res.ok) {
+        return {
+          ok: false,
+          latencyMs,
+          detail: `HTTP ${res.status} sur ${provider.label} (${provider.model})`,
+          model: provider.model
+        };
+      }
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const reply = (data.choices?.[0]?.message?.content || 'OK').trim().slice(0, 30);
+      return {
+        ok: true,
+        latencyMs,
+        detail: `${provider.label} opérationnel (${provider.model} • ${provider.isFree ? 'Gratuit $0' : 'Payant'}) — Réponse: "${reply}"`,
+        model: provider.model
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - t0,
+        detail: err instanceof Error ? err.message : `Erreur réseau ${provider.label}`,
+        model: provider.model
       };
     } finally {
       clearTimeout(timer);

@@ -90,6 +90,18 @@ export class ApiTracer {
     if (lower.includes('deepseek.com')) {
       return { service: 'deepseek', serverLabel: 'DeepSeek LLM', sanitizedUrl };
     }
+    if (lower.includes('generativelanguage.googleapis.com')) {
+      return { service: 'deepseek', serverLabel: 'Google Gemini LLM', sanitizedUrl };
+    }
+    if (lower.includes('api.groq.com')) {
+      return { service: 'deepseek', serverLabel: 'Groq Cloud LLM', sanitizedUrl };
+    }
+    if (lower.includes('api.mistral.ai')) {
+      return { service: 'deepseek', serverLabel: 'Mistral AI LLM', sanitizedUrl };
+    }
+    if (lower.includes('openrouter.ai')) {
+      return { service: 'deepseek', serverLabel: 'OpenRouter Free LLM', sanitizedUrl };
+    }
     if (lower.includes('api.cloudflare.com')) {
       return { service: 'cloudflare', serverLabel: 'Cloudflare Zero Trust', sanitizedUrl };
     }

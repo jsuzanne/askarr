@@ -38,6 +38,8 @@ import type {
   ApiTraceEntryDTO,
   DeepSeekBalanceDTO,
   FeedbackStatsDTO,
+  LlmProviderId,
+  LlmRoutingMode,
   LlmTurnUsageDTO,
   LlmUsageCallEntryDTO,
   MediaEvidence,
@@ -295,6 +297,16 @@ export function App() {
     deepseekBaseUrl: '',
     deepseekModel: '',
     deepseekApiKey: '',
+    llmRoutingMode: 'priority_cascade' as LlmRoutingMode,
+    llmManualProvider: 'deepseek' as LlmProviderId,
+    geminiModel: 'gemini-2.5-flash',
+    geminiApiKey: '',
+    groqModel: 'llama-3.3-70b-versatile',
+    groqApiKey: '',
+    mistralModel: 'mistral-small-latest',
+    mistralApiKey: '',
+    openrouterModel: 'deepseek/deepseek-chat-v3-0324:free',
+    openrouterApiKey: '',
     aiDailyTokenCap: 2500000,
     aiMonthlyBudgetUsd: 10
   });
@@ -411,6 +423,16 @@ export function App() {
             deepseekBaseUrl: ev.deepseekBaseUrl || prev.deepseekBaseUrl,
             deepseekModel: ev.deepseekModel || prev.deepseekModel,
             deepseekApiKey: '',
+            llmRoutingMode: ev.llmRoutingMode || prev.llmRoutingMode,
+            llmManualProvider: ev.llmManualProvider || prev.llmManualProvider,
+            geminiModel: ev.geminiModel || prev.geminiModel,
+            geminiApiKey: '',
+            groqModel: ev.groqModel || prev.groqModel,
+            groqApiKey: '',
+            mistralModel: ev.mistralModel || prev.mistralModel,
+            mistralApiKey: '',
+            openrouterModel: ev.openrouterModel || prev.openrouterModel,
+            openrouterApiKey: '',
             aiDailyTokenCap: ev.aiDailyTokenCap || prev.aiDailyTokenCap,
             aiMonthlyBudgetUsd: ev.aiMonthlyBudgetUsd || prev.aiMonthlyBudgetUsd
           }));
@@ -1587,19 +1609,36 @@ export function App() {
                             {msg.llmUsage && (
                               <span
                                 className="inline-flex items-center gap-1.5 text-xs font-mono text-emerald-300 bg-emerald-950/40 border border-emerald-500/35 px-3 py-1.5 rounded-lg"
-                                title={`Prompt: ${msg.llmUsage.promptTokens} tok (Cache Hit: ${msg.llmUsage.cacheHitTokens}, Miss: ${msg.llmUsage.cacheMissTokens}) • Réponse: ${msg.llmUsage.completionTokens} tok • ${msg.llmUsage.toolRounds} round(s) d'outils`}
+                                title={`Fournisseur: ${msg.llmUsage.providerLabel || 'DeepSeek'} (${msg.llmUsage.model || 'deepseek-chat'}) • Prompt: ${msg.llmUsage.promptTokens} tok (Cache Hit: ${msg.llmUsage.cacheHitTokens}, Miss: ${msg.llmUsage.cacheMissTokens}) • Réponse: ${msg.llmUsage.completionTokens} tok • ${msg.llmUsage.toolRounds} round(s) d'outils`}
                               >
                                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                                 <span>
-                                  Coût DeepSeek : ${msg.llmUsage.estimatedCostUsd.toFixed(5)} (~
-                                  {(msg.llmUsage.estimatedCostUsd * 100).toFixed(3)} ¢) •{' '}
-                                  {msg.llmUsage.totalTokens.toLocaleString('fr-FR')} tok (
-                                  {msg.llmUsage.promptTokens > 0
-                                    ? Math.round(
+                                  {msg.llmUsage.providerLabel || 'DeepSeek'}{' '}
+                                  {msg.llmUsage.model ? `(${msg.llmUsage.model}) ` : ''}•{' '}
+                                  {msg.llmUsage.isFreeProvider || msg.llmUsage.estimatedCostUsd === 0 ? (
+                                    <strong className="text-emerald-200">Gratuit $0.00</strong>
+                                  ) : (
+                                    <>
+                                      ${msg.llmUsage.estimatedCostUsd.toFixed(5)} (~
+                                      {(msg.llmUsage.estimatedCostUsd * 100).toFixed(3)} ¢)
+                                    </>
+                                  )}{' '}
+                                  • {msg.llmUsage.totalTokens.toLocaleString('fr-FR')} tok
+                                  {!msg.llmUsage.isFreeProvider && msg.llmUsage.promptTokens > 0 && (
+                                    <>
+                                      {' '}
+                                      (
+                                      {Math.round(
                                         (msg.llmUsage.cacheHitTokens / msg.llmUsage.promptTokens) * 100
-                                      )
-                                    : 0}
-                                  % cache)
+                                      )}
+                                      % cache)
+                                    </>
+                                  )}
+                                  {msg.llmUsage.failoverFrom && (
+                                    <span className="ml-1.5 text-amber-300">
+                                      [Secours auto ← {msg.llmUsage.failoverFrom}]
+                                    </span>
+                                  )}
                                 </span>
                               </span>
                             )}
@@ -2327,6 +2366,54 @@ export function App() {
                           </div>
                         )}
 
+                        {/* Benchmark comparatif par Modèle / Fournisseur LLM */}
+                        {stats?.modelBenchmarks && stats.modelBenchmarks.length > 0 && (
+                          <div className="p-3.5 rounded-xl bg-stone-950/90 border border-stone-800 space-y-2">
+                            <div className="text-xs font-semibold text-amber-300 flex items-center justify-between">
+                              <span>⚡ Benchmark & Répartition par Modèle IA (Latence & Coût)</span>
+                              <span className="text-[11px] font-mono text-stone-400">
+                                Mode actif :{' '}
+                                <strong className="text-emerald-300">
+                                  {adminSettings.connectors.llmRouter?.routingMode === 'priority_cascade'
+                                    ? 'Cascade Prioritaire (Gratuit → Secours)'
+                                    : adminSettings.connectors.llmRouter?.routingMode === 'load_balance'
+                                      ? 'Load-Balancing (Tour à tour & Secours)'
+                                      : `Manuel (${adminSettings.connectors.llmRouter?.manualProvider || 'deepseek'})`}
+                                </strong>
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs font-mono">
+                              {stats.modelBenchmarks.map((bm) => (
+                                <div
+                                  key={bm.model}
+                                  className="p-2.5 rounded-lg bg-stone-900/90 border border-stone-800 flex items-center justify-between gap-2"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-white truncate" title={bm.model}>
+                                      {bm.model}
+                                    </div>
+                                    <div className="text-[11px] text-stone-400">
+                                      {bm.callsCount} req • ~{bm.avgLatencyMs} ms •{' '}
+                                      {(bm.totalTokens / 1000).toFixed(1)}k tok
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
+                                      bm.totalCostUsd === 0
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
+                                        : 'bg-amber-500/15 text-amber-200 border border-amber-500/30'
+                                    }`}
+                                  >
+                                    {bm.totalCostUsd === 0
+                                      ? 'Gratuit $0.00'
+                                      : `$${bm.totalCostUsd.toFixed(4)}`}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Historique des dernières requêtes avec coût unitaire */}
                         {stats?.recentCalls && stats.recentCalls.length > 0 && (
                           <details className="group">
@@ -2342,6 +2429,7 @@ export function App() {
                                   <tr>
                                     <th className="py-2 px-3">Heure</th>
                                     <th className="py-2 px-3">Utilisateur</th>
+                                    <th className="py-2 px-3">Modèle / LLM</th>
                                     <th className="py-2 px-3">Outils</th>
                                     <th className="py-2 px-3">Tokens (Hit / Miss / Out)</th>
                                     <th className="py-2 px-3">Latence</th>
@@ -2354,8 +2442,11 @@ export function App() {
                                       <td className="py-2 px-3 text-stone-400">
                                         {new Date(call.timestamp).toLocaleTimeString('fr-FR')}
                                       </td>
-                                      <td className="py-2 px-3 text-stone-200 truncate max-w-[160px]">
+                                      <td className="py-2 px-3 text-stone-200 truncate max-w-[140px]">
                                         {call.userEmail}
+                                      </td>
+                                      <td className="py-2 px-3 text-amber-200 truncate max-w-[180px]" title={call.model}>
+                                        {call.model}
                                       </td>
                                       <td className="py-2 px-3 text-stone-300">
                                         {call.fallbackUsed ? (
@@ -2373,7 +2464,9 @@ export function App() {
                                       </td>
                                       <td className="py-2 px-3 text-amber-300">{call.latencyMs} ms</td>
                                       <td className="py-2 px-3 text-right font-bold text-emerald-300">
-                                        ${call.estimatedCostUsd.toFixed(5)}
+                                        {call.estimatedCostUsd === 0
+                                          ? 'Gratuit ($0)'
+                                          : `$${call.estimatedCostUsd.toFixed(5)}`}
                                       </td>
                                     </tr>
                                   ))}
@@ -2602,10 +2695,332 @@ export function App() {
                       </div>
                     </div>
 
-                    {/* Section 3 : DeepSeek IA & Cloudflare Access */}
+                    {/* Section 3 : Routeur Multi-LLM & Clés API Gratuites (Gemini, Groq, Mistral, OpenRouter, DeepSeek) */}
+                    <div className="p-4 sm:p-5 rounded-xl bg-stone-950/90 border border-amber-500/35 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-amber-400" />
+                            <span>
+                              Routeur Multi-LLM Intelligent — Modèles Gratuits & DeepSeek (Failover Auto)
+                            </span>
+                          </h4>
+                          <p className="text-xs text-stone-400 mt-0.5">
+                            Ajoute tes clés gratuites (sans carte bancaire) et choisis comment Askarr sélectionne ou alterne les modèles. En cas de quota atteint (HTTP 429) ou d'erreur, Askarr bascule automatiquement sur le LLM suivant en &lt; 100 ms.
+                          </p>
+                        </div>
+                        <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-xs font-mono font-bold">
+                          {adminSettings.connectors.llmRouter?.activeProvidersCount ?? 1} LLM actif(s)
+                        </span>
+                      </div>
+
+                      {/* Sélecteur des 3 modes de routage */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {[
+                          {
+                            mode: 'priority_cascade' as LlmRoutingMode,
+                            title: '1. Cascade Prioritaire (Recommandé)',
+                            desc: 'Utilise les LLM Gratuits en priorité (Gemini → Groq → Mistral → OpenRouter) et garde DeepSeek en roue de secours automatique ($0 dépensé).'
+                          },
+                          {
+                            mode: 'load_balance' as LlmRoutingMode,
+                            title: '2. Load-Balancing (Tour à tour)',
+                            desc: 'Alterne équitablement chaque requête entre tous tes LLM actifs (Round-Robin) pour multiplier tes quotas gratuits et comparer les modèles.'
+                          },
+                          {
+                            mode: 'manual' as LlmRoutingMode,
+                            title: '3. Manuel / Fixe (avec Secours)',
+                            desc: 'Force un fournisseur précis en priorité pour le tester en direct (avec bascule de secours automatique si son quota est atteint).'
+                          }
+                        ].map((opt) => {
+                          const active = configForm.llmRoutingMode === opt.mode;
+                          return (
+                            <button
+                              key={opt.mode}
+                              type="button"
+                              onClick={() => setConfigForm((p) => ({ ...p, llmRoutingMode: opt.mode }))}
+                              className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
+                                active
+                                  ? 'bg-amber-950/40 border-amber-400 text-white shadow-md'
+                                  : 'bg-stone-900/70 border-stone-800 text-stone-300 hover:border-stone-700'
+                              }`}
+                            >
+                              <div className="font-bold text-xs sm:text-sm flex items-center justify-between gap-2">
+                                <span>{opt.title}</span>
+                                {active && (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-black font-extrabold">
+                                    ACTIF
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-stone-400 mt-1.5 leading-relaxed">{opt.desc}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {configForm.llmRoutingMode === 'manual' && (
+                        <div className="p-3 rounded-xl bg-stone-900/90 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3">
+                          <label className="text-xs sm:text-sm font-semibold text-amber-200">
+                            Fournisseur LLM cible en mode Manuel :
+                          </label>
+                          <select
+                            value={configForm.llmManualProvider}
+                            onChange={(e) =>
+                              setConfigForm((p) => ({
+                                ...p,
+                                llmManualProvider: e.target.value as LlmProviderId
+                              }))
+                            }
+                            className="rounded-xl bg-stone-950 border border-amber-500/50 px-3.5 py-2 text-white font-mono text-xs sm:text-sm"
+                          >
+                            <option value="gemini">Google Gemini (Gratuit — gemini-2.5-flash)</option>
+                            <option value="groq">Groq Cloud LPU (Gratuit — llama-3.3-70b-versatile)</option>
+                            <option value="mistral">Mistral AI La Plateforme (Gratuit — mistral-small-latest)</option>
+                            <option value="openrouter">OpenRouter Free (Gratuit — deepseek-chat-v3-0324:free)</option>
+                            <option value="deepseek">DeepSeek Officiel (Payant — deepseek-chat)</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Cartes des 5 Fournisseurs LLM (4 Gratuits + DeepSeek) */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                        {/* 1. Google Gemini */}
+                        <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="font-bold text-white text-xs sm:text-sm">
+                                Google Gemini AI Studio
+                              </span>
+                              <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                                GRATUIT ($0)
+                              </span>
+                            </div>
+                            <a
+                              href="https://aistudio.google.com/apikey"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-amber-300 hover:text-amber-200 underline font-semibold"
+                            >
+                              Obtenir clé gratuite ↗
+                            </a>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="password"
+                              value={configForm.geminiApiKey}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, geminiApiKey: e.target.value }))}
+                              placeholder={
+                                adminSettings.editableValues?.geminiApiKeyMasked || 'Clé AIzaSy... (Google AI Studio)'
+                              }
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={configForm.geminiModel}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, geminiModel: e.target.value }))}
+                              placeholder="gemini-2.5-flash"
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="text-stone-400">
+                              {serviceTestResults['llm:gemini']
+                                ? `${serviceTestResults['llm:gemini'].detail} (${serviceTestResults['llm:gemini'].latencyMs} ms)`
+                                : adminSettings.editableValues?.geminiApiKeyConfigured
+                                  ? '✓ Clé configurée dans SQLite'
+                                  : '15 req/min • 1 500 req/jour gratuites'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={testingServiceKey === 'llm:gemini'}
+                              onClick={() => void handleTestService('llm:gemini')}
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                            >
+                              {testingServiceKey === 'llm:gemini' ? 'Test...' : 'Tester Gemini'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 2. Groq Cloud */}
+                        <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="font-bold text-white text-xs sm:text-sm">
+                                Groq Cloud (LPU Ultra-Rapide)
+                              </span>
+                              <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                                GRATUIT ($0)
+                              </span>
+                            </div>
+                            <a
+                              href="https://console.groq.com/keys"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-amber-300 hover:text-amber-200 underline font-semibold"
+                            >
+                              Obtenir clé gratuite ↗
+                            </a>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="password"
+                              value={configForm.groqApiKey}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, groqApiKey: e.target.value }))}
+                              placeholder={
+                                adminSettings.editableValues?.groqApiKeyMasked || 'Clé gsk_... (Groq Cloud)'
+                              }
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={configForm.groqModel}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, groqModel: e.target.value }))}
+                              placeholder="llama-3.3-70b-versatile"
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="text-stone-400">
+                              {serviceTestResults['llm:groq']
+                                ? `${serviceTestResults['llm:groq'].detail} (${serviceTestResults['llm:groq'].latencyMs} ms)`
+                                : adminSettings.editableValues?.groqApiKeyConfigured
+                                  ? '✓ Clé configurée dans SQLite'
+                                  : '~300 tokens/s • 14 400 req/jour gratuites'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={testingServiceKey === 'llm:groq'}
+                              onClick={() => void handleTestService('llm:groq')}
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                            >
+                              {testingServiceKey === 'llm:groq' ? 'Test...' : 'Tester Groq'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 3. Mistral AI (La Plateforme) */}
+                        <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="font-bold text-white text-xs sm:text-sm">
+                                Mistral AI (La Plateforme 🇫🇷)
+                              </span>
+                              <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                                GRATUIT ($0)
+                              </span>
+                            </div>
+                            <a
+                              href="https://console.mistral.ai/api-keys"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-amber-300 hover:text-amber-200 underline font-semibold"
+                            >
+                              Obtenir clé gratuite ↗
+                            </a>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="password"
+                              value={configForm.mistralApiKey}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, mistralApiKey: e.target.value }))}
+                              placeholder={
+                                adminSettings.editableValues?.mistralApiKeyMasked || 'Clé API Mistral AI'
+                              }
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={configForm.mistralModel}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, mistralModel: e.target.value }))}
+                              placeholder="mistral-small-latest"
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="text-stone-400">
+                              {serviceTestResults['llm:mistral']
+                                ? `${serviceTestResults['llm:mistral'].detail} (${serviceTestResults['llm:mistral'].latencyMs} ms)`
+                                : adminSettings.editableValues?.mistralApiKeyConfigured
+                                  ? '✓ Clé configurée dans SQLite'
+                                  : 'Excellent en français • Plan Experiment gratuit'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={testingServiceKey === 'llm:mistral'}
+                              onClick={() => void handleTestService('llm:mistral')}
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                            >
+                              {testingServiceKey === 'llm:mistral' ? 'Test...' : 'Tester Mistral'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 4. OpenRouter Free */}
+                        <div className="p-3.5 rounded-xl bg-stone-900/80 border border-stone-800 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className="font-bold text-white text-xs sm:text-sm">
+                                OpenRouter (Modèles `:free`)
+                              </span>
+                              <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                                GRATUIT ($0)
+                              </span>
+                            </div>
+                            <a
+                              href="https://openrouter.ai/settings/keys"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-amber-300 hover:text-amber-200 underline font-semibold"
+                            >
+                              Obtenir clé gratuite ↗
+                            </a>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="password"
+                              value={configForm.openrouterApiKey}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, openrouterApiKey: e.target.value }))}
+                              placeholder={
+                                adminSettings.editableValues?.openrouterApiKeyMasked || 'Clé sk-or-v1-...'
+                              }
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={configForm.openrouterModel}
+                              onChange={(e) => setConfigForm((p) => ({ ...p, openrouterModel: e.target.value }))}
+                              placeholder="deepseek/deepseek-chat-v3-0324:free"
+                              className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="text-stone-400">
+                              {serviceTestResults['llm:openrouter']
+                                ? `${serviceTestResults['llm:openrouter'].detail} (${serviceTestResults['llm:openrouter'].latencyMs} ms)`
+                                : adminSettings.editableValues?.openrouterApiKeyConfigured
+                                  ? '✓ Clé configurée dans SQLite'
+                                  : 'DeepSeek V3 / Gemini / Llama gratuits (:free)'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={testingServiceKey === 'llm:openrouter'}
+                              onClick={() => void handleTestService('llm:openrouter')}
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                            >
+                              {testingServiceKey === 'llm:openrouter' ? 'Test...' : 'Tester OpenRouter'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 4 : DeepSeek Officiel (Secours Payant) & Cloudflare Access */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl bg-stone-950/90 border border-stone-800">
                       <div>
-                        <label className="block text-stone-300 font-semibold mb-1">Clé API DeepSeek</label>
+                        <label className="block text-stone-300 font-semibold mb-1">
+                          Clé API DeepSeek (Payant / Secours Ultime)
+                        </label>
                         <input
                           type="password"
                           value={configForm.deepseekApiKey}

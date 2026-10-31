@@ -1,6 +1,6 @@
 # 🎬 Askarr — Grand Cinéma & Séries
 
-![Version](https://img.shields.io/badge/version-1.1.0-f59e0b?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.2.0-f59e0b?style=flat-square)
 ![Node](https://img.shields.io/badge/node-%3E%3D22-10b981?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Fastify%205%20%7C%20React%2019%20%7C%20SQLite-ef4444?style=flat-square)
 ![Docker](https://img.shields.io/badge/docker-port%204880-3b82f6?style=flat-square)
@@ -33,9 +33,10 @@ flowchart LR
 
 ## ✨ Fonctionnalités Principales
 
-### 1. 🍿 Salle Ciné & Recherche Conversationnelle Hybride (DeepSeek + TMDB/IMDb)
+### 1. 🍿 Salle Ciné, Recherche Conversationnelle & Routeur Multi-LLM (Gratuit + DeepSeek)
+- **Routeur Multi-LLM Intelligent (4 LLM Gratuits + DeepSeek)** : support natif de **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`), **Mistral AI** (`mistral-small-latest`), **OpenRouter `:free`** et **DeepSeek** (`deepseek-chat`) avec 3 modes (**Cascade Prioritaire Gratuit $\rightarrow$ Secours**, **Load-Balancing Round-Robin**, **Manuel**) et basculement automatique en cas de quota `HTTP 429`.
 - **Recherche en langage naturel** : par titre, réalisateur, acteur, année, souvenir d'intrigue ou palmarès (Festival de Cannes, César, Oscars).
-- **Fiches Distributeur enrichies** : affiche officielle, notes **IMDb** et **TMDB**, synopsis complet en français, dates de sortie cinéma et VOD/DVD.
+- **Fiches Distributeur enrichies** : affiche officielle, notes **IMDb** et **TMDB**, synopsis complet en français, dates de sortie cinéma et VOD/DVD, et **nom de l'utilisateur Overseerr ayant demandé le film** (ou mention d'ajout automatique par liste).
 - **Zéro hallucination de disponibilité** : l'IA s'appuie exclusivement sur les preuves temps réel renvoyées par les connecteurs (`MediaEvidence`).
 
 ### 2. 🚦 Visibilité claire des 3 États d'un Film ou d'une Série

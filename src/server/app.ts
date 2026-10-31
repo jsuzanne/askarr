@@ -18,7 +18,7 @@ import { SmtpInviteService } from './connectors/smtp-invite.service.js';
 import { MediaAggregatorService } from './aggregator/media-aggregator.service.js';
 import { DeepSeekOrchestratorService } from './orchestrator/deepseek-orchestrator.service.js';
 import { ApiTracer } from './utils/api-tracer.js';
-import type { UserSessionInfo, AdminSettingsDTO, PlexSharedUserDTO } from '../shared/types.js';
+import type { UserSessionInfo, AdminSettingsDTO, PlexSharedUserDTO, LlmProviderId, LlmRoutingMode } from '../shared/types.js';
 import { APP_VERSION, APP_RELEASE_DATE } from '../shared/version.js';
 import type { JWTVerifyGetKey } from 'jose';
 
@@ -161,6 +161,46 @@ export async function createApp(deps: AppDependencies): Promise<{
     if (saved.cfg_deepseek_key) {
       config.deepseekApiKey = saved.cfg_deepseek_key;
     }
+    if (
+      saved.cfg_llm_routing_mode === 'manual' ||
+      saved.cfg_llm_routing_mode === 'priority_cascade' ||
+      saved.cfg_llm_routing_mode === 'load_balance'
+    ) {
+      config.llmRoutingMode = saved.cfg_llm_routing_mode as LlmRoutingMode;
+    }
+    if (
+      saved.cfg_llm_manual_provider === 'deepseek' ||
+      saved.cfg_llm_manual_provider === 'gemini' ||
+      saved.cfg_llm_manual_provider === 'groq' ||
+      saved.cfg_llm_manual_provider === 'mistral' ||
+      saved.cfg_llm_manual_provider === 'openrouter'
+    ) {
+      config.llmManualProvider = saved.cfg_llm_manual_provider as LlmProviderId;
+    }
+    if (saved.cfg_gemini_key !== undefined) {
+      config.geminiApiKey = saved.cfg_gemini_key;
+    }
+    if (saved.cfg_gemini_model) {
+      config.geminiModel = saved.cfg_gemini_model;
+    }
+    if (saved.cfg_groq_key !== undefined) {
+      config.groqApiKey = saved.cfg_groq_key;
+    }
+    if (saved.cfg_groq_model) {
+      config.groqModel = saved.cfg_groq_model;
+    }
+    if (saved.cfg_mistral_key !== undefined) {
+      config.mistralApiKey = saved.cfg_mistral_key;
+    }
+    if (saved.cfg_mistral_model) {
+      config.mistralModel = saved.cfg_mistral_model;
+    }
+    if (saved.cfg_openrouter_key !== undefined) {
+      config.openrouterApiKey = saved.cfg_openrouter_key;
+    }
+    if (saved.cfg_openrouter_model) {
+      config.openrouterModel = saved.cfg_openrouter_model;
+    }
     if (saved.cfg_ai_daily_token_cap && Number(saved.cfg_ai_daily_token_cap) > 0) {
       config.aiDailyTokenCap = Number(saved.cfg_ai_daily_token_cap);
     }
@@ -204,8 +244,9 @@ export async function createApp(deps: AppDependencies): Promise<{
     }
 
     const budget = db.getLlmBudgetStats(config.aiDailyTokenCap, config.aiMonthlyBudgetUsd);
+    const availableProviders = orchestrator.selectProviderCandidates(budget.isOverQuota);
     const aiMode: UserSessionInfo['aiMode'] =
-      config.deepseekApiKey && !budget.isOverQuota ? 'active' : 'direct_search_fallback';
+      availableProviders.length > 0 ? 'active' : 'direct_search_fallback';
 
     let plexAccess: UserSessionInfo['plexAccess'];
     try {
@@ -1360,6 +1401,12 @@ export async function createApp(deps: AppDependencies): Promise<{
           },
           accountBalance,
           usageStats
+        },
+        llmRouter: {
+          routingMode: config.llmRoutingMode || 'priority_cascade',
+          manualProvider: config.llmManualProvider || 'deepseek',
+          activeProvidersCount: orchestrator.getProviderStatuses().filter((p) => p.configured).length,
+          providers: orchestrator.getProviderStatuses()
         }
       },
       editableValues: {
@@ -1393,6 +1440,20 @@ export async function createApp(deps: AppDependencies): Promise<{
         deepseekModel: config.deepseekModel,
         deepseekApiKeyMasked: maskSecret(config.deepseekApiKey),
         deepseekApiKeyConfigured: Boolean(config.deepseekApiKey),
+        llmRoutingMode: config.llmRoutingMode || 'priority_cascade',
+        llmManualProvider: config.llmManualProvider || 'deepseek',
+        geminiModel: config.geminiModel || 'gemini-2.5-flash',
+        geminiApiKeyMasked: maskSecret(config.geminiApiKey || ''),
+        geminiApiKeyConfigured: Boolean(config.geminiApiKey),
+        groqModel: config.groqModel || 'llama-3.3-70b-versatile',
+        groqApiKeyMasked: maskSecret(config.groqApiKey || ''),
+        groqApiKeyConfigured: Boolean(config.groqApiKey),
+        mistralModel: config.mistralModel || 'mistral-small-latest',
+        mistralApiKeyMasked: maskSecret(config.mistralApiKey || ''),
+        mistralApiKeyConfigured: Boolean(config.mistralApiKey),
+        openrouterModel: config.openrouterModel || 'deepseek/deepseek-chat-v3-0324:free',
+        openrouterApiKeyMasked: maskSecret(config.openrouterApiKey || ''),
+        openrouterApiKeyConfigured: Boolean(config.openrouterApiKey),
         aiDailyTokenCap: config.aiDailyTokenCap,
         aiMonthlyBudgetUsd: config.aiMonthlyBudgetUsd
       },
@@ -1425,6 +1486,16 @@ export async function createApp(deps: AppDependencies): Promise<{
     deepseekBaseUrl: z.string().optional(),
     deepseekModel: z.string().optional(),
     deepseekApiKey: z.string().optional(),
+    llmRoutingMode: z.enum(['manual', 'priority_cascade', 'load_balance']).optional(),
+    llmManualProvider: z.enum(['deepseek', 'gemini', 'groq', 'mistral', 'openrouter']).optional(),
+    geminiModel: z.string().optional(),
+    geminiApiKey: z.string().optional(),
+    groqModel: z.string().optional(),
+    groqApiKey: z.string().optional(),
+    mistralModel: z.string().optional(),
+    mistralApiKey: z.string().optional(),
+    openrouterModel: z.string().optional(),
+    openrouterApiKey: z.string().optional(),
     aiDailyTokenCap: z.coerce.number().int().positive().optional(),
     aiMonthlyBudgetUsd: z.coerce.number().positive().optional()
   });
@@ -1478,6 +1549,20 @@ export async function createApp(deps: AppDependencies): Promise<{
     saveIfPresent('cfg_deepseek_url', body.deepseekBaseUrl);
     saveIfPresent('cfg_deepseek_model', body.deepseekModel);
     saveIfPresent('cfg_deepseek_key', body.deepseekApiKey);
+    if (body.llmRoutingMode) {
+      db.setAppSetting('cfg_llm_routing_mode', body.llmRoutingMode);
+    }
+    if (body.llmManualProvider) {
+      db.setAppSetting('cfg_llm_manual_provider', body.llmManualProvider);
+    }
+    saveIfPresent('cfg_gemini_model', body.geminiModel);
+    saveIfPresent('cfg_gemini_key', body.geminiApiKey);
+    saveIfPresent('cfg_groq_model', body.groqModel);
+    saveIfPresent('cfg_groq_key', body.groqApiKey);
+    saveIfPresent('cfg_mistral_model', body.mistralModel);
+    saveIfPresent('cfg_mistral_key', body.mistralApiKey);
+    saveIfPresent('cfg_openrouter_model', body.openrouterModel);
+    saveIfPresent('cfg_openrouter_key', body.openrouterApiKey);
     if (body.aiDailyTokenCap) {
       db.setAppSetting('cfg_ai_daily_token_cap', String(body.aiDailyTokenCap));
     }
@@ -1621,6 +1706,13 @@ export async function createApp(deps: AppDependencies): Promise<{
         ? `Connecté (${config.deepseekModel}) • Solde restant : ${bal.totalBalance} ${bal.currency}`
         : bal.error || 'Clé API absente ou solde épuisé';
       result = { ok, model: config.deepseekModel, balance: bal };
+    } else if (body.service.startsWith('llm:')) {
+      const providerId = body.service.split(':')[1] as LlmProviderId;
+      const testRes = await orchestrator.testProviderConnection(providerId);
+      ok = testRes.ok;
+      latencyMs = testRes.latencyMs;
+      detail = testRes.detail;
+      result = testRes;
     }
 
     return {

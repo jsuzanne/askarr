@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type {
   ChatMessageDTO,
   FeedbackStatsDTO,
+  LlmModelBenchmarkDTO,
   LlmUsageCallEntryDTO,
   MediaEvidence,
   ProvenanceEntry,
@@ -38,6 +39,7 @@ export interface LlmBudgetStats {
   lastRequestCostUsd: number | null;
   isOverQuota: boolean;
   recentCalls: LlmUsageCallEntryDTO[];
+  modelBenchmarks: LlmModelBenchmarkDTO[];
 }
 
 export class AskarrDatabase {
@@ -734,6 +736,35 @@ export class AskarrDatabase {
 
     const lastAiCall = recentCalls.find((c) => !c.fallbackUsed);
 
+    const benchRows = this.db
+      .prepare(
+        `SELECT
+           model,
+           COUNT(*) AS calls_count,
+           ROUND(AVG(latency_ms)) AS avg_latency_ms,
+           COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS total_tokens,
+           COALESCE(SUM(estimated_cost_usd), 0) AS total_cost_usd
+         FROM llm_usage_ledger
+         WHERE fallback_used = 0
+         GROUP BY model
+         ORDER BY calls_count DESC`
+      )
+      .all() as Array<{
+      model: string;
+      calls_count: number;
+      avg_latency_ms: number;
+      total_tokens: number;
+      total_cost_usd: number;
+    }>;
+
+    const modelBenchmarks: LlmModelBenchmarkDTO[] = benchRows.map((b) => ({
+      model: b.model,
+      callsCount: Number(b.calls_count || 0),
+      avgLatencyMs: Number(b.avg_latency_ms || 0),
+      totalTokens: Number(b.total_tokens || 0),
+      totalCostUsd: Math.round(Number(b.total_cost_usd || 0) * 1_000_000) / 1_000_000
+    }));
+
     return {
       dailyTokensUsed,
       dailyTokenCap,
@@ -745,7 +776,8 @@ export class AskarrDatabase {
       averageTokensPerRequest,
       lastRequestCostUsd: lastAiCall ? lastAiCall.estimatedCostUsd : null,
       isOverQuota: dailyTokensUsed >= dailyTokenCap || monthlyCostUsd >= monthlyBudgetUsd,
-      recentCalls
+      recentCalls,
+      modelBenchmarks
     };
   }
 

@@ -5,6 +5,24 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.0] - 2026-10-31
+
+### Ajouté
+- **Routeur Multi-LLM Intelligent (4 Fournisseurs Gratuits + DeepSeek avec Secours Automatique)** :
+  - Prise en charge native de **Google Gemini AI Studio** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`), **Mistral AI La Plateforme** (`mistral-small-latest`), **OpenRouter Free** (`deepseek/deepseek-chat-v3-0324:free`) et **DeepSeek Officiel** (`deepseek-chat`).
+  - **3 stratégies de sélection configurables à chaud** dans la Régie Admin (persistées dans SQLite) :
+    1. **Cascade Prioritaire (`priority_cascade`, par défaut)** : interroge les LLM gratuits configurés en priorité ($0 dépensé) et bascule automatiquement en $< 100\text{ ms}$ sur le fournisseur suivant (puis DeepSeek en secours ultime) en cas de limite de quota (`HTTP 429`) ou d'indisponibilité.
+    2. **Load-Balancing (`load_balance`)** : alterne chaque requête en *Round-Robin* entre tous les fournisseurs actifs pour cumuler les quotas gratuits et comparer les modèles en conditions réelles.
+    3. **Manuel / Fixe (`manual`)** : cible un fournisseur précis en priorité pour le tester en direct tout en conservant le basculement de secours automatique.
+  - **Normalisation universelle des schémas d'outils (`sanitizeToolsForProvider`)** : nettoyage automatique des clés JSON Schema (`additionalProperties`, `default`) pour garantir une compatibilité 100 % sans erreur avec le *Function Calling* strict de Gemini, Groq et Mistral.
+  - **Panneau de configuration & Test en 1 clic par LLM** : liens directs pour générer les clés gratuites, champs dédiés dans la Régie Admin et bouton `Tester` individuel (`llm:gemini`, `llm:groq`, `llm:mistral`, `llm:openrouter`, `llm:deepseek`).
+- **Cockpit Financier DeepSeek & Benchmark Multi-Modèles** :
+  - Récupération en direct du solde du compte DeepSeek (`GET /user/balance`), calcul du coût moyen par requête (tarif Cache Hit $-90\,\%$ vs Cache Miss) et estimation de l'autonomie restante en nombre de requêtes.
+  - Tableau de **Benchmark comparatif par modèle** (`modelBenchmarks`) dans la Régie Admin (nombre d'appels, latence moyenne en ms, tokens consommés et coût `$0.00 Gratuit` vs payant).
+  - Badge sous chaque réponse du chat indiquant quel fournisseur/modèle a répondu, son coût exact (`Gratuit $0.00` ou coût DeepSeek) et l'éventuelle bascule de secours automatique (`[Secours auto ← ...]`).
+
+---
+
 ## [1.1.1] - 2026-10-31
 
 ### Ajouté
