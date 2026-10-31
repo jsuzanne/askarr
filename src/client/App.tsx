@@ -1346,14 +1346,18 @@ export function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 flex flex-col">
+      <main
+        className={`flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 ${
+          workspaceMode === 'user' && userTab === 'chat' ? 'pb-0' : 'pb-4 sm:pb-6'
+        } flex flex-col`}
+      >
         {/* ========================================================= */}
         {/* ESPACE SALLE DE CINÉMA (AMI PLEX)                         */}
         {/* ========================================================= */}
         {workspaceMode === 'user' && userTab === 'chat' && (
           <div className="flex-1 flex flex-col gap-5 sm:gap-6">
-            {/* Bandeau "À L'AFFICHE" — Suggestions de Séances (Swipeable sur iPhone, Grille fluide sans coupure sur Desktop) */}
-            <div className="bg-[#120b0e]/90 border border-amber-500/25 rounded-2xl p-2.5 sm:p-3.5 shadow-lg">
+            {/* Bandeau "À L'AFFICHE" — Suggestions de Séances (Swipeable sur iPhone, 1 ligne fluide sur Desktop) */}
+            <div className="bg-[#120b0e]/90 border border-amber-500/25 rounded-2xl p-2.5 sm:p-3 shadow-lg">
               <div className="flex items-center gap-2 overflow-x-auto sm:overflow-visible flex-nowrap sm:flex-wrap py-0.5 no-scrollbar">
                 {QUICK_PROMPTS.map((qp, idx) => {
                   const Icon = qp.icon;
@@ -1362,24 +1366,13 @@ export function App() {
                       key={idx}
                       onClick={() => void sendMessage(qp.prompt)}
                       disabled={loading}
-                      className="text-xs sm:text-sm font-medium bg-stone-950/90 hover:bg-red-950/60 active:scale-[0.99] text-stone-100 border border-amber-500/25 hover:border-amber-400/60 px-3 sm:px-3.5 py-2 rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0 shadow-sm"
+                      className="text-xs sm:text-[13px] font-medium bg-stone-950/90 hover:bg-red-950/60 active:scale-[0.99] text-stone-100 border border-amber-500/25 hover:border-amber-400/60 px-3 py-1.5 sm:py-2 rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0 shadow-sm"
                     >
-                      <Icon className="w-4 h-4 text-amber-400 shrink-0" />
+                      <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
                       <span>{qp.label}</span>
                     </button>
                   );
                 })}
-
-                {messages.length > 1 && (
-                  <button
-                    onClick={startNewConversation}
-                    className="ml-auto text-xs sm:text-sm font-semibold text-amber-200 hover:text-white px-3.5 py-2 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-amber-500/30 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                    title="Effacer les messages actuels et démarrer un nouveau sujet"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Réinitialiser le chat</span>
-                  </button>
-                )}
               </div>
             </div>
 
@@ -1679,34 +1672,36 @@ export function App() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Guichet de Recherche en bas de l'écran */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void sendMessage();
-              }}
-              className="sticky bottom-2 sm:bottom-4 bg-[#120a0d]/95 border border-amber-500/35 rounded-2xl p-2 sm:p-2.5 shadow-[0_15px_50px_rgba(0,0,0,0.9)] backdrop-blur-xl flex items-center gap-2 sm:gap-3"
-            >
-              <div className="pl-3 text-amber-400 hidden sm:block">
-                <Clapperboard className="w-5 h-5 sm:w-6 sm:h-6" />
-              </div>
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Un film, un réalisateur, un acteur, une intrigue ou un palmarès de Cannes..."
-                className="flex-1 bg-transparent text-base lg:text-lg text-white placeholder-stone-400 focus:outline-none py-2.5 sm:py-3 px-2.5"
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={loading || !input.trim()}
-                className="cinema-velvet-pill hover:brightness-110 active:scale-95 disabled:opacity-40 text-white font-bold text-sm sm:text-base px-4 sm:px-6 py-3 rounded-xl transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+            {/* Guichet de Recherche en bas de l'écran (Dock opaque jusqu'en bas pour masquer le scroll dessous) */}
+            <div className="sticky bottom-0 z-30 -mx-3 px-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-5 pb-3 sm:pb-4 bg-gradient-to-t from-[#080507] via-[#080507] via-80% to-transparent pointer-events-none">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void sendMessage();
+                }}
+                className="pointer-events-auto bg-[#120a0d] border border-amber-500/35 rounded-2xl p-2 sm:p-2.5 shadow-[0_-8px_30px_rgba(0,0,0,0.85),0_10px_40px_rgba(0,0,0,0.95)] flex items-center gap-2 sm:gap-3"
               >
-                <span className="hidden sm:inline">Lancer la séance</span>
-                <Send className="w-4 h-4 sm:w-5 sm:h-5 text-amber-200" />
-              </button>
-            </form>
+                <div className="pl-3 text-amber-400 hidden sm:block">
+                  <Clapperboard className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Un film, un réalisateur, un acteur, une intrigue ou un palmarès de Cannes..."
+                  className="flex-1 bg-transparent text-base lg:text-lg text-white placeholder-stone-400 focus:outline-none py-2.5 sm:py-3 px-2.5"
+                  disabled={loading}
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !input.trim()}
+                  className="cinema-velvet-pill hover:brightness-110 active:scale-95 disabled:opacity-40 text-white font-bold text-sm sm:text-base px-4 sm:px-6 py-3 rounded-xl transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span className="hidden sm:inline">Lancer la séance</span>
+                  <Send className="w-4 h-4 sm:w-5 sm:h-5 text-amber-200" />
+                </button>
+              </form>
+            </div>
           </div>
         )}
 
