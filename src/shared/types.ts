@@ -149,6 +149,13 @@ export interface PlexSharedUserDTO {
   allServerNames: string[];
   askarrServerNames: string[];
   inCloudflareAccess: boolean;
+  tracearrActivity?: {
+    recentPlaysCount: number;
+    lastWatchedTitle: string;
+    lastWatchedAt: string;
+    lastServerName: string;
+    lastDevice: string | null;
+  } | null;
 }
 
 export interface SmtpSettingsDTO {
@@ -197,7 +204,7 @@ export interface PreparedActionDTO {
 export interface ApiTraceEntryDTO {
   id: string;
   timestamp: string;
-  service: 'plex' | 'overseerr' | 'radarr' | 'sonarr' | 'prowlarr' | 'deepseek' | 'cloudflare' | 'smtp' | 'other';
+  service: 'plex' | 'overseerr' | 'radarr' | 'sonarr' | 'prowlarr' | 'tracearr' | 'deepseek' | 'cloudflare' | 'smtp' | 'other';
   serverLabel?: string;
   method: string;
   url: string;
@@ -265,6 +272,9 @@ export interface AdminEditableSettingsDTO {
   prowlarrBaseUrl: string;
   prowlarrApiKeyMasked: string;
   prowlarrApiKeyConfigured?: boolean;
+  tracearrBaseUrl?: string;
+  tracearrApiKeyMasked?: string;
+  tracearrApiKeyConfigured?: boolean;
   cloudflareAccountId: string;
   cloudflareApiTokenMasked: string;
   cloudflareApiTokenConfigured?: boolean;
@@ -296,6 +306,7 @@ export interface AdminSettingsDTO {
     radarr: { baseUrl: string; configured: boolean };
     sonarr: { baseUrl: string; configured: boolean };
     prowlarr: { baseUrl: string; configured: boolean };
+    tracearr?: { baseUrl: string; configured: boolean };
     cloudflareAccess: {
       accountIdConfigured: boolean;
       apiTokenConfigured: boolean;

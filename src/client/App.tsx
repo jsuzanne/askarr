@@ -78,6 +78,7 @@ interface AdminHealthResponse {
   radarr: { ok: boolean; latencyMs: number; version?: string };
   sonarr: { ok: boolean; latencyMs: number; version?: string };
   prowlarr: { ok: boolean; latencyMs: number; version?: string };
+  tracearr?: { ok: boolean; latencyMs: number; serversCount?: number; serverNames?: string[]; error?: string };
   cloudflareAccess?: { ok: boolean; latencyMs: number; policiesCount?: number; groupsCount?: number };
   deepseekConfigured: boolean;
 }
@@ -144,6 +145,16 @@ interface MyRequestItem {
 
 const QUICK_PROMPTS = [
   {
+    label: '🆕 Derniers films ajoutés sur Plex',
+    icon: Clock,
+    prompt: 'Quels sont les derniers films et séries ajoutés sur Plex la semaine dernière ?'
+  },
+  {
+    label: '📺 Mon historique & reprise Plex',
+    icon: Play,
+    prompt: 'Qu’est-ce que j’ai regardé récemment sur Plex et où j’en étais ?'
+  },
+  {
     label: '🏆 Palmarès Cannes / Retrouver un film',
     icon: Award,
     prompt: 'Quels films ont gagné la Palme d’Or au Festival de Cannes ces dernières années et lesquels sont sur Plex ?'
@@ -157,11 +168,6 @@ const QUICK_PROMPTS = [
     label: '✨ Pépites déjà sur Plex (> 7.8)',
     icon: Star,
     prompt: 'Conseille-moi d’excellents films déjà disponibles sur Plex avec une note supérieure à 7.8'
-  },
-  {
-    label: '🍿 Grand Spectacle Sci-Fi & Thriller',
-    icon: Compass,
-    prompt: 'Recommande-moi un super film de Science-Fiction ou Thriller psychologique avec les notes IMDb'
   },
   {
     label: '🎟️ Sorties Salle & dates VOD/DVD',
@@ -190,6 +196,8 @@ function serviceBadgeColor(service: ApiTraceEntryDTO['service']): string {
       return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
     case 'prowlarr':
       return 'bg-orange-500/20 text-orange-300 border-orange-500/40';
+    case 'tracearr':
+      return 'bg-teal-500/20 text-teal-300 border-teal-500/40';
     case 'deepseek':
       return 'bg-rose-500/20 text-rose-300 border-rose-500/40';
     case 'cloudflare':
@@ -274,6 +282,8 @@ export function App() {
     sonarrApiKey: '',
     prowlarrBaseUrl: '',
     prowlarrApiKey: '',
+    tracearrBaseUrl: '',
+    tracearrApiKey: '',
     cloudflareAccountId: '',
     cloudflareApiToken: '',
     cfAccessTargetMode: 'group' as 'policy' | 'group',
@@ -388,6 +398,8 @@ export function App() {
             sonarrApiKey: '',
             prowlarrBaseUrl: ev.prowlarrBaseUrl || prev.prowlarrBaseUrl,
             prowlarrApiKey: '',
+            tracearrBaseUrl: ev.tracearrBaseUrl || prev.tracearrBaseUrl,
+            tracearrApiKey: '',
             cloudflareAccountId: ev.cloudflareAccountId || prev.cloudflareAccountId,
             cloudflareApiToken: '',
             cfAccessTargetMode: ev.cfAccessTargetMode || prev.cfAccessTargetMode,
@@ -1761,6 +1773,7 @@ export function App() {
                   { id: 'sonarr', label: 'Sonarr' },
                   { id: 'overseerr', label: 'Overseerr' },
                   { id: 'plex', label: 'Plex (NucVillers & NucBuntu)' },
+                  { id: 'tracearr', label: 'Tracearr (Ajouts & Historique)' },
                   { id: 'prowlarr', label: 'Prowlarr' },
                   { id: 'deepseek', label: 'DeepSeek IA' },
                   { id: 'cloudflare', label: 'Cloudflare Access' }
@@ -2092,6 +2105,13 @@ export function App() {
                         url: adminSettings.connectors.prowlarr.baseUrl,
                         configured: adminSettings.connectors.prowlarr.configured,
                         meta: 'API v1 (/api/v1/indexerstatus)'
+                      },
+                      {
+                        key: 'tracearr',
+                        title: 'Tracearr (Historique de Visionnage & Derniers Ajouts Plex)',
+                        url: adminSettings.connectors.tracearr?.baseUrl || 'http://192.168.1.163:3999',
+                        configured: Boolean(adminSettings.connectors.tracearr?.configured),
+                        meta: 'API v2 (/api/v2/public/recently-added, /history, /streams)'
                       },
                       {
                         key: 'deepseek',
@@ -2532,6 +2552,28 @@ export function App() {
                           />
                         </div>
                       </div>
+
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="block text-stone-300 font-semibold">
+                          Tracearr — Analytique, Derniers Ajouts & Historique Plex (URL & Clé API `trcr_pub_...`)
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={configForm.tracearrBaseUrl}
+                            onChange={(e) => setConfigForm((p) => ({ ...p, tracearrBaseUrl: e.target.value }))}
+                            placeholder="http://192.168.1.163:3999"
+                            className="rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                          />
+                          <input
+                            type="password"
+                            value={configForm.tracearrApiKey}
+                            onChange={(e) => setConfigForm((p) => ({ ...p, tracearrApiKey: e.target.value }))}
+                            placeholder={adminSettings.editableValues?.tracearrApiKeyMasked || 'Clé API Tracearr (trcr_pub_...)'}
+                            className="rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     {/* Section 3 : DeepSeek IA & Cloudflare Access */}
@@ -2768,6 +2810,24 @@ export function App() {
                                 <div className="text-xs font-mono text-amber-200/90 truncate mt-0.5">
                                   {friend.email || 'Aucun email dans Plex.tv'}
                                 </div>
+                                {friend.tracearrActivity && (
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-teal-300/95 bg-teal-950/35 border border-teal-500/30 rounded-lg px-2 py-0.5">
+                                    <Play className="w-3 h-3 text-teal-400 shrink-0" />
+                                    <span className="truncate max-w-[230px]" title={friend.tracearrActivity.lastWatchedTitle}>
+                                      Vu : <strong>{friend.tracearrActivity.lastWatchedTitle}</strong>
+                                    </span>
+                                    <span className="text-stone-400">•</span>
+                                    <span className="font-mono">{friend.tracearrActivity.recentPlaysCount} lect.</span>
+                                    {friend.tracearrActivity.lastWatchedAt && (
+                                      <>
+                                        <span className="text-stone-400">•</span>
+                                        <span className="text-stone-300">
+                                          {new Date(friend.tracearrActivity.lastWatchedAt).toLocaleDateString('fr-FR')}
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -3148,7 +3208,19 @@ export function App() {
                     { name: 'Overseerr', status: adminHealth.overseerr },
                     { name: 'Radarr', status: adminHealth.radarr },
                     { name: 'Sonarr', status: adminHealth.sonarr },
-                    { name: 'Prowlarr', status: adminHealth.prowlarr }
+                    { name: 'Prowlarr', status: adminHealth.prowlarr },
+                    ...(adminHealth.tracearr
+                      ? [
+                          {
+                            name: 'Tracearr (Historique & Ajouts Plex)',
+                            status: {
+                              ok: adminHealth.tracearr.ok,
+                              latencyMs: adminHealth.tracearr.latencyMs,
+                              version: adminHealth.tracearr.serverNames?.join(', ')
+                            }
+                          }
+                        ]
+                      : [])
                   ].map((item) => (
                     <div
                       key={item.name}

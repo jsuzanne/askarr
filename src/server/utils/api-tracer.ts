@@ -84,6 +84,9 @@ export class ApiTracer {
     if (lower.includes(':9696')) {
       return { service: 'prowlarr', serverLabel: 'Prowlarr', sanitizedUrl };
     }
+    if (lower.includes(':3999') || lower.includes('/api/v2/public/')) {
+      return { service: 'tracearr', serverLabel: 'Tracearr Multi-Plex', sanitizedUrl };
+    }
     if (lower.includes('deepseek.com')) {
       return { service: 'deepseek', serverLabel: 'DeepSeek LLM', sanitizedUrl };
     }

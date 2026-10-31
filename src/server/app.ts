@@ -13,6 +13,7 @@ import { RadarrConnector } from './connectors/radarr.connector.js';
 import { SonarrConnector } from './connectors/sonarr.connector.js';
 import { ProwlarrConnector } from './connectors/prowlarr.connector.js';
 import { CloudflareAccessConnector } from './connectors/cloudflare-access.connector.js';
+import { TracearrConnector } from './connectors/tracearr.js';
 import { SmtpInviteService } from './connectors/smtp-invite.service.js';
 import { MediaAggregatorService } from './aggregator/media-aggregator.service.js';
 import { DeepSeekOrchestratorService } from './orchestrator/deepseek-orchestrator.service.js';
@@ -44,6 +45,7 @@ export async function createApp(deps: AppDependencies): Promise<{
   const radarr = new RadarrConnector(config.radarrBaseUrl, config.radarrApiKey, fetchImpl);
   const sonarr = new SonarrConnector(config.sonarrBaseUrl, config.sonarrApiKey, fetchImpl);
   const prowlarr = new ProwlarrConnector(config.prowlarrBaseUrl, config.prowlarrApiKey, fetchImpl);
+  const tracearr = new TracearrConnector(config.tracearrBaseUrl, config.tracearrApiKey, fetchImpl);
   const cfAccess = new CloudflareAccessConnector(
     config.cloudflareAccountId,
     config.cloudflareApiToken,
@@ -54,7 +56,7 @@ export async function createApp(deps: AppDependencies): Promise<{
   );
 
   const aggregator = new MediaAggregatorService(overseerr, plex, radarr, sonarr, prowlarr);
-  const orchestrator = new DeepSeekOrchestratorService(config, db, aggregator, overseerr, fetchImpl);
+  const orchestrator = new DeepSeekOrchestratorService(config, db, aggregator, overseerr, fetchImpl, tracearr);
   const smtpInvite = new SmtpInviteService(db, config.adminEmails[0] || '', apiTracer);
 
   function maskSecret(val: string): string {
@@ -105,6 +107,14 @@ export async function createApp(deps: AppDependencies): Promise<{
       config.prowlarrApiKey = saved.cfg_prowlarr_key;
     }
     prowlarr.updateConfig(config.prowlarrBaseUrl, config.prowlarrApiKey);
+
+    if (saved.cfg_tracearr_url) {
+      config.tracearrBaseUrl = saved.cfg_tracearr_url.replace(/\/+$/, '');
+    }
+    if (saved.cfg_tracearr_key) {
+      config.tracearrApiKey = saved.cfg_tracearr_key;
+    }
+    tracearr.updateConfig(config.tracearrBaseUrl, config.tracearrApiKey);
 
     if (saved.cfg_cf_account_id !== undefined) {
       config.cloudflareAccountId = saved.cfg_cf_account_id;
@@ -599,12 +609,13 @@ export async function createApp(deps: AppDependencies): Promise<{
     const { principal } = await resolveUserSession(req);
     if (!requireAdmin(principal, reply)) return;
 
-    const [plexHealth, osHealth, radarrHealth, sonarrHealth, prowlarrHealth, cfHealth] = await Promise.all([
+    const [plexHealth, osHealth, radarrHealth, sonarrHealth, prowlarrHealth, tracearrHealth, cfHealth] = await Promise.all([
       plex.checkHealth(),
       overseerr.checkHealth(),
       radarr.checkHealth(),
       sonarr.checkHealth(),
       prowlarr.checkHealth(),
+      tracearr.checkHealth(),
       cfAccess.checkHealth()
     ]);
 
@@ -614,6 +625,7 @@ export async function createApp(deps: AppDependencies): Promise<{
       radarr: radarrHealth,
       sonarr: sonarrHealth,
       prowlarr: prowlarrHealth,
+      tracearr: tracearrHealth,
       cloudflareAccess: cfHealth,
       deepseekConfigured: Boolean(config.deepseekApiKey)
     };
@@ -710,9 +722,12 @@ export async function createApp(deps: AppDependencies): Promise<{
     plexUsers: Awaited<ReturnType<typeof overseerr.getUsers>>;
     plexDirectory: PlexSharedUserDTO[];
   }> {
-    const [overseerrUsers, cloudUsers] = await Promise.all([
+    const [overseerrUsers, cloudUsers, tracearrActivityMap] = await Promise.all([
       overseerr.getUsers(forceRefresh).catch((): Awaited<ReturnType<typeof overseerr.getUsers>> => []),
-      plex.getSharedUsersDirectory(forceRefresh).catch((): Awaited<ReturnType<typeof plex.getSharedUsersDirectory>> => [])
+      plex.getSharedUsersDirectory(forceRefresh).catch((): Awaited<ReturnType<typeof plex.getSharedUsersDirectory>> => []),
+      tracearr.isConfigured()
+        ? tracearr.getUserActivitySummaryMap().catch(() => new Map())
+        : Promise.resolve(new Map())
     ]);
 
     const plexUsers = overseerrUsers.filter((u) => u.userType === 1);
@@ -739,17 +754,24 @@ export async function createApp(deps: AppDependencies): Promise<{
           (matchedAlias && cfSet.has(matchedAlias.cfEmail.toLowerCase()))
       );
 
+      const resolvedUsername = cu.username || matchedOs?.plexUsername || cu.title;
+      const activity =
+        (resolvedUsername && tracearrActivityMap.get(resolvedUsername.toLowerCase())) ||
+        (cu.title && tracearrActivityMap.get(cu.title.toLowerCase())) ||
+        undefined;
+
       const key = effectiveEmail || `plex:${cu.plexUserId}`;
       byKey.set(key, {
         plexUserId: cu.plexUserId,
-        username: cu.username || matchedOs?.plexUsername || cu.title,
+        username: resolvedUsername,
         title: cu.title || matchedOs?.displayName || cu.username,
         email: effectiveEmail,
         thumb: cu.thumb || null,
         askarrServerNames: cu.askarrServerNames,
         allServerNames: cu.allServerNames,
         overseerrUserId: matchedOs?.id ?? null,
-        inCloudflareAccess: inCf
+        inCloudflareAccess: inCf,
+        tracearrActivity: activity
       });
     }
 
@@ -761,17 +783,23 @@ export async function createApp(deps: AppDependencies): Promise<{
       const inCf =
         cfSet.has(emailLower) || Boolean(matchedAlias && cfSet.has(matchedAlias.cfEmail.toLowerCase()));
       const isOwner = config.adminEmails.includes(emailLower);
+      const resolvedUsername = ou.plexUsername || ou.displayName;
+      const activity =
+        (resolvedUsername && tracearrActivityMap.get(resolvedUsername.toLowerCase())) ||
+        (ou.displayName && tracearrActivityMap.get(ou.displayName.toLowerCase())) ||
+        undefined;
 
       byKey.set(emailLower, {
         plexUserId: ou.id,
-        username: ou.plexUsername || ou.displayName,
+        username: resolvedUsername,
         title: ou.displayName || ou.plexUsername || emailLower,
         email: emailLower,
         thumb: null,
         askarrServerNames: isOwner ? config.plexServers.map((s) => s.name) : [],
         allServerNames: isOwner ? config.plexServers.map((s) => s.name) : [],
         overseerrUserId: ou.id,
-        inCloudflareAccess: inCf
+        inCloudflareAccess: inCf,
+        tracearrActivity: activity
       });
     }
 
@@ -1319,6 +1347,10 @@ export async function createApp(deps: AppDependencies): Promise<{
           baseUrl: config.prowlarrBaseUrl,
           configured: Boolean(config.prowlarrApiKey && config.prowlarrBaseUrl)
         },
+        tracearr: {
+          baseUrl: config.tracearrBaseUrl,
+          configured: Boolean(config.tracearrApiKey && config.tracearrBaseUrl)
+        },
         cloudflareAccess: {
           accountIdConfigured: Boolean(config.cloudflareAccountId),
           apiTokenConfigured: Boolean(config.cloudflareApiToken),
@@ -1356,6 +1388,9 @@ export async function createApp(deps: AppDependencies): Promise<{
         prowlarrBaseUrl: config.prowlarrBaseUrl,
         prowlarrApiKeyMasked: maskSecret(config.prowlarrApiKey),
         prowlarrApiKeyConfigured: Boolean(config.prowlarrApiKey),
+        tracearrBaseUrl: config.tracearrBaseUrl,
+        tracearrApiKeyMasked: maskSecret(config.tracearrApiKey),
+        tracearrApiKeyConfigured: Boolean(config.tracearrApiKey),
         cloudflareAccountId: config.cloudflareAccountId,
         cloudflareApiTokenMasked: maskSecret(config.cloudflareApiToken),
         cloudflareApiTokenConfigured: Boolean(config.cloudflareApiToken),
@@ -1388,6 +1423,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     sonarrApiKey: z.string().optional(),
     prowlarrBaseUrl: z.string().optional(),
     prowlarrApiKey: z.string().optional(),
+    tracearrBaseUrl: z.string().optional(),
+    tracearrApiKey: z.string().optional(),
     cloudflareAccountId: z.string().optional(),
     cloudflareApiToken: z.string().optional(),
     cfAccessTargetMode: z.enum(['policy', 'group']).optional(),
@@ -1425,6 +1462,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     saveIfPresent('cfg_sonarr_key', body.sonarrApiKey);
     saveIfPresent('cfg_prowlarr_url', body.prowlarrBaseUrl);
     saveIfPresent('cfg_prowlarr_key', body.prowlarrApiKey);
+    saveIfPresent('cfg_tracearr_url', body.tracearrBaseUrl);
+    saveIfPresent('cfg_tracearr_key', body.tracearrApiKey);
 
     if (body.cloudflareAccountId !== undefined) {
       db.setAppSetting('cfg_cf_account_id', body.cloudflareAccountId.trim());
@@ -1566,6 +1605,14 @@ export async function createApp(deps: AppDependencies): Promise<{
       latencyMs = h.latencyMs;
       detail = h.ok
         ? `Prowlarr v${h.version ?? 'OK'} (${h.activeIndexersCount} actifs, ${h.backoffIndexersCount} en backoff)`
+        : h.error || 'Erreur';
+    } else if (body.service === 'tracearr') {
+      const h = await tracearr.checkHealth();
+      result = h;
+      ok = h.ok;
+      latencyMs = h.latencyMs;
+      detail = h.ok
+        ? `Tracearr connecté (${h.monitoredServersCount ?? 0} serveurs supervisés : ${(h.serverNames ?? []).join(', ')})`
         : h.error || 'Erreur';
     } else if (body.service === 'cloudflare') {
       const h = await cfAccess.checkHealth();

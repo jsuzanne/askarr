@@ -2,6 +2,7 @@ import type { AppConfig } from '../config/env.js';
 import type { AskarrDatabase } from '../db/database.js';
 import type { MediaAggregatorService } from '../aggregator/media-aggregator.service.js';
 import type { OverseerrConnector } from '../connectors/overseerr.connector.js';
+import type { TracearrConnector } from '../connectors/tracearr.js';
 import type {
   DeepSeekBalanceDTO,
   LlmTurnUsageDTO,
@@ -38,7 +39,10 @@ RÈGLES ABSOLUES DE VÉRITÉ ET D'EXPERTISE CINÉMA :
 6. DEMANDES EN 2 ÉTAPES (CONFIRMATION OBLIGATOIRE) :
    - Si l'utilisateur demande explicitement d'ajouter un film ou une série qui est éligible (canRequestNow=true), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
 7. HOMONYMES : Si plusieurs œuvres correspondent, présente brièvement les choix pour aider l'ami à choisir sur les cartes visuelles.
-8. CONCISION : Sois chaleureux, précis et concis (3 à 6 phrases claires maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
+8. NOUVEAUTÉS PLEX & HISTORIQUE DE VISIONNAGE (TRACEARR) :
+   - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté la semaine dernière ?", "quoi de neuf sur Plex cette semaine ?", "les derniers ajouts"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` et indique-lui les titres exacts ainsi que leur date d'ajout précise et les serveurs Plex correspondants.
+   - Si l'utilisateur demande ce qu'il a regardé récemment ("qu'est-ce que j'ai vu dernièrement ?", "où j'en étais dans ma série ?"), demande les films les plus regardés sur les serveurs, ou (si c'est l'admin) demande qui regarde quoi en direct, appelle OBLIGATOIREMENT \`get_watch_history_and_live_streams\`.
+9. CONCISION : Sois chaleureux, précis et concis (3 à 6 phrases claires maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
 const READ_ONLY_TOOLS_DEFINITIONS = [
   {
@@ -238,6 +242,59 @@ const READ_ONLY_TOOLS_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'get_recently_added_on_plex',
+      description:
+        "Obtenir les derniers films ou séries ajoutés sur les serveurs Plex (aujourd'hui, cette semaine, la semaine dernière, ce mois-ci...) via Tracearr et Plex, avec leurs dates exactes d'ajout et générer leurs fiches visuelles avec le lien direct 'Ouvrir dans Plex'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          mediaType: {
+            type: 'string',
+            enum: ['movie', 'tv', 'auto'],
+            description: "'movie' pour les derniers films ajoutés, 'tv' pour les séries, 'auto' pour les deux"
+          },
+          daysBack: {
+            type: 'integer',
+            description: 'Nombre de jours en arrière à inspecter (ex: 7 pour cette semaine, 15 pour la semaine dernière, 30 pour le mois dernier, par défaut 21)'
+          },
+          limit: {
+            type: 'integer',
+            description: 'Nombre de fiches visuelles à afficher (par défaut 5, max 8)'
+          }
+        },
+        required: ['mediaType'],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_watch_history_and_live_streams',
+      description:
+        "Consulter l'historique de visionnage Plex (via Tracearr) et les flux en direct : savoir quels films ou séries l'utilisateur connecté a regardés récemment ('qu'est-ce que j'ai vu ?', 'où j'en étais ?'), connaître les tendances/films les plus vus sur les serveurs, ou (pour l'admin) voir qui regarde quoi en direct.",
+      parameters: {
+        type: 'object',
+        properties: {
+          scope: {
+            type: 'string',
+            enum: ['my_history', 'global_recent_and_trends', 'live_streams'],
+            description:
+              "'my_history' pour l'historique personnel du spectateur connecté, 'global_recent_and_trends' pour les lectures récentes et tendances sur les serveurs, 'live_streams' pour les lectures en cours"
+          },
+          enrichTopCards: {
+            type: 'boolean',
+            description: 'True pour afficher les fiches visuelles des œuvres avec bouton Ouvrir dans Plex'
+          }
+        },
+        required: ['scope'],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'prepare_media_request',
       description:
         "Préparer une proposition de demande d'ajout sur Plex soumise à confirmation explicite (2 étapes) par l'utilisateur. N'exécute jamais l'ajout directement.",
@@ -285,7 +342,8 @@ export class DeepSeekOrchestratorService {
     private readonly db: AskarrDatabase,
     private readonly aggregator: MediaAggregatorService,
     private readonly overseerr: OverseerrConnector,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly tracearr?: TracearrConnector
   ) {}
 
   public async handleUserMessage(params: {
@@ -479,6 +537,7 @@ export class DeepSeekOrchestratorService {
             args,
             userEmail: params.userEmail,
             overseerrUserId: params.overseerrUserId,
+            plexAccess: params.plexAccess,
             prowlarrCallsThisTurn,
             onProwlarrCalled: () => {
               prowlarrCallsThisTurn++;
@@ -645,6 +704,12 @@ export class DeepSeekOrchestratorService {
     args: Record<string, unknown>;
     userEmail: string;
     overseerrUserId: number | null;
+    plexAccess?: {
+      plexUserId: number | null;
+      plexUsername: string | null;
+      askarrServerNames: string[];
+      allServerNames: string[];
+    };
     prowlarrCallsThisTurn: number;
     onProwlarrCalled: () => void;
     onCardsCollected: (cards: MediaEvidence[]) => void;
@@ -786,6 +851,149 @@ export class DeepSeekOrchestratorService {
       );
       params.onCardsCollected(enriched);
       return this.compactCardsForLlm(enriched);
+    }
+
+    if (fnName === 'get_recently_added_on_plex') {
+      const mediaType =
+        args.mediaType === 'movie' || args.mediaType === 'tv' ? args.mediaType : undefined;
+      const daysBack = typeof args.daysBack === 'number' && args.daysBack > 0 ? args.daysBack : 21;
+      const cardLimit = Math.min(8, Math.max(1, typeof args.limit === 'number' ? args.limit : 5));
+      const allowedServers =
+        params.plexAccess?.askarrServerNames && params.plexAccess.askarrServerNames.length > 0
+          ? params.plexAccess.askarrServerNames
+          : undefined;
+
+      const recentItems = this.tracearr
+        ? await this.tracearr.getRecentlyAdded({
+            allowedServers,
+            daysBack,
+            mediaType,
+            limit: 20
+          })
+        : [];
+
+      const topForCards = recentItems.slice(0, cardLimit);
+      const cards: MediaEvidence[] = [];
+
+      for (const item of topForCards) {
+        try {
+          if (item.tmdbId && item.tmdbId > 0) {
+            const ev = await this.aggregator.buildMediaEvidence({
+              tmdbId: item.tmdbId,
+              mediaType: item.mediaType,
+              currentUserEmail: params.userEmail,
+              currentUserOverseerrId: params.overseerrUserId
+            });
+            cards.push(ev);
+          } else {
+            const verified = await this.aggregator.verifySpecificTitles({
+              items: [
+                {
+                  title: item.title,
+                  year: item.year ?? undefined,
+                  mediaType: item.mediaType
+                }
+              ],
+              currentUserEmail: params.userEmail,
+              currentUserOverseerrId: params.overseerrUserId
+            });
+            if (verified.length > 0) {
+              cards.push(verified[0]);
+            }
+          }
+        } catch {
+          // Ignorer un item isolé en cas d'erreur d'enrichissement
+        }
+      }
+
+      if (cards.length > 0) {
+        params.onCardsCollected(cards);
+      }
+
+      return {
+        daysBackInspected: daysBack,
+        totalRecentFound: recentItems.length,
+        recentAdditionsChronological: recentItems.slice(0, 15).map((r) => ({
+          title: r.title,
+          year: r.year,
+          mediaType: r.mediaType,
+          tmdbId: r.tmdbId,
+          addedAtIso: r.addedAt.slice(0, 10),
+          addedAtFrench: formatFrenchDate(r.addedAt),
+          daysAgo: r.daysAgo,
+          servers: r.serverNames
+        })),
+        enrichedCards: this.compactCardsForLlm(cards)
+      };
+    }
+
+    if (fnName === 'get_watch_history_and_live_streams') {
+      const scope =
+        args.scope === 'my_history' || args.scope === 'live_streams'
+          ? args.scope
+          : 'global_recent_and_trends';
+      const enrichTopCards = Boolean(args.enrichTopCards ?? true);
+
+      if (!this.tracearr || !this.tracearr.isConfigured()) {
+        return { error: 'TRACEARR_NOT_CONFIGURED' };
+      }
+
+      const [myOrGlobalHistory, liveStreams] = await Promise.all([
+        this.tracearr.getWatchHistory({
+          plexUsername:
+            scope === 'my_history' ? params.plexAccess?.plexUsername || undefined : undefined,
+          limit: 25
+        }),
+        this.tracearr.getActiveStreams()
+      ]);
+
+      if (enrichTopCards && myOrGlobalHistory.length > 0) {
+        const seenTmdb = new Set<number>();
+        const cards: MediaEvidence[] = [];
+        for (const h of myOrGlobalHistory) {
+          if (h.tmdbId && h.tmdbId > 0 && !seenTmdb.has(h.tmdbId) && cards.length < 4) {
+            seenTmdb.add(h.tmdbId);
+            try {
+              const ev = await this.aggregator.buildMediaEvidence({
+                tmdbId: h.tmdbId,
+                mediaType: h.mediaType,
+                currentUserEmail: params.userEmail,
+                currentUserOverseerrId: params.overseerrUserId
+              });
+              cards.push(ev);
+            } catch {
+              // Ignorer
+            }
+          }
+        }
+        if (cards.length > 0) {
+          params.onCardsCollected(cards);
+        }
+      }
+
+      const isAdmin = this.config.adminEmails.includes(params.userEmail.toLowerCase());
+      return {
+        scope,
+        activeStreams: isAdmin
+          ? liveStreams
+          : {
+              total: liveStreams.total,
+              transcodes: liveStreams.transcodes,
+              directPlays: liveStreams.directPlays
+            },
+        recentWatchHistory: myOrGlobalHistory.slice(0, 15).map((h) => ({
+          title: h.title,
+          year: h.year,
+          mediaType: h.mediaType,
+          tmdbId: h.tmdbId,
+          serverName: h.serverName,
+          startedAtFrench: formatFrenchDate(h.startedAt),
+          percentComplete: h.percentComplete,
+          watched: h.watched,
+          device: h.device,
+          username: isAdmin || scope === 'my_history' ? h.username : undefined
+        }))
+      };
     }
 
     if (fnName === 'prepare_media_request') {
