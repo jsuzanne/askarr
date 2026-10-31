@@ -1,0 +1,167 @@
+import { describe, it, expect, vi } from 'vitest';
+import { MediaAggregatorService } from '../../src/server/aggregator/media-aggregator.service.js';
+import type { PlexMultiServerConnector } from '../../src/server/connectors/plex.connector.js';
+import type { OverseerrConnector } from '../../src/server/connectors/overseerr.connector.js';
+import type { RadarrConnector } from '../../src/server/connectors/radarr.connector.js';
+import type { SonarrConnector } from '../../src/server/connectors/sonarr.connector.js';
+import type { ProwlarrConnector } from '../../src/server/connectors/prowlarr.connector.js';
+
+describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => {
+  it('T-AGG-01: identifies a movie not on Plex but monitored in Radarr and computes VOD/DVD release timeline', async () => {
+    const mockPlex = {
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'not_in_catalog',
+        serversQueried: ['NucVillers', 'NucBuntu'],
+        matchedDetails: [],
+        matchedItems: [],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    const mockOverseerr = {
+      getMediaDetail: vi.fn().mockResolvedValue({
+        tmdbId: 999111,
+        mediaType: 'movie',
+        tvdbId: null,
+        imdbId: 'tt26446278',
+        titleFr: 'Le Comte de Monte-Cristo',
+        originalTitle: 'Le Comte de Monte-Cristo',
+        year: 2024,
+        overviewFr: 'Victime d’un complot, le jeune Edmond Dantès est arrêté le jour de son mariage...',
+        posterUrl: 'https://image.tmdb.org/t/p/w500/monte-cristo.jpg',
+        genres: ['Aventure', 'Drame', 'Histoire'],
+        runtimeMinutes: 178,
+        voteAverage: 8.4,
+        directorOrCreator: 'Matthieu Delaporte, Alexandre de La Patellière',
+        topCast: ['Pierre Niney', 'Bastien Bouillon', 'Anaïs Demoustier'],
+        tmdbReleases: {
+          inCinemas: '2026-06-28',
+          digitalRelease: '2026-10-24',
+          physicalRelease: '2026-11-06'
+        },
+        totalSeasons: 0,
+        seasonsMeta: [],
+        requestInfo: {
+          mediaStatus: 3,
+          latestRequestId: 10,
+          latestRequestStatus: 2,
+          requestedAt: '2026-07-01T10:00:00Z',
+          requestedByUserId: 1,
+          requestedByEmail: 'friend@example.com',
+          requestedByDisplayName: 'Alice',
+          requestedSeasons: []
+        }
+      })
+    } as unknown as OverseerrConnector;
+
+    const mockRadarr = {
+      getMovieByTmdbId: vi.fn().mockResolvedValue({
+        movie: {
+          id: 42,
+          tmdbId: 999111,
+          title: 'Le Comte de Monte-Cristo',
+          monitored: true,
+          hasFile: false,
+          status: 'inCinemas',
+          inCinemas: '2026-06-28',
+          digitalRelease: '2026-10-24',
+          physicalRelease: '2026-11-06'
+        }
+      }),
+      getQueueForMovie: vi.fn().mockResolvedValue(null)
+    } as unknown as RadarrConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      mockRadarr,
+      {} as unknown as SonarrConnector,
+      {} as unknown as ProwlarrConnector
+    );
+
+    const ev = await aggregator.buildMediaEvidence({
+      tmdbId: 999111,
+      mediaType: 'movie',
+      currentUserEmail: 'friend@example.com'
+    });
+
+    expect(ev.catalogPresence.state).toBe('not_in_catalog');
+    expect(ev.acquisitionPipeline.state).toBe('monitored_waiting_release');
+    expect(ev.identity.ratings.tmdbVoteAverage).toBe(8.4);
+    expect(ev.identity.genres).toContain('Aventure');
+    expect(ev.identity.topCast).toContain('Pierre Niney');
+    expect(ev.identity.releaseDates.digitalRelease).toBe('2026-10-24');
+    expect(ev.identity.releaseDates.physicalRelease).toBe('2026-11-06');
+    expect(ev.actionability.userFriendlyStatusLabel).toContain('Dans la liste d\'attente');
+  });
+
+  it('T-AGG-02: applies +120 days heuristic when a movie only has a theatrical release date', async () => {
+    const mockPlex = {
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'not_in_catalog',
+        serversQueried: ['NucVillers'],
+        matchedDetails: [],
+        matchedItems: [],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    const mockOverseerr = {
+      getMediaDetail: vi.fn().mockResolvedValue({
+        tmdbId: 888222,
+        mediaType: 'movie',
+        tvdbId: null,
+        imdbId: null,
+        titleFr: 'Film En Salle',
+        originalTitle: 'In Theaters Now',
+        year: 2026,
+        overviewFr: 'Un film tout juste sorti au cinéma.',
+        posterUrl: null,
+        genres: ['Action'],
+        runtimeMinutes: 120,
+        voteAverage: 7.5,
+        directorOrCreator: 'Jane Doe',
+        topCast: ['Actor One'],
+        tmdbReleases: {
+          inCinemas: '2026-08-01',
+          digitalRelease: null,
+          physicalRelease: null
+        },
+        totalSeasons: 0,
+        seasonsMeta: [],
+        requestInfo: {
+          mediaStatus: null,
+          latestRequestId: null,
+          latestRequestStatus: null,
+          requestedAt: null,
+          requestedByUserId: null,
+          requestedByEmail: null,
+          requestedByDisplayName: null,
+          requestedSeasons: []
+        }
+      })
+    } as unknown as OverseerrConnector;
+
+    const mockRadarr = {
+      getMovieByTmdbId: vi.fn().mockResolvedValue({
+        movie: null
+      })
+    } as unknown as RadarrConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      mockRadarr,
+      {} as unknown as SonarrConnector,
+      {} as unknown as ProwlarrConnector
+    );
+
+    const ev = await aggregator.buildMediaEvidence({
+      tmdbId: 888222,
+      mediaType: 'movie'
+    });
+
+    expect(ev.identity.releaseDates.isEstimatedDate).toBe(true);
+    expect(ev.identity.releaseDates.estimatedVodOrDvdDate).toBe('2026-11-29');
+  });
+});

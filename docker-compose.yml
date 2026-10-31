@@ -1,0 +1,29 @@
+# ==============================================================================
+# Askarr — Docker Compose pour NucVillers (/storage/Docker/Askarr)
+# Port exposé : 4880
+# ==============================================================================
+services:
+  askarr:
+    image: ghcr.io/jsuzanne/askarr:latest
+    build: .
+    container_name: askarr
+    restart: unless-stopped
+    ports:
+      - "${ASKARR_PORT:-4880}:4880"
+    env_file:
+      - ./.env
+    environment:
+      - NODE_ENV=production
+      - PORT=4880
+      - ALLOW_DEV_AUTH_HEADER=false
+      - ALLOW_LAN_ADMIN_FALLBACK=true
+      - SQLITE_DB_PATH=/app/data/askarr.db
+      - PLEX_SERVERS=NucVillers|http://192.168.1.163:32400,NucBuntu|http://192.168.1.154:32400,EQ12buntu|http://192.168.1.61:32400,MacMini|http://192.168.1.9:32400,Macmini4|http://192.168.1.89:32400
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4880/api/health/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
