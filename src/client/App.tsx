@@ -145,32 +145,32 @@ interface MyRequestItem {
 
 const QUICK_PROMPTS = [
   {
-    label: '🆕 Derniers films ajoutés sur Plex',
+    label: 'Derniers ajouts Plex',
     icon: Clock,
     prompt: 'Quels sont les derniers films et séries ajoutés sur Plex la semaine dernière ?'
   },
   {
-    label: '📺 Mon historique & reprise Plex',
+    label: 'Mon historique & reprise',
     icon: Play,
     prompt: 'Qu’est-ce que j’ai regardé récemment sur Plex et où j’en étais ?'
   },
   {
-    label: '🏆 Palmarès Cannes / Retrouver un film',
+    label: 'Palmarès Cannes / Retrouver un film',
     icon: Award,
     prompt: 'Quels films ont gagné la Palme d’Or au Festival de Cannes ces dernières années et lesquels sont sur Plex ?'
   },
   {
-    label: '🎬 Film par réalisateur ou acteur',
+    label: 'Par réalisateur ou acteur',
     icon: Clapperboard,
     prompt: 'Quels sont les meilleurs films de Cédric Klapisch ou Denis Villeneuve et lesquels sont disponibles sur Plex ?'
   },
   {
-    label: '✨ Pépites déjà sur Plex (> 7.8)',
+    label: 'Pépites sur Plex (> 7.8)',
     icon: Star,
     prompt: 'Conseille-moi d’excellents films déjà disponibles sur Plex avec une note supérieure à 7.8'
   },
   {
-    label: '🎟️ Sorties Salle & dates VOD/DVD',
+    label: 'Sorties Salle & dates VOD',
     icon: Ticket,
     prompt: 'Est-ce que Dune : Deuxième Partie ou Le Comte de Monte-Cristo sont sur Plex, ou quelle est leur date VOD / DVD ?'
   }
@@ -1150,18 +1150,21 @@ export function App() {
             )}
 
             {session && (
-              <div className="hidden sm:flex items-center gap-2 pl-2.5 border-l border-amber-500/20">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] shrink-0" />
+              <div className="hidden sm:flex items-center pl-3 border-l border-amber-500/20">
                 <div className="text-right">
-                  <div className="text-xs sm:text-sm font-semibold text-amber-100 leading-tight">
-                    {session.overseerr.plexUsername || session.email.split('@')[0]}
+                  <div className="flex items-center justify-end gap-1.5 text-xs sm:text-sm font-semibold text-amber-100 leading-tight">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] shrink-0" />
+                    <span>{session.overseerr.plexUsername || session.email.split('@')[0]}</span>
                   </div>
-                  <div className="text-[11px] text-amber-300/90 leading-tight font-medium">
-                    {session.plexAccess && session.plexAccess.askarrServerNames.length > 0
-                      ? `Plex : ${session.plexAccess.askarrServerNames.join(' & ')}`
+                  <div className="text-[11px] text-amber-300/80 leading-tight font-medium mt-0.5">
+                    {isAdmin
+                      ? 'Administrateur'
                       : session.overseerr.linked
-                        ? 'Membre Ciné-Club Plex'
+                        ? 'Membre Ciné-Club'
                         : 'Spectateur Invité'}
+                    {session.plexAccess && session.plexAccess.askarrServerNames.length > 0
+                      ? ` • ${session.plexAccess.askarrServerNames.length} salle${session.plexAccess.askarrServerNames.length > 1 ? 's' : ''} Plex`
+                      : ''}
                   </div>
                 </div>
               </div>
@@ -1200,11 +1203,30 @@ export function App() {
                     <Ticket className="w-4 h-4 text-amber-300 shrink-0" />
                     <span>Mes Programmations</span>
                   </button>
+
+                  {userTab === 'chat' && (
+                    <button
+                      type="button"
+                      onClick={startNewConversation}
+                      className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        messages.length > 1
+                          ? 'bg-red-950/60 hover:bg-red-900/70 text-amber-200 hover:text-white border-amber-500/30'
+                          : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900/60 border-transparent'
+                      }`}
+                      title="Réinitialiser la discussion en cours et repartir sur un nouveau sujet"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>Nouvelle discussion</span>
+                    </button>
+                  )}
                 </nav>
 
-                <div className="hidden lg:flex items-center gap-1.5 text-xs text-stone-400">
-                  <span>5 Serveurs Plex :</span>
-                  {['NucVillers', 'NucBuntu', 'EQ12buntu', 'MacMini', 'Macmini4'].map((srv) => (
+                <div className="hidden lg:flex items-center gap-1.5 text-xs text-stone-400 shrink-0">
+                  <span className="text-stone-500">Salles Plex :</span>
+                  {(session?.plexAccess && session.plexAccess.askarrServerNames.length > 0
+                    ? session.plexAccess.askarrServerNames
+                    : ['NucVillers', 'NucBuntu', 'EQ12buntu', 'MacMini', 'Macmini4']
+                  ).map((srv) => (
                     <span
                       key={srv}
                       className={`px-2 py-0.5 rounded border font-medium ${
@@ -1330,9 +1352,9 @@ export function App() {
         {/* ========================================================= */}
         {workspaceMode === 'user' && userTab === 'chat' && (
           <div className="flex-1 flex flex-col gap-5 sm:gap-6">
-            {/* Bandeau "À L'AFFICHE" — Suggestions de Séances (Swipeable sur iPhone, Grand Confort sur Desktop) */}
-            <div className="flex items-center justify-between gap-2.5 bg-[#120b0e]/90 border border-amber-500/25 rounded-2xl p-2.5 sm:p-3.5 shadow-lg">
-              <div className="flex items-center gap-2 overflow-x-auto flex-nowrap py-0.5 pr-1 no-scrollbar">
+            {/* Bandeau "À L'AFFICHE" — Suggestions de Séances (Swipeable sur iPhone, Grille fluide sans coupure sur Desktop) */}
+            <div className="bg-[#120b0e]/90 border border-amber-500/25 rounded-2xl p-2.5 sm:p-3.5 shadow-lg">
+              <div className="flex items-center gap-2 overflow-x-auto sm:overflow-visible flex-nowrap sm:flex-wrap py-0.5 no-scrollbar">
                 {QUICK_PROMPTS.map((qp, idx) => {
                   const Icon = qp.icon;
                   return (
@@ -1340,23 +1362,25 @@ export function App() {
                       key={idx}
                       onClick={() => void sendMessage(qp.prompt)}
                       disabled={loading}
-                      className="text-xs sm:text-sm lg:text-[15px] font-medium bg-stone-950/90 hover:bg-red-950/60 active:scale-[0.99] text-stone-100 border border-amber-500/25 hover:border-amber-400/60 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0 shadow-sm"
+                      className="text-xs sm:text-sm font-medium bg-stone-950/90 hover:bg-red-950/60 active:scale-[0.99] text-stone-100 border border-amber-500/25 hover:border-amber-400/60 px-3 sm:px-3.5 py-2 rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0 shadow-sm"
                     >
                       <Icon className="w-4 h-4 text-amber-400 shrink-0" />
                       <span>{qp.label}</span>
                     </button>
                   );
                 })}
-              </div>
 
-              <button
-                onClick={startNewConversation}
-                className="text-xs sm:text-sm font-semibold text-amber-200 hover:text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-amber-500/30 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                title="Nouvelle séance"
-              >
-                <PlusCircle className="w-4 h-4 text-amber-400" />
-                <span className="hidden sm:inline">Nouvelle séance</span>
-              </button>
+                {messages.length > 1 && (
+                  <button
+                    onClick={startNewConversation}
+                    className="ml-auto text-xs sm:text-sm font-semibold text-amber-200 hover:text-white px-3.5 py-2 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-amber-500/30 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                    title="Effacer les messages actuels et démarrer un nouveau sujet"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Réinitialiser le chat</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Fil de Projection (Messages Utilisateur & Écran Assistant) */}
