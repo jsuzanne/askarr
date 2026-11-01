@@ -5,6 +5,25 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.6] - 2026-11-01
+
+### Ajouté
+- **Mode Viewer (User) pour l'Administrateur (`Vue User` dans le fronton de la salle)** :
+  - Permet à l'administrateur de basculer en 1 clic (`Salle Ciné` | `👁️ Vue User` | `Régie Admin`) sur l'interface exacte d'un spectateur invité sans avoir à créer un second compte.
+  - Masque intégralement les traces techniques d'appels API, les compteurs de tokens/coûts LLM, les traces sur les affiches de films et le bouton `Traces : ON`.
+  - Bandeau de simulation de profil permettant de tester le rendu et les permissions serveur comme un **Spectateur Standard (NucVillers)**, un **Membre Cinéphile (NucVillers + NucBuntu)** ou n'importe quel **ami Plex réel** de l'annuaire (`viewerSimulation` transmis à `POST /api/chat/messages`).
+  - Option **Plein écran 100% User** masquant même la bascule Admin du header avec une pilule flottante `Retour Admin ✕`.
+
+### Corrigé
+- **Migration automatique des modèles LLM Gratuits dépréciés (HTTP 404 sur Gemini, Groq et OpenRouter)** :
+  - Remplacement et auto-migration à chaud (`normalizeLlmModelSlug` + `PROVIDER_MODEL_FALLBACKS`) des anciens slugs retirés par les fournisseurs :
+    - **Google Gemini AI Studio** : `gemini-2.5-flash` (HTTP 404 pour les nouveaux projets) $\rightarrow$ **`gemini-3.5-flash-lite`** (repli auto sur `gemini-3.6-flash`).
+    - **Groq Cloud LPU** : `llama-3.3-70b-versatile` (HTTP 404) $\rightarrow$ **`openai/gpt-oss-120b`** (repli auto sur `qwen/qwen3.8-27b`, `openai/gpt-oss-20b`).
+    - **OpenRouter Free** : `deepseek/deepseek-chat-v3-0324:free` (HTTP 404) $\rightarrow$ **`openrouter/free`** (routeur officiel OpenRouter vers les modèles `:free` actifs avec support tool-calling).
+  - Nettoyage inter-fournisseurs des métadonnées propriétaires (`sanitizeMessagesForProvider` retire `extra_content` / `thought_signature` de Gemini lors d'un basculement vers Groq/Mistral/OpenRouter/DeepSeek).
+
+---
+
 ## [1.2.5] - 2026-11-01
 
 ### Corrigé

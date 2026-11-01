@@ -173,13 +173,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         ? env.LLM_MANUAL_PROVIDER
         : 'deepseek',
     geminiApiKey: env.GEMINI_API_KEY || '',
-    geminiModel: env.GEMINI_MODEL || 'gemini-2.5-flash',
+    geminiModel: env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
     groqApiKey: env.GROQ_API_KEY || '',
-    groqModel: env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    groqModel: env.GROQ_MODEL || 'openai/gpt-oss-120b',
     mistralApiKey: env.MISTRAL_API_KEY || '',
     mistralModel: env.MISTRAL_MODEL || 'mistral-small-latest',
     openrouterApiKey: env.OPENROUTER_API_KEY || '',
-    openrouterModel: env.OPENROUTER_MODEL || 'deepseek/deepseek-chat-v3-0324:free',
+    openrouterModel: env.OPENROUTER_MODEL || 'openrouter/free',
     aiDailyTokenCap: Number(env.AI_DAILY_TOKEN_CAP || 2500000),
     aiMonthlyBudgetUsd: Number(env.AI_MONTHLY_BUDGET_USD || 10.0)
   };

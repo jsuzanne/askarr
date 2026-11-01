@@ -394,6 +394,52 @@ export function sanitizeToolsForProvider(
   return stripUnsupportedJsonSchemaKeys(tools) as unknown[];
 }
 
+export const PROVIDER_MODEL_FALLBACKS: Record<LlmProviderId, string[]> = {
+  gemini: ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'],
+  groq: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
+  mistral: ['mistral-small-latest', 'open-mistral-nemo'],
+  openrouter: [
+    'openrouter/free',
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'nvidia/nemotron-3.5-lightning:free'
+  ],
+  deepseek: ['deepseek-chat']
+};
+
+const RETIRED_MODEL_SLUGS: Record<LlmProviderId, Set<string>> = {
+  gemini: new Set([
+    'gemini-2.5-flash',
+    'models/gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'models/gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash'
+  ]),
+  groq: new Set([
+    'llama-3.3-70b-versatile',
+    'llama-3.1-70b-versatile',
+    'llama3-70b-8192',
+    'mixtral-8x7b-32768'
+  ]),
+  mistral: new Set([]),
+  openrouter: new Set([
+    'deepseek/deepseek-chat-v3-0324:free',
+    'deepseek/deepseek-r1:free',
+    'google/gemini-2.0-flash-exp:free',
+    'meta-llama/llama-3.3-70b-instruct:free'
+  ]),
+  deepseek: new Set([])
+};
+
+export function normalizeLlmModelSlug(providerId: LlmProviderId, rawModel?: string): string {
+  const defaultModel = PROVIDER_MODEL_FALLBACKS[providerId][0];
+  const trimmed = (rawModel || '').trim();
+  if (!trimmed || RETIRED_MODEL_SLUGS[providerId].has(trimmed)) {
+    return defaultModel;
+  }
+  return trimmed;
+}
+
 export class DeepSeekOrchestratorService {
   private roundRobinCounter = 0;
 
@@ -413,27 +459,27 @@ export class DeepSeekOrchestratorService {
         label: 'Google Gemini',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
         apiKey: (this.config.geminiApiKey || '').trim(),
-        model: (this.config.geminiModel || 'gemini-2.5-flash').trim(),
+        model: normalizeLlmModelSlug('gemini', this.config.geminiModel),
         isFree: true,
         keyPortalUrl: 'https://aistudio.google.com/apikey',
-        descriptionFr: 'Google AI Studio — 100% Gratuit (sans CB), 1M contexte, excellent en français & cinéma'
+        descriptionFr: 'Google AI Studio — 100% Gratuit (sans CB), Gemini 3.5 Flash Lite (~600 ms), 1M contexte'
       },
       {
         id: 'groq',
         label: 'Groq Cloud',
         baseUrl: 'https://api.groq.com/openai/v1',
         apiKey: (this.config.groqApiKey || '').trim(),
-        model: (this.config.groqModel || 'llama-3.3-70b-versatile').trim(),
+        model: normalizeLlmModelSlug('groq', this.config.groqModel),
         isFree: true,
         keyPortalUrl: 'https://console.groq.com/keys',
-        descriptionFr: 'Groq LPU — 100% Gratuit (sans CB), vitesse fulgurante (~300 ms), Llama 3.3 70B'
+        descriptionFr: 'Groq LPU — 100% Gratuit (sans CB), vitesse fulgurante (~500 ms), GPT-OSS 120B / Qwen 3.8'
       },
       {
         id: 'mistral',
         label: 'Mistral AI',
         baseUrl: 'https://api.mistral.ai/v1',
         apiKey: (this.config.mistralApiKey || '').trim(),
-        model: (this.config.mistralModel || 'mistral-small-latest').trim(),
+        model: normalizeLlmModelSlug('mistral', this.config.mistralModel),
         isFree: true,
         keyPortalUrl: 'https://console.mistral.ai/api-keys',
         descriptionFr: 'Mistral La Plateforme (Plan Experiment) — 100% Gratuit, plume française & cinéma européen'
@@ -443,17 +489,17 @@ export class DeepSeekOrchestratorService {
         label: 'OpenRouter Free',
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKey: (this.config.openrouterApiKey || '').trim(),
-        model: (this.config.openrouterModel || 'deepseek/deepseek-chat-v3-0324:free').trim(),
+        model: normalizeLlmModelSlug('openrouter', this.config.openrouterModel),
         isFree: true,
         keyPortalUrl: 'https://openrouter.ai/settings/keys',
-        descriptionFr: 'OpenRouter — 100% Gratuit sur tous les modèles suffixés par :free'
+        descriptionFr: 'OpenRouter — 100% Gratuit (openrouter/free sélectionne automatiquement le meilleur modèle :free actif)'
       },
       {
         id: 'deepseek',
         label: 'DeepSeek',
         baseUrl: (this.config.deepseekBaseUrl || 'https://api.deepseek.com').replace(/\/+$/, ''),
         apiKey: (this.config.deepseekApiKey || '').trim(),
-        model: (this.config.deepseekModel || 'deepseek-chat').trim(),
+        model: normalizeLlmModelSlug('deepseek', this.config.deepseekModel),
         isFree: false,
         keyPortalUrl: 'https://platform.deepseek.com/api_keys',
         descriptionFr: 'DeepSeek V3 Officiel — ~$0.0011/req avec Cache KV (-90%), secours haute fiabilité'
@@ -1431,6 +1477,58 @@ export class DeepSeekOrchestratorService {
     throw lastError || new Error('ALL_LLM_PROVIDERS_FAILED');
   }
 
+  private persistActiveModelForProvider(providerId: LlmProviderId, model: string): void {
+    try {
+      if (providerId === 'gemini') {
+        this.config.geminiModel = model;
+        this.db.setAppSetting('cfg_gemini_model', model);
+      } else if (providerId === 'groq') {
+        this.config.groqModel = model;
+        this.db.setAppSetting('cfg_groq_model', model);
+      } else if (providerId === 'mistral') {
+        this.config.mistralModel = model;
+        this.db.setAppSetting('cfg_mistral_model', model);
+      } else if (providerId === 'openrouter') {
+        this.config.openrouterModel = model;
+        this.db.setAppSetting('cfg_openrouter_model', model);
+      } else if (providerId === 'deepseek') {
+        this.config.deepseekModel = model;
+        this.db.setAppSetting('cfg_deepseek_model', model);
+      }
+    } catch {
+      // Ignore DB write error during read-only test mocks
+    }
+  }
+
+  private getCandidateModelsForProvider(provider: InternalLlmProvider): string[] {
+    const fallbacks = PROVIDER_MODEL_FALLBACKS[provider.id] || [];
+    const primary = normalizeLlmModelSlug(provider.id, provider.model);
+    return [primary, ...fallbacks.filter((m) => m !== primary)];
+  }
+
+  private sanitizeMessagesForProvider(
+    messages: DeepSeekChatMessage[],
+    providerId: LlmProviderId
+  ): DeepSeekChatMessage[] {
+    if (providerId === 'gemini') {
+      return messages;
+    }
+    return messages.map((m) => {
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+        return {
+          role: m.role,
+          content: m.content,
+          tool_calls: m.tool_calls.map((tc) => ({
+            id: tc.id,
+            type: tc.type,
+            function: tc.function
+          }))
+        };
+      }
+      return m;
+    });
+  }
+
   private async callProviderEndpoint(
     provider: InternalLlmProvider,
     messages: DeepSeekChatMessage[],
@@ -1439,50 +1537,74 @@ export class DeepSeekOrchestratorService {
     choices?: Array<{ message?: DeepSeekChatMessage }>;
     usage?: Record<string, number>;
   }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 14000);
-    try {
-      const body: Record<string, unknown> = {
-        model: provider.model,
-        messages,
-        temperature: 0.2,
-        max_tokens: 450
-      };
+    const candidateModels = this.getCandidateModelsForProvider(provider);
+    const sanitizedMessages = this.sanitizeMessagesForProvider(messages, provider.id);
+    let lastError: unknown;
 
-      if (provider.id === 'deepseek') {
-        body.tools = READ_ONLY_TOOLS_DEFINITIONS;
-        body.tool_choice = includeTools ? 'auto' : 'none';
-      } else if (includeTools) {
-        body.tools = sanitizeToolsForProvider(READ_ONLY_TOOLS_DEFINITIONS, provider.id);
-        body.tool_choice = 'auto';
+    for (let idx = 0; idx < candidateModels.length; idx++) {
+      const candidateModel = candidateModels[idx];
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const body: Record<string, unknown> = {
+          model: candidateModel,
+          messages: sanitizedMessages,
+          temperature: 0.2,
+          max_tokens: provider.id === 'deepseek' ? 500 : 900
+        };
+
+        if (provider.id === 'deepseek') {
+          body.tools = READ_ONLY_TOOLS_DEFINITIONS;
+          body.tool_choice = includeTools ? 'auto' : 'none';
+        } else if (includeTools) {
+          body.tools = sanitizeToolsForProvider(READ_ONLY_TOOLS_DEFINITIONS, provider.id);
+          body.tool_choice = 'auto';
+        }
+
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json'
+        };
+        if (provider.id === 'openrouter') {
+          headers['HTTP-Referer'] = 'https://askarr.local';
+          headers['X-Title'] = 'Askarr Cinema Concierge';
+        }
+
+        const res = await this.fetchImpl(`${provider.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        if (!res.ok) {
+          const status = res.status;
+          // Si le modèle configuré retourne 404/400 (modèle déprécié/retiré) et qu'il existe un modèle de repli sur ce provider, on tente le suivant
+          if ((status === 404 || status === 400) && idx + 1 < candidateModels.length) {
+            lastError = new Error(`LLM_${provider.id.toUpperCase()}_HTTP_${status}`);
+            continue;
+          }
+          throw new Error(`LLM_${provider.id.toUpperCase()}_HTTP_${status}`);
+        }
+
+        if (candidateModel !== provider.model) {
+          provider.model = candidateModel;
+          this.persistActiveModelForProvider(provider.id, candidateModel);
+        }
+
+        return (await res.json()) as {
+          choices?: Array<{ message?: DeepSeekChatMessage }>;
+          usage?: Record<string, number>;
+        };
+      } catch (err) {
+        lastError = err;
+        throw err;
+      } finally {
+        clearTimeout(timer);
       }
-
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${provider.apiKey}`,
-        'Content-Type': 'application/json'
-      };
-      if (provider.id === 'openrouter') {
-        headers['HTTP-Referer'] = 'https://askarr.local';
-        headers['X-Title'] = 'Askarr Cinema Concierge';
-      }
-
-      const res = await this.fetchImpl(`${provider.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-
-      if (!res.ok) {
-        throw new Error(`LLM_${provider.id.toUpperCase()}_HTTP_${res.status}`);
-      }
-      return (await res.json()) as {
-        choices?: Array<{ message?: DeepSeekChatMessage }>;
-        usage?: Record<string, number>;
-      };
-    } finally {
-      clearTimeout(timer);
     }
+
+    throw lastError || new Error(`LLM_${provider.id.toUpperCase()}_FAILED`);
   }
 
   public async testProviderConnection(providerId: LlmProviderId): Promise<{
@@ -1501,74 +1623,100 @@ export class DeepSeekOrchestratorService {
       };
     }
 
-    const t0 = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-    try {
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${provider.apiKey}`,
-        'Content-Type': 'application/json'
-      };
-      if (provider.id === 'openrouter') {
-        headers['HTTP-Referer'] = 'https://askarr.local';
-        headers['X-Title'] = 'Askarr Cinema Concierge';
-      }
+    const candidateModels = this.getCandidateModelsForProvider(provider);
+    let lastFailDetail = '';
+    let lastLatencyMs = 0;
 
-      const res = await this.fetchImpl(`${provider.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: provider.model,
-          messages: [{ role: 'user', content: 'Réponds uniquement par le mot OK.' }],
-          max_tokens: 80,
-          temperature: 0
-        }),
-        signal: controller.signal
-      });
-
-      const latencyMs = Date.now() - t0;
-      if (!res.ok) {
-        let errSnippet = '';
-        try {
-          const errRaw = await res.text();
-          const parsed = JSON.parse(errRaw) as {
-            error?: { message?: string } | Array<{ error?: { message?: string } }>;
-            message?: string;
-          };
-          const msg = Array.isArray(parsed.error)
-            ? parsed.error[0]?.error?.message
-            : parsed.error?.message || parsed.message;
-          errSnippet = msg ? ` — ${String(msg).slice(0, 110)}` : '';
-        } catch {
-          // ignore
-        }
-        return {
-          ok: false,
-          latencyMs,
-          detail: `HTTP ${res.status} sur ${provider.label} (${provider.model})${errSnippet}`,
-          model: provider.model
+    for (let idx = 0; idx < candidateModels.length; idx++) {
+      const candidateModel = candidateModels[idx];
+      const t0 = Date.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json'
         };
+        if (provider.id === 'openrouter') {
+          headers['HTTP-Referer'] = 'https://askarr.local';
+          headers['X-Title'] = 'Askarr Cinema Concierge';
+        }
+
+        const res = await this.fetchImpl(`${provider.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: candidateModel,
+            messages: [{ role: 'user', content: 'Réponds uniquement par le mot OK.' }],
+            max_tokens: 80,
+            temperature: 0
+          }),
+          signal: controller.signal
+        });
+
+        const latencyMs = Date.now() - t0;
+        lastLatencyMs = latencyMs;
+        if (!res.ok) {
+          let errSnippet = '';
+          try {
+            const errRaw = await res.text();
+            const parsed = JSON.parse(errRaw) as {
+              error?: { message?: string } | Array<{ error?: { message?: string } }>;
+              message?: string;
+            };
+            const msg = Array.isArray(parsed.error)
+              ? parsed.error[0]?.error?.message
+              : parsed.error?.message || parsed.message;
+            errSnippet = msg ? ` — ${String(msg).slice(0, 110)}` : '';
+          } catch {
+            // ignore
+          }
+          lastFailDetail = `HTTP ${res.status} sur ${provider.label} (${candidateModel})${errSnippet}`;
+          if ((res.status === 404 || res.status === 400 || res.status === 429) && idx + 1 < candidateModels.length) {
+            continue;
+          }
+          return {
+            ok: false,
+            latencyMs,
+            detail: lastFailDetail,
+            model: candidateModel
+          };
+        }
+
+        if (candidateModel !== provider.model) {
+          provider.model = candidateModel;
+          this.persistActiveModelForProvider(provider.id, candidateModel);
+        } else {
+          this.persistActiveModelForProvider(provider.id, candidateModel);
+        }
+
+        const data = (await res.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        const reply = (data.choices?.[0]?.message?.content || 'OK').trim().slice(0, 30);
+        return {
+          ok: true,
+          latencyMs,
+          detail: `${provider.label} opérationnel (${candidateModel} • ${provider.isFree ? 'Gratuit $0' : 'Payant'}) — Réponse: "${reply}"`,
+          model: candidateModel
+        };
+      } catch (err) {
+        lastLatencyMs = Date.now() - t0;
+        lastFailDetail = err instanceof Error ? err.message : `Erreur réseau ${provider.label}`;
+        if (idx + 1 < candidateModels.length) {
+          continue;
+        }
+      } finally {
+        clearTimeout(timer);
       }
-      const data = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const reply = (data.choices?.[0]?.message?.content || 'OK').trim().slice(0, 30);
-      return {
-        ok: true,
-        latencyMs,
-        detail: `${provider.label} opérationnel (${provider.model} • ${provider.isFree ? 'Gratuit $0' : 'Payant'}) — Réponse: "${reply}"`,
-        model: provider.model
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        latencyMs: Date.now() - t0,
-        detail: err instanceof Error ? err.message : `Erreur réseau ${provider.label}`,
-        model: provider.model
-      };
-    } finally {
-      clearTimeout(timer);
     }
+
+    return {
+      ok: false,
+      latencyMs: lastLatencyMs,
+      detail: lastFailDetail || `Échec connexion ${provider.label}`,
+      model: provider.model
+    };
   }
 
   private async runDirectSearchFallback(params: {

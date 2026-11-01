@@ -146,11 +146,11 @@ describe('AskarrDatabase SQLite WAL & Ledger Tests', () => {
     expect(turn.llmUsage?.providerId).toBe('groq');
     expect(turn.llmUsage?.isFreeProvider).toBe(true);
     expect(turn.llmUsage?.estimatedCostUsd).toBe(0);
-    expect(turn.llmUsage?.failoverFrom).toBe('Google Gemini (gemini-2.5-flash)');
+    expect(turn.llmUsage?.failoverFrom).toBe('Google Gemini (gemini-3.5-flash-lite)');
 
     const stats = db.getLlmBudgetStats(500000, 10.0);
     expect(stats.monthlyCostUsd).toBe(0);
-    expect(stats.modelBenchmarks[0].model).toBe('groq/llama-3.3-70b-versatile');
+    expect(stats.modelBenchmarks[0].model).toBe('groq/openai/gpt-oss-120b');
 
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });

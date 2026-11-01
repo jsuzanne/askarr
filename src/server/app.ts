@@ -16,7 +16,7 @@ import { CloudflareAccessConnector } from './connectors/cloudflare-access.connec
 import { TracearrConnector } from './connectors/tracearr.js';
 import { SmtpInviteService } from './connectors/smtp-invite.service.js';
 import { MediaAggregatorService } from './aggregator/media-aggregator.service.js';
-import { DeepSeekOrchestratorService } from './orchestrator/deepseek-orchestrator.service.js';
+import { DeepSeekOrchestratorService, normalizeLlmModelSlug } from './orchestrator/deepseek-orchestrator.service.js';
 import { ApiTracer } from './utils/api-tracer.js';
 import type { UserSessionInfo, AdminSettingsDTO, PlexSharedUserDTO, LlmProviderId, LlmRoutingMode } from '../shared/types.js';
 import { APP_VERSION, APP_RELEASE_DATE } from '../shared/version.js';
@@ -181,25 +181,41 @@ export async function createApp(deps: AppDependencies): Promise<{
       config.geminiApiKey = saved.cfg_gemini_key;
     }
     if (saved.cfg_gemini_model) {
-      config.geminiModel = saved.cfg_gemini_model;
+      const normalized = normalizeLlmModelSlug('gemini', saved.cfg_gemini_model);
+      config.geminiModel = normalized;
+      if (normalized !== saved.cfg_gemini_model) {
+        db.setAppSetting('cfg_gemini_model', normalized);
+      }
     }
     if (saved.cfg_groq_key !== undefined) {
       config.groqApiKey = saved.cfg_groq_key;
     }
     if (saved.cfg_groq_model) {
-      config.groqModel = saved.cfg_groq_model;
+      const normalized = normalizeLlmModelSlug('groq', saved.cfg_groq_model);
+      config.groqModel = normalized;
+      if (normalized !== saved.cfg_groq_model) {
+        db.setAppSetting('cfg_groq_model', normalized);
+      }
     }
     if (saved.cfg_mistral_key !== undefined) {
       config.mistralApiKey = saved.cfg_mistral_key;
     }
     if (saved.cfg_mistral_model) {
-      config.mistralModel = saved.cfg_mistral_model;
+      const normalized = normalizeLlmModelSlug('mistral', saved.cfg_mistral_model);
+      config.mistralModel = normalized;
+      if (normalized !== saved.cfg_mistral_model) {
+        db.setAppSetting('cfg_mistral_model', normalized);
+      }
     }
     if (saved.cfg_openrouter_key !== undefined) {
       config.openrouterApiKey = saved.cfg_openrouter_key;
     }
     if (saved.cfg_openrouter_model) {
-      config.openrouterModel = saved.cfg_openrouter_model;
+      const normalized = normalizeLlmModelSlug('openrouter', saved.cfg_openrouter_model);
+      config.openrouterModel = normalized;
+      if (normalized !== saved.cfg_openrouter_model) {
+        db.setAppSetting('cfg_openrouter_model', normalized);
+      }
     }
     if (saved.cfg_ai_daily_token_cap && Number(saved.cfg_ai_daily_token_cap) > 0) {
       config.aiDailyTokenCap = Number(saved.cfg_ai_daily_token_cap);
@@ -316,17 +332,38 @@ export async function createApp(deps: AppDependencies): Promise<{
   // 2. Chat Conversationnel IA (DeepSeek + Fallback Recherche Directe)
   const chatBodySchema = z.object({
     conversationId: z.string().optional(),
-    message: z.string().min(1).max(600)
+    message: z.string().min(1).max(600),
+    viewerSimulation: z
+      .object({
+        plexUsername: z.string().max(120).optional(),
+        askarrServerNames: z.array(z.string().max(60)).optional()
+      })
+      .optional()
   });
 
   app.post('/api/chat/messages', async (req) => {
     const { session } = await resolveUserSession(req);
     const body = chatBodySchema.parse(req.body);
     const traceMarker = apiTracer.markPosition();
+    const effectivePlexAccess =
+      session.role === 'admin' && body.viewerSimulation
+        ? {
+            plexUserId: null,
+            plexUsername: body.viewerSimulation.plexUsername || 'Spectateur (Vue User)',
+            askarrServerNames:
+              body.viewerSimulation.askarrServerNames && body.viewerSimulation.askarrServerNames.length > 0
+                ? body.viewerSimulation.askarrServerNames
+                : ['NucVillers'],
+            allServerNames:
+              body.viewerSimulation.askarrServerNames && body.viewerSimulation.askarrServerNames.length > 0
+                ? body.viewerSimulation.askarrServerNames
+                : ['NucVillers']
+          }
+        : session.plexAccess;
     const result = await orchestrator.handleUserMessage({
       userEmail: session.email,
       overseerrUserId: session.overseerr.overseerrUserId,
-      plexAccess: session.plexAccess,
+      plexAccess: effectivePlexAccess,
       conversationId: body.conversationId,
       message: body.message
     });
@@ -1442,16 +1479,16 @@ export async function createApp(deps: AppDependencies): Promise<{
         deepseekApiKeyConfigured: Boolean(config.deepseekApiKey),
         llmRoutingMode: config.llmRoutingMode || 'priority_cascade',
         llmManualProvider: config.llmManualProvider || 'deepseek',
-        geminiModel: config.geminiModel || 'gemini-2.5-flash',
+        geminiModel: normalizeLlmModelSlug('gemini', config.geminiModel),
         geminiApiKeyMasked: maskSecret(config.geminiApiKey || ''),
         geminiApiKeyConfigured: Boolean(config.geminiApiKey),
-        groqModel: config.groqModel || 'llama-3.3-70b-versatile',
+        groqModel: normalizeLlmModelSlug('groq', config.groqModel),
         groqApiKeyMasked: maskSecret(config.groqApiKey || ''),
         groqApiKeyConfigured: Boolean(config.groqApiKey),
-        mistralModel: config.mistralModel || 'mistral-small-latest',
+        mistralModel: normalizeLlmModelSlug('mistral', config.mistralModel),
         mistralApiKeyMasked: maskSecret(config.mistralApiKey || ''),
         mistralApiKeyConfigured: Boolean(config.mistralApiKey),
-        openrouterModel: config.openrouterModel || 'deepseek/deepseek-chat-v3-0324:free',
+        openrouterModel: normalizeLlmModelSlug('openrouter', config.openrouterModel),
         openrouterApiKeyMasked: maskSecret(config.openrouterApiKey || ''),
         openrouterApiKeyConfigured: Boolean(config.openrouterApiKey),
         aiDailyTokenCap: config.aiDailyTokenCap,
@@ -1551,13 +1588,13 @@ export async function createApp(deps: AppDependencies): Promise<{
     if (body.llmManualProvider) {
       db.setAppSetting('cfg_llm_manual_provider', body.llmManualProvider);
     }
-    saveIfPresent('cfg_gemini_model', body.geminiModel);
+    saveIfPresent('cfg_gemini_model', body.geminiModel ? normalizeLlmModelSlug('gemini', body.geminiModel) : undefined);
     saveIfPresent('cfg_gemini_key', body.geminiApiKey);
-    saveIfPresent('cfg_groq_model', body.groqModel);
+    saveIfPresent('cfg_groq_model', body.groqModel ? normalizeLlmModelSlug('groq', body.groqModel) : undefined);
     saveIfPresent('cfg_groq_key', body.groqApiKey);
-    saveIfPresent('cfg_mistral_model', body.mistralModel);
+    saveIfPresent('cfg_mistral_model', body.mistralModel ? normalizeLlmModelSlug('mistral', body.mistralModel) : undefined);
     saveIfPresent('cfg_mistral_key', body.mistralApiKey);
-    saveIfPresent('cfg_openrouter_model', body.openrouterModel);
+    saveIfPresent('cfg_openrouter_model', body.openrouterModel ? normalizeLlmModelSlug('openrouter', body.openrouterModel) : undefined);
     saveIfPresent('cfg_openrouter_key', body.openrouterApiKey);
     if (body.aiDailyTokenCap) {
       db.setAppSetting('cfg_ai_daily_token_cap', String(body.aiDailyTokenCap));

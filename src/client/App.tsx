@@ -225,6 +225,10 @@ export function App() {
   const [adminTab, setAdminTab] = useState<'cloudflare' | 'health' | 'traces' | 'feedback' | 'settings'>('cloudflare');
   // Toggle for Admin to see inline technical traces inside the User Chat & Media Cards
   const [debugOverlay, setDebugOverlay] = useState<boolean>(true);
+  // Mode Viewer (User) for Admin: preview exact non-admin user UI & simulate Plex server permissions without creating a separate account
+  const [viewerUserMode, setViewerUserMode] = useState<boolean>(false);
+  const [viewerImmersiveHeader, setViewerImmersiveHeader] = useState<boolean>(false);
+  const [viewerProfilePreset, setViewerProfilePreset] = useState<string>('cinephile_2salles');
   // Cinema Web Audio Ambiance & Micro-SFX state (0-byte procedural synth, 0% React re-render overhead)
   const [audioMode, setAudioMode] = useState<CinemaAudioMode>(() => cinemaAudio.getMode());
   const [audioVolume, setAudioVolume] = useState<number>(() => cinemaAudio.getVolume());
@@ -314,13 +318,13 @@ export function App() {
     deepseekApiKey: '',
     llmRoutingMode: 'priority_cascade' as LlmRoutingMode,
     llmManualProvider: 'deepseek' as LlmProviderId,
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: 'gemini-3.5-flash-lite',
     geminiApiKey: '',
-    groqModel: 'llama-3.3-70b-versatile',
+    groqModel: 'openai/gpt-oss-120b',
     groqApiKey: '',
     mistralModel: 'mistral-small-latest',
     mistralApiKey: '',
-    openrouterModel: 'deepseek/deepseek-chat-v3-0324:free',
+    openrouterModel: 'openrouter/free',
     openrouterApiKey: '',
     aiDailyTokenCap: 2500000,
     aiMonthlyBudgetUsd: 10
@@ -540,8 +544,21 @@ export function App() {
         })
       });
       if (res.ok) {
-        const data: { ok: boolean; latencyMs: number; detail: string } = await res.json();
+        const data: { ok: boolean; latencyMs: number; detail: string; model?: string } = await res.json();
         setServiceTestResults((prev) => ({ ...prev, [serviceKey]: data }));
+        if (data.model) {
+          if (serviceKey === 'llm:gemini') {
+            setConfigForm((prev) => ({ ...prev, geminiModel: data.model! }));
+          } else if (serviceKey === 'llm:groq') {
+            setConfigForm((prev) => ({ ...prev, groqModel: data.model! }));
+          } else if (serviceKey === 'llm:mistral') {
+            setConfigForm((prev) => ({ ...prev, mistralModel: data.model! }));
+          } else if (serviceKey === 'llm:openrouter') {
+            setConfigForm((prev) => ({ ...prev, openrouterModel: data.model! }));
+          } else if (serviceKey === 'llm:deepseek') {
+            setConfigForm((prev) => ({ ...prev, deepseekModel: data.model! }));
+          }
+        }
         void fetchTraces();
         void fetchSettings();
         void fetchAdminStatus();
@@ -1101,6 +1118,64 @@ export function App() {
     }
   }, [workspaceMode, userTab, adminTab, traceServiceFilter]);
 
+  useEffect(() => {
+    if (session?.role === 'admin' && viewerUserMode && !cfStatus) {
+      void fetchAdminStatus();
+    }
+  }, [session?.role, viewerUserMode, cfStatus]);
+
+  function getActiveViewerSimulation(): {
+    plexUsername: string;
+    askarrServerNames: string[];
+    label: string;
+  } | null {
+    if (session?.role !== 'admin' || !viewerUserMode || workspaceMode !== 'user') {
+      return null;
+    }
+    if (viewerProfilePreset === 'standard_nucvillers') {
+      return {
+        plexUsername: 'Ami Ciné-Club',
+        askarrServerNames: ['NucVillers'],
+        label: 'Spectateur Standard (NucVillers)'
+      };
+    }
+    if (viewerProfilePreset === 'cinephile_2salles') {
+      return {
+        plexUsername: 'Ami Cinéphile',
+        askarrServerNames: ['NucVillers', 'NucBuntu'],
+        label: 'Membre Cinéphile (NucVillers + NucBuntu)'
+      };
+    }
+    if (viewerProfilePreset.startsWith('friend:')) {
+      const friendEmailOrUser = viewerProfilePreset.slice('friend:'.length);
+      const friend = cfStatus?.plexDirectory?.find(
+        (u) => (u.email || u.username) === friendEmailOrUser
+      );
+      if (friend) {
+        const servers =
+          friend.askarrServerNames && friend.askarrServerNames.length > 0
+            ? friend.askarrServerNames
+            : friend.allServerNames && friend.allServerNames.length > 0
+              ? friend.allServerNames
+              : ['NucVillers'];
+        return {
+          plexUsername: friend.title || friend.username || friend.email.split('@')[0],
+          askarrServerNames: servers,
+          label: `${friend.title || friend.username} (${servers.join(' + ')})`
+        };
+      }
+    }
+    const defaultServers =
+      session?.plexAccess && session.plexAccess.askarrServerNames.length > 0
+        ? session.plexAccess.askarrServerNames
+        : ['NucVillers', 'NucBuntu'];
+    return {
+      plexUsername: session?.overseerr.plexUsername || session?.email.split('@')[0] || 'Spectateur',
+      askarrServerNames: defaultServers,
+      label: `Tous les serveurs (${defaultServers.join(', ')})`
+    };
+  }
+
   async function sendMessage(textToSend?: string) {
     const query = (textToSend ?? input).trim();
     if (!query || loading) return;
@@ -1120,13 +1195,21 @@ export function App() {
     setLoading(true);
     cinemaAudio.startRetroProjectorSpin();
 
+    const activeSim = getActiveViewerSimulation();
+
     try {
       const res = await fetch('/api/chat/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: query,
-          conversationId
+          conversationId,
+          viewerSimulation: activeSim
+            ? {
+                plexUsername: activeSim.plexUsername,
+                askarrServerNames: activeSim.askarrServerNames
+              }
+            : undefined
         })
       });
 
@@ -1201,7 +1284,9 @@ export function App() {
   }
 
   const isAdmin = session?.role === 'admin';
-  const showInlineDebug = isAdmin && debugOverlay;
+  const isViewerPreview = Boolean(isAdmin && workspaceMode === 'user' && viewerUserMode);
+  const activeViewerSim = getActiveViewerSimulation();
+  const showInlineDebug = Boolean(isAdmin && debugOverlay && !isViewerPreview);
 
   useEffect(() => {
     const handleFirstGesture = () => {
@@ -1266,25 +1351,50 @@ export function App() {
             </div>
           </div>
 
-          {/* Centre : Bascule Principale "Salle Ciné" vs "Régie Admin" */}
-          {isAdmin && (
+          {/* Centre : Bascule Principale "Salle Ciné (Admin)" vs "👁️ Vue User" vs "Régie Admin" */}
+          {isAdmin && !(isViewerPreview && viewerImmersiveHeader) && (
             <div className="flex items-center bg-stone-950/95 p-1 rounded-xl border border-amber-500/30 shadow-inner">
               <button
                 type="button"
-                onClick={() => setWorkspaceMode('user')}
-                className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
-                  workspaceMode === 'user'
+                onClick={() => {
+                  setWorkspaceMode('user');
+                  setViewerUserMode(false);
+                }}
+                className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                  workspaceMode === 'user' && !viewerUserMode
                     ? 'cinema-velvet-pill text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
                 }`}
+                title="Salle Ciné avec traces techniques et outils Admin"
               >
-                <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <Clapperboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 <span>Salle Ciné</span>
               </button>
               <button
                 type="button"
-                onClick={() => setWorkspaceMode('admin')}
-                className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                onClick={() => {
+                  setWorkspaceMode('user');
+                  setViewerUserMode(true);
+                  setViewerImmersiveHeader(false);
+                }}
+                className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                  workspaceMode === 'user' && viewerUserMode
+                    ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                    : 'text-emerald-300/85 hover:text-emerald-200 hover:bg-emerald-950/40'
+                }`}
+                title="Mode Viewer (User) : Voir et tester exactement l'interface d'un ami invité sans créer de compte"
+              >
+                <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span>Vue User</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceMode('admin');
+                  setViewerUserMode(false);
+                  setViewerImmersiveHeader(false);
+                }}
+                className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'admin'
                     ? 'bg-amber-600 text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
@@ -1453,7 +1563,7 @@ export function App() {
               )}
             </div>
 
-            {isAdmin && workspaceMode === 'user' && (
+            {isAdmin && workspaceMode === 'user' && !isViewerPreview && (
               <button
                 type="button"
                 onClick={() => setDebugOverlay((v) => !v)}
@@ -1475,17 +1585,29 @@ export function App() {
                 <div className="text-right">
                   <div className="flex items-center justify-end gap-1.5 text-xs sm:text-sm font-semibold text-amber-100 leading-tight">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] shrink-0" />
-                    <span>{session.overseerr.plexUsername || session.email.split('@')[0]}</span>
+                    <span>
+                      {isViewerPreview && activeViewerSim
+                        ? activeViewerSim.plexUsername
+                        : session.overseerr.plexUsername || session.email.split('@')[0]}
+                    </span>
                   </div>
                   <div className="text-[11px] text-amber-300/80 leading-tight font-medium mt-0.5">
-                    {isAdmin
-                      ? 'Administrateur'
-                      : session.overseerr.linked
-                        ? 'Membre Ciné-Club'
-                        : 'Spectateur Invité'}
-                    {session.plexAccess && session.plexAccess.askarrServerNames.length > 0
-                      ? ` • ${session.plexAccess.askarrServerNames.length} salle${session.plexAccess.askarrServerNames.length > 1 ? 's' : ''} Plex`
-                      : ''}
+                    {isViewerPreview
+                      ? 'Membre Ciné-Club'
+                      : isAdmin
+                        ? 'Administrateur'
+                        : session.overseerr.linked
+                          ? 'Membre Ciné-Club'
+                          : 'Spectateur Invité'}
+                    {(() => {
+                      const visibleServers =
+                        isViewerPreview && activeViewerSim
+                          ? activeViewerSim.askarrServerNames
+                          : session.plexAccess?.askarrServerNames || [];
+                      return visibleServers.length > 0
+                        ? ` • ${visibleServers.length} salle${visibleServers.length > 1 ? 's' : ''} Plex`
+                        : '';
+                    })()}
                   </div>
                 </div>
               </div>
@@ -1544,9 +1666,11 @@ export function App() {
 
                 <div className="hidden lg:flex items-center gap-1.5 text-xs text-stone-400 shrink-0">
                   <span className="text-stone-500">Salles Plex :</span>
-                  {(session?.plexAccess && session.plexAccess.askarrServerNames.length > 0
-                    ? session.plexAccess.askarrServerNames
-                    : ['NucVillers', 'NucBuntu', 'EQ12buntu', 'MacMini', 'Macmini4']
+                  {(isViewerPreview && activeViewerSim
+                    ? activeViewerSim.askarrServerNames
+                    : session?.plexAccess && session.plexAccess.askarrServerNames.length > 0
+                      ? session.plexAccess.askarrServerNames
+                      : ['NucVillers', 'NucBuntu', 'EQ12buntu', 'MacMini', 'Macmini4']
                   ).map((srv) => (
                     <span
                       key={srv}
@@ -1676,6 +1800,107 @@ export function App() {
           </div>
         </div>
       </header>
+
+      {/* Barre de Simulation Mode Viewer (User) pour l'Administrateur */}
+      {isViewerPreview && !viewerImmersiveHeader && (
+        <div className="bg-emerald-950/85 border-b border-emerald-500/40 backdrop-blur-md">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-200 border border-emerald-400/50 font-bold">
+                <Eye className="w-3.5 h-3.5 text-emerald-300" />
+                <span>MODE VIEWER (USER) ACTIF</span>
+              </span>
+              <span className="text-emerald-100/90 hidden md:inline">
+                Interface Spectateur (0 trace technique • badge Membre Ciné-Club).
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-emerald-200/90 font-medium hidden sm:inline">
+                Profil simulé :
+              </label>
+              <select
+                value={viewerProfilePreset}
+                onChange={(e) => setViewerProfilePreset(e.target.value)}
+                className="rounded-lg bg-black/80 border border-emerald-500/50 px-2.5 py-1 text-emerald-100 font-medium text-xs focus:outline-none focus:border-emerald-300"
+              >
+                <option value="cinephile_2salles">
+                  🎬 Membre Cinéphile (NucVillers + NucBuntu — 2 salles Plex)
+                </option>
+                <option value="standard_nucvillers">
+                  🍿 Spectateur Standard (NucVillers uniquement — 1 salle Plex)
+                </option>
+                <option value="all_servers">
+                  👑 Tous les serveurs (Mon profil complet sans traces)
+                </option>
+                {cfStatus?.plexDirectory && cfStatus.plexDirectory.length > 0 && (
+                  <optgroup label="👥 Simuler un Ami Plex réel (Annuaire)">
+                    {cfStatus.plexDirectory.map((friend) => {
+                      const key = friend.email || friend.username;
+                      const srvs =
+                        friend.askarrServerNames && friend.askarrServerNames.length > 0
+                          ? friend.askarrServerNames.join(' + ')
+                          : friend.allServerNames.join(' + ') || 'NucVillers';
+                      return (
+                        <option key={friend.plexUserId} value={`friend:${key}`}>
+                          {friend.title || friend.username} ({srvs})
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setViewerImmersiveHeader(true)}
+                className="px-2.5 py-1 rounded-lg bg-stone-900/90 hover:bg-stone-800 text-emerald-200 border border-emerald-500/40 font-semibold cursor-pointer transition-colors"
+                title="Masquer également la bascule du haut et ce bandeau pour un aperçu 100% identique à l'écran d'un invité"
+              >
+                Plein écran 100% User
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setViewerUserMode(false);
+                  setViewerImmersiveHeader(false);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/50 font-bold cursor-pointer transition-colors"
+              >
+                Quitter Vue User ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pilule flottante discrète lorsque le Mode Viewer (User) est en Plein Écran 100% User */}
+      {isViewerPreview && viewerImmersiveHeader && (
+        <div className="fixed bottom-20 right-4 z-50 flex items-center gap-1.5 rounded-full bg-emerald-950/95 border border-emerald-400/60 px-3.5 py-1.5 text-xs text-emerald-100 shadow-[0_8px_25px_rgba(0,0,0,0.85)] backdrop-blur-md">
+          <Eye className="w-3.5 h-3.5 text-emerald-300" />
+          <span className="font-semibold">
+            Vue User ({activeViewerSim?.plexUsername || 'Invité'})
+          </span>
+          <button
+            type="button"
+            onClick={() => setViewerImmersiveHeader(false)}
+            className="ml-1 px-2 py-0.5 rounded-full bg-stone-900 hover:bg-stone-800 text-emerald-200 border border-emerald-500/40 cursor-pointer"
+          >
+            Options
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setViewerUserMode(false);
+              setViewerImmersiveHeader(false);
+            }}
+            className="px-2 py-0.5 rounded-full bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 border border-amber-400/50 font-bold cursor-pointer"
+          >
+            Retour Admin ✕
+          </button>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main
@@ -3356,10 +3581,10 @@ export function App() {
                             }
                             className="rounded-xl bg-stone-950 border border-amber-500/50 px-3.5 py-2 text-white font-mono text-xs sm:text-sm"
                           >
-                            <option value="gemini">Google Gemini (Gratuit — gemini-2.5-flash)</option>
-                            <option value="groq">Groq Cloud LPU (Gratuit — llama-3.3-70b-versatile)</option>
+                            <option value="gemini">Google Gemini (Gratuit — gemini-3.5-flash-lite)</option>
+                            <option value="groq">Groq Cloud LPU (Gratuit — openai/gpt-oss-120b)</option>
                             <option value="mistral">Mistral AI La Plateforme (Gratuit — mistral-small-latest)</option>
-                            <option value="openrouter">OpenRouter Free (Gratuit — deepseek-chat-v3-0324:free)</option>
+                            <option value="openrouter">OpenRouter Free (Gratuit — openrouter/free)</option>
                             <option value="deepseek">DeepSeek Officiel (Payant — deepseek-chat)</option>
                           </select>
                         </div>
@@ -3401,7 +3626,7 @@ export function App() {
                               type="text"
                               value={configForm.geminiModel}
                               onChange={(e) => setConfigForm((p) => ({ ...p, geminiModel: e.target.value }))}
-                              placeholder="gemini-2.5-flash"
+                              placeholder="gemini-3.5-flash-lite"
                               className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
                             />
                           </div>
@@ -3468,7 +3693,7 @@ export function App() {
                               type="text"
                               value={configForm.groqModel}
                               onChange={(e) => setConfigForm((p) => ({ ...p, groqModel: e.target.value }))}
-                              placeholder="llama-3.3-70b-versatile"
+                              placeholder="openai/gpt-oss-120b"
                               className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
                             />
                           </div>
@@ -3602,7 +3827,7 @@ export function App() {
                               type="text"
                               value={configForm.openrouterModel}
                               onChange={(e) => setConfigForm((p) => ({ ...p, openrouterModel: e.target.value }))}
-                              placeholder="deepseek/deepseek-chat-v3-0324:free"
+                              placeholder="openrouter/free"
                               className="rounded-xl bg-stone-950 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
                             />
                           </div>
