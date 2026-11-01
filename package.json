@@ -2,6 +2,7 @@
   "name": "askarr",
   "version": "1.2.15",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Askarr — Copilot Média familial & amical (Plex Multi-Serveurs, Overseerr, Radarr, Sonarr, Prowlarr, Tracearr, Cloudflare Access, DeepSeek)",
   "type": "module",
   "scripts": {

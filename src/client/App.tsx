@@ -61,6 +61,7 @@ import { MediaCandidateCard } from './components/MediaCandidateCard.js';
 import { RichMarkdownText } from './components/RichMarkdownText.js';
 import { APP_VERSION, APP_RELEASE_DATE } from '../shared/version.js';
 import { cinemaAudio, type CinemaAudioMode } from './utils/cinema-audio.js';
+import { useI18n } from './i18n/index.js';
 
 interface UiMessage {
   id: string;
@@ -155,38 +156,73 @@ interface MyRequestItem {
   evidence: MediaEvidence;
 }
 
-const QUICK_PROMPTS = [
-  {
-    label: 'Derniers ajouts Plex',
-    icon: Clock,
-    prompt: 'Quels sont les derniers films et séries ajoutés sur Plex la semaine dernière ?'
-  },
-  {
-    label: 'Mon historique & reprise',
-    icon: Play,
-    prompt: 'Qu’est-ce que j’ai regardé récemment sur Plex et où j’en étais ?'
-  },
-  {
-    label: 'Palmarès Cannes / Retrouver un film',
-    icon: Award,
-    prompt: 'Quels films ont gagné la Palme d’Or au Festival de Cannes ces dernières années et lesquels sont sur Plex ?'
-  },
-  {
-    label: 'Par réalisateur ou acteur',
-    icon: Clapperboard,
-    prompt: 'Quels sont les meilleurs films de Cédric Klapisch ou Denis Villeneuve et lesquels sont disponibles sur Plex ?'
-  },
-  {
-    label: 'Pépites sur Plex (> 7.8)',
-    icon: Star,
-    prompt: 'Conseille-moi d’excellents films déjà disponibles sur Plex avec une note supérieure à 7.8'
-  },
-  {
-    label: 'Sorties Salle & dates VOD',
-    icon: Ticket,
-    prompt: 'Est-ce que Dune : Deuxième Partie ou Le Comte de Monte-Cristo sont sur Plex, ou quelle est leur date VOD / DVD ?'
-  }
-];
+function getQuickPrompts(lang: 'fr' | 'en') {
+  return lang === 'en'
+    ? [
+        {
+          label: 'Recent Plex Additions',
+          icon: Clock,
+          prompt: 'What are the latest movies and series added to Plex in the past week?'
+        },
+        {
+          label: 'My Watch History',
+          icon: Play,
+          prompt: 'What did I watch recently on Plex and where did I leave off?'
+        },
+        {
+          label: 'Cannes & Awards / Find a Film',
+          icon: Award,
+          prompt: 'Which films won the Palme d’Or at Cannes in recent years, and which ones are on Plex?'
+        },
+        {
+          label: 'By Director or Actor',
+          icon: Clapperboard,
+          prompt: 'What are the best movies by Denis Villeneuve or Christopher Nolan available on Plex?'
+        },
+        {
+          label: 'Plex Gems (> 7.8)',
+          icon: Star,
+          prompt: 'Recommend top-rated movies already available on Plex with an IMDb score above 7.8'
+        },
+        {
+          label: 'Theatrical & VOD Dates',
+          icon: Ticket,
+          prompt: 'Are Dune: Part Two or Gladiator II on Plex, or what are their digital VOD / DVD release dates?'
+        }
+      ]
+    : [
+        {
+          label: 'Derniers ajouts Plex',
+          icon: Clock,
+          prompt: 'Quels sont les derniers films et séries ajoutés sur Plex la semaine dernière ?'
+        },
+        {
+          label: 'Mon historique & reprise',
+          icon: Play,
+          prompt: 'Qu’est-ce que j’ai regardé récemment sur Plex et où j’en étais ?'
+        },
+        {
+          label: 'Palmarès Cannes / Retrouver un film',
+          icon: Award,
+          prompt: 'Quels films ont gagné la Palme d’Or au Festival de Cannes ces dernières années et lesquels sont sur Plex ?'
+        },
+        {
+          label: 'Par réalisateur ou acteur',
+          icon: Clapperboard,
+          prompt: 'Quels sont les meilleurs films de Cédric Klapisch ou Denis Villeneuve et lesquels sont disponibles sur Plex ?'
+        },
+        {
+          label: 'Pépites sur Plex (> 7.8)',
+          icon: Star,
+          prompt: 'Conseille-moi d’excellents films déjà disponibles sur Plex avec une note supérieure à 7.8'
+        },
+        {
+          label: 'Sorties Salle & dates VOD',
+          icon: Ticket,
+          prompt: 'Est-ce que Dune : Deuxième Partie ou Le Comte de Monte-Cristo sont sur Plex, ou quelle est leur date VOD / DVD ?'
+        }
+      ];
+}
 
 const FEEDBACK_QUICK_TAGS = [
   'Pertinent & précis',
@@ -224,6 +260,8 @@ function serviceBadgeColor(service: ApiTraceEntryDTO['service']): string {
 }
 
 export function App() {
+  const { lang, setLang, toggleLang, t } = useI18n();
+  const quickPrompts = getQuickPrompts(lang);
   // Workspace mode: 'user' (Ami Plex interface) vs 'admin' (Console Admin)
   const [workspaceMode, setWorkspaceMode] = useState<'user' | 'admin'>('user');
   const [userTab, setUserTab] = useState<'chat' | 'requests'>('chat');
@@ -1396,6 +1434,7 @@ export function App() {
         body: JSON.stringify({
           message: query,
           conversationId,
+          lang,
           viewerSimulation: activeSim
             ? {
                 plexUsername: activeSim.plexUsername,
@@ -1470,11 +1509,40 @@ export function App() {
         id: `welcome-${Date.now()}`,
         role: 'assistant',
         content:
-          'Nouvelle séance ouverte ! Quel film, série, réalisateur ou palmarès (*Cannes, César, Oscars*) cherches-tu aujourd’hui ?',
+          lang === 'en'
+            ? 'New screening open! What movie, series, director, or festival award (*Oscars, Cannes, BAFTAs*) are you looking for today?'
+            : 'Nouvelle séance ouverte ! Quel film, série, réalisateur ou palmarès (*Cannes, César, Oscars*) cherches-tu aujourd’hui ?',
         createdAt: new Date().toISOString()
       }
     ]);
   }
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0].id.startsWith('welcome')) {
+        return [
+          {
+            id: prev[0].id,
+            role: 'assistant',
+            content:
+              lang === 'en'
+                ? 'Welcome to your **Askarr — Grand Cinema & Series** screening room!\n\n' +
+                  'Take your seat, I will take care of the screening:\n' +
+                  '• **Find any movie or series** by **director** (*Nolan, Villeneuve...*), **actor**, **year**, **plot memory**, or **festival award** (*Cannes Palme d’Or, Oscars, BAFTAs*).\n' +
+                  '• **Instantly check** if it is showing on our **Plex** servers with **live IMDb ratings**.\n' +
+                  '• View its **theatrical & digital VOD/DVD release dates** or **request it on Plex in 2 clicks**.'
+                : 'Bienvenue dans ta salle **Askarr — Grand Cinéma & Séries** !\n\n' +
+                  'Installe-toi dans ton fauteuil, je m’occupe de la séance :\n' +
+                  '• **Retrouver un film ou une série** à partir d’un **réalisateur** (*Klapisch, Villeneuve...*), d’un **acteur** (*Pierre Niney...*), d’une **année**, d’un **souvenir d’intrigue** ou d’un **palmarès** (*Festival de Cannes / Palme d’Or, César, Oscars*).\n' +
+                  '• Vérifier **instantanément** s’il est à l’affiche sur nos serveurs **Plex** avec les **notes IMDb**.\n' +
+                  '• Regarder sa **date de sortie VOD / DVD** ou **le programmer sur Plex en 2 clics**.',
+            createdAt: prev[0].createdAt
+          }
+        ];
+      }
+      return prev;
+    });
+  }, [lang]);
 
   const isAdmin = session?.role === 'admin';
   const isViewerPreview = Boolean(isAdmin && workspaceMode === 'user' && viewerUserMode);
@@ -1539,7 +1607,7 @@ export function App() {
                 v{APP_VERSION}
               </span>
               <span className="hidden md:inline-flex font-cinema tracking-widest text-xs px-2.5 py-0.5 rounded-md bg-gradient-to-r from-red-900/90 to-red-800/80 text-amber-200 border border-amber-400/40 shadow-sm whitespace-nowrap">
-                {workspaceMode === 'user' ? '🍿 GRAND CINÉMA' : '🎬 RÉGIE ADMIN'}
+                {workspaceMode === 'user' ? t('grand_cinema_badge') : t('regie_admin_badge')}
               </span>
             </div>
           </div>
@@ -1559,10 +1627,10 @@ export function App() {
                     ? 'cinema-velvet-pill text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
                 }`}
-                title="Salle Ciné avec traces techniques et outils Admin"
+                title={t('salle_cine_tooltip')}
               >
                 <Clapperboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                <span>Salle Ciné</span>
+                <span>{t('salle_cine')}</span>
               </button>
               <button
                 type="button"
@@ -1577,10 +1645,10 @@ export function App() {
                     ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]'
                     : 'text-emerald-300/85 hover:text-emerald-200 hover:bg-emerald-950/40'
                 }`}
-                title="Mode Viewer (User) : Voir et tester exactement l'interface d'un ami invité sans créer de compte"
+                title={t('vue_user_tooltip')}
               >
                 <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                <span>Vue User</span>
+                <span>{t('vue_user')}</span>
               </button>
               <button
                 type="button"
@@ -1596,13 +1664,23 @@ export function App() {
                 }`}
               >
                 <Server className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                <span>Régie Admin</span>
+                <span>{t('regie_admin')}</span>
               </button>
             </div>
           )}
 
-          {/* Droite : Ambiance Sonore + Bouton Traces (en Salle Ciné) + Profil Utilisateur & Serveurs Plex */}
+          {/* Droite : Sélecteur Langue FR/EN + Ambiance Sonore + Bouton Traces (en Salle Ciné) + Profil Utilisateur */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            {/* Sélecteur de Langue (FR / EN) */}
+            <button
+              type="button"
+              onClick={toggleLang}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
+              title={lang === 'fr' ? t('switch_to_en') : t('switch_to_fr')}
+            >
+              <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
+            </button>
+
             {/* Sélecteur Ambiance Sonore Cinéma (Web Audio 0 Mo / 0% ralentissement) */}
             <div className="relative" ref={audioMenuRef}>
               <button
@@ -1613,24 +1691,24 @@ export function App() {
                     ? 'bg-amber-500/20 text-amber-200 border-amber-400/50 shadow-[0_0_15px_rgba(245,158,11,0.18)]'
                     : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200 hover:border-stone-700'
                 }`}
-                title="Ambiance sonore de salle de cinéma & bruitages (Web Audio natif sans impact performance)"
+                title={t('ambiance_title')}
               >
                 {audioMode !== 'off' ? (
                   <Volume2 className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
                 ) : (
                   <VolumeX className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                 )}
-                <span className="hidden md:inline">Ambiance :</span>
+                <span className="hidden md:inline">{t('ambiance')}</span>
                 <span className="font-bold">
                   {audioMode === 'off'
-                    ? 'Muet'
+                    ? t('audio_off')
                     : audioMode === 'sfx_only'
-                      ? 'Projecteur'
+                      ? t('audio_sfx_only')
                       : audioMode === 'projector'
-                        ? 'Cabine 35mm'
+                        ? t('audio_projector')
                         : audioMode === 'fip_jazz'
-                          ? '🎷 FIP Jazz'
-                          : 'Grand Ciné'}
+                          ? t('audio_fip_jazz')
+                          : t('audio_grand_cine')}
                 </span>
               </button>
 
@@ -1640,10 +1718,10 @@ export function App() {
                     <div>
                       <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
                         <Volume2 className="w-3.5 h-3.5" />
-                        <span>Ambiance Sonore Cinéma</span>
+                        <span>{t('soundscape_title')}</span>
                       </div>
                       <p className="text-[10px] text-stone-400 mt-0.5">
-                        Synthèse Web Audio 100% native • 0 Mo • 0 ralentissement
+                        {t('soundscape_subtitle')}
                       </p>
                     </div>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
@@ -1826,7 +1904,7 @@ export function App() {
                     }`}
                   >
                     <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
-                    <span>Grand Écran & Ciné-Club</span>
+                    <span>{t('grand_ecran_cine_club')}</span>
                   </button>
 
                   <button
@@ -1839,7 +1917,7 @@ export function App() {
                     }`}
                   >
                     <Ticket className="w-4 h-4 text-amber-300 shrink-0" />
-                    <span>Mes Programmations</span>
+                    <span>{t('mes_programmations')}</span>
                   </button>
 
                   {userTab === 'chat' && (
@@ -1851,17 +1929,17 @@ export function App() {
                           ? 'bg-red-950/60 hover:bg-red-900/70 text-amber-200 hover:text-white border-amber-500/30'
                           : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900/60 border-transparent'
                       }`}
-                      title="Réinitialiser la discussion en cours et repartir sur un nouveau sujet"
+                      title={lang === 'en' ? 'Reset current screening to start a new discussion' : 'Réinitialiser la discussion en cours et repartir sur un nouveau sujet'}
                     >
                       <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>Nouvelle discussion</span>
+                      <span>{t('nouvelle_discussion')}</span>
                     </button>
                   )}
                 </nav>
 
                 <div className="flex items-center gap-2 text-xs text-stone-400 shrink-0">
                   <div className="hidden lg:flex items-center gap-1.5">
-                    <span className="text-stone-500">Serveurs Plex :</span>
+                    <span className="text-stone-500">{t('plex_servers_label')}</span>
                     {(isViewerPreview && activeViewerSim
                       ? activeViewerSim.askarrServerNames
                       : session?.plexAccess && session.plexAccess.askarrServerNames.length > 0
@@ -2024,7 +2102,7 @@ export function App() {
                   }`}
                 >
                   <Users className="w-4 h-4 shrink-0" />
-                  <span>Utilisateurs Plex & VIP</span>
+                  <span>{t('tab_users_vip')}</span>
                   {cfStatus?.plexDirectory && cfStatus.plexDirectory.length > 0 && (
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono ${
@@ -2048,7 +2126,7 @@ export function App() {
                   }`}
                 >
                   <Activity className="w-4 h-4 shrink-0" />
-                  <span>Santé Projecteurs</span>
+                  <span>{t('tab_health')}</span>
                 </button>
 
                 <button
@@ -2061,7 +2139,7 @@ export function App() {
                   }`}
                 >
                   <Terminal className="w-4 h-4 shrink-0" />
-                  <span>Traceur API</span>
+                  <span>{t('tab_tracer')}</span>
                   {apiTraces.length > 0 && (
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono ${
@@ -2085,7 +2163,7 @@ export function App() {
                   }`}
                 >
                   <Star className="w-4 h-4 shrink-0" />
-                  <span>Journal Q&amp;A &amp; Notes</span>
+                  <span>{t('tab_journal')}</span>
                   {interactionsJournal && interactionsJournal.flaggedOrToFixCount > 0 ? (
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono ${
@@ -2093,9 +2171,9 @@ export function App() {
                           ? 'bg-black/30 text-amber-100'
                           : 'bg-rose-500/25 text-rose-300'
                       }`}
-                      title="Interactions à analyser ou à corriger"
+                      title={lang === 'en' ? 'Interactions to review or fix' : 'Interactions à analyser ou à corriger'}
                     >
-                      {interactionsJournal.flaggedOrToFixCount} à voir
+                      {interactionsJournal.flaggedOrToFixCount} {t('to_review')}
                     </span>
                   ) : feedbackStats && feedbackStats.totalCount > 0 ? (
                     <span
@@ -2120,7 +2198,7 @@ export function App() {
                   }`}
                 >
                   <Settings className="w-4 h-4 shrink-0" />
-                  <span>Paramètres & Identités</span>
+                  <span>{t('tab_settings')}</span>
                 </button>
               </nav>
             )}
@@ -2246,7 +2324,7 @@ export function App() {
             {/* Bandeau "À L'AFFICHE" — Suggestions de Séances (Swipeable sur iPhone, 1 ligne fluide sur Desktop) */}
             <div className="bg-[#120b0e]/90 border border-amber-500/25 rounded-2xl p-2.5 sm:p-3 shadow-lg">
               <div className="flex items-center gap-2 overflow-x-auto sm:overflow-visible flex-nowrap sm:flex-wrap py-0.5 no-scrollbar">
-                {QUICK_PROMPTS.map((qp, idx) => {
+                {quickPrompts.map((qp, idx) => {
                   const Icon = qp.icon;
                   return (
                     <button
@@ -2303,7 +2381,7 @@ export function App() {
                             <div className="flex items-center gap-2">
                               <Film className="w-4 h-4 text-amber-400 shrink-0" />
                               <span className="font-cinema tracking-widest text-xs sm:text-sm text-amber-300 uppercase">
-                                Projectionniste Askarr • Spécialiste 7e Art
+                                {t('projectionist_role')}
                               </span>
                             </div>
                             <span className="text-[11px] sm:text-xs text-stone-400 font-mono">
@@ -2316,7 +2394,7 @@ export function App() {
                       {msg.aiMode === 'direct_search_fallback' && (
                         <div className="mb-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs sm:text-sm bg-amber-500/15 text-amber-300 border border-amber-500/30">
                           <Search className="w-3.5 h-3.5" />
-                          <span>Mode Recherche Directe (sans IA)</span>
+                          <span>{lang === 'en' ? 'Direct Search Mode (without AI)' : 'Mode Recherche Directe (sans IA)'}</span>
                         </div>
                       )}
 
@@ -2638,7 +2716,7 @@ export function App() {
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Un film, un réalisateur, un acteur, une intrigue ou un palmarès de Cannes..."
+                  placeholder={t('input_placeholder')}
                   className="flex-1 bg-transparent text-base lg:text-lg text-white placeholder-stone-400 focus:outline-none py-2.5 sm:py-3 px-2.5"
                   disabled={loading}
                 />
@@ -2647,7 +2725,7 @@ export function App() {
                   disabled={loading || !input.trim()}
                   className="cinema-velvet-pill hover:brightness-110 active:scale-95 disabled:opacity-40 text-white font-bold text-sm sm:text-base px-4 sm:px-6 py-3 rounded-xl transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
                 >
-                  <span className="hidden sm:inline">Lancer la séance</span>
+                  <span className="hidden sm:inline">{t('start_session')}</span>
                   <Send className="w-4 h-4 sm:w-5 sm:h-5 text-amber-200" />
                 </button>
               </form>

@@ -32,6 +32,7 @@ import type {
 } from '../../shared/types.js';
 import { ENABLE_PLEX_CAST_FEATURE } from '../../shared/types.js';
 import { cinemaAudio } from '../utils/cinema-audio.js';
+import { useI18n } from '../i18n/index.js';
 
 interface Props {
   evidence: MediaEvidence;
@@ -54,11 +55,40 @@ function formatDuration(minutes: number | null): string | null {
   return h > 0 ? `${h}h${m > 0 ? ` ${m}min` : ''}` : `${m} min`;
 }
 
-function formatDateFr(iso: string | null): string | null {
+function formatDate(iso: string | null, lang: 'fr' | 'en'): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'fr-FR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+
+function getLocalizedStatusLabel(label: string, lang: 'fr' | 'en'): string {
+  if (lang === 'fr') return label;
+  if (label.startsWith('Disponible sur Plex')) {
+    return label.replace('Disponible sur Plex', 'Available on Plex');
+  }
+  if (label.startsWith('Non dispo sur ton serveur Plex')) {
+    return label
+      .replace('Non dispo sur ton serveur Plex', 'Not available on your Plex server')
+      .replace('présent sur', 'present on');
+  }
+  if (label.startsWith('Partiellement sur Plex')) {
+    return label.replace('Partiellement sur Plex', 'Partially on Plex');
+  }
+  if (label.startsWith('Téléchargement en cours')) {
+    return label.replace('Téléchargement en cours', 'Downloading in progress');
+  }
+  if (label.startsWith('Vérification partielle')) {
+    return 'Partial check (Plex server temporarily unreachable)';
+  }
+  if (label.includes('en salle')) {
+    return label.replace('en salle', 'in theaters');
+  }
+  return label;
 }
 
 export const MediaCandidateCard: React.FC<Props> = ({
@@ -74,6 +104,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
   embeddedInChat = false,
   compactSynopsis = false
 }) => {
+  const { lang, t } = useI18n();
   const [localEvidence, setLocalEvidence] = useState<MediaEvidence>(evidence);
   const [showAllSeasons, setShowAllSeasons] = useState(false);
   const [synopsisExpanded, setSynopsisExpanded] = useState(!compactSynopsis);
@@ -172,10 +203,11 @@ export const MediaCandidateCard: React.FC<Props> = ({
     rose: 'bg-rose-500/15 text-rose-200 border-rose-500/40'
   };
 
-  const vodDateFr = formatDateFr(identity.releaseDates.estimatedVodOrDvdDate);
-  const cinemaDateFr = formatDateFr(identity.releaseDates.inCinemas);
-  const requestedOrAddedDateFr = formatDateFr(
-    localEvidence.requestState.requestedAt || acquisitionPipeline.addedAt || null
+  const vodDateFr = formatDate(identity.releaseDates.estimatedVodOrDvdDate, lang);
+  const cinemaDateFr = formatDate(identity.releaseDates.inCinemas, lang);
+  const requestedOrAddedDateFr = formatDate(
+    localEvidence.requestState.requestedAt || acquisitionPipeline.addedAt || null,
+    lang
   );
   const requesterName = localEvidence.requestState.requestedByDisplayName || null;
   const sourceOrigin =
@@ -296,14 +328,20 @@ export const MediaCandidateCard: React.FC<Props> = ({
     identity.mediaType === 'tv'
       ? partialSelectedSeasons.length === 1 && selectedSeasons.length === 1
         ? totalMissingInSelected > 0
-          ? `Compléter Saison ${selectedSeasons[0]} (${totalMissingInSelected} ép. manquant${totalMissingInSelected > 1 ? 's' : ''})`
-          : `Compléter la Saison ${selectedSeasons[0]}`
+          ? lang === 'en'
+            ? `Complete Season ${selectedSeasons[0]} (${totalMissingInSelected} missing ep.)`
+            : `Compléter Saison ${selectedSeasons[0]} (${totalMissingInSelected} ép. manquant${totalMissingInSelected > 1 ? 's' : ''})`
+          : t('complete_season', { season: selectedSeasons[0] })
         : partialSelectedSeasons.length > 0
-          ? `Compléter / Demander (${selectedSeasons.map((n) => `S${n}`).join(', ')})`
+          ? lang === 'en'
+            ? `Complete / Request (${selectedSeasons.map((n) => `S${n}`).join(', ')})`
+            : `Compléter / Demander (${selectedSeasons.map((n) => `S${n}`).join(', ')})`
           : selectedSeasons.length > 0
-            ? `Demander ${selectedSeasons.map((n) => `S${n}`).join(', ')} sur Plex`
-            : 'Choisir une saison'
-      : 'Demander sur Plex';
+            ? lang === 'en'
+              ? `Request ${selectedSeasons.map((n) => `S${n}`).join(', ')} on Plex`
+              : `Demander ${selectedSeasons.map((n) => `S${n}`).join(', ')} sur Plex`
+            : t('select_season')
+      : t('request_on_plex');
 
   return (
     <div
@@ -369,7 +407,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
               </div>
             )}
             <div className="pointer-events-none absolute top-1.5 left-1.5 rounded-md bg-black/85 backdrop-blur-md px-1.5 py-0.5 text-[10px] font-cinema tracking-wider uppercase text-amber-300 border border-amber-500/40 shadow">
-              {identity.mediaType === 'movie' ? '🎬 FILM' : '📺 SÉRIE'}
+              {identity.mediaType === 'movie' ? (lang === 'en' ? '🎬 MOVIE' : '🎬 FILM') : (lang === 'en' ? '📺 TV SHOW' : '📺 SÉRIE')}
             </div>
           </div>
 
@@ -387,7 +425,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 </h3>
                 {showOriginalTitle && (
                   <p className="mt-0.5 text-xs italic text-stone-400 truncate">
-                    Titre original : {identity.originalTitle}
+                    {lang === 'en' ? 'Original title:' : 'Titre original :'} {identity.originalTitle}
                   </p>
                 )}
               </div>
@@ -395,7 +433,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
               {rating !== null && rating > 0 && (
                 <div
                   className="flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-br from-amber-500/25 to-yellow-600/10 border border-amber-400/50 px-2.5 py-1 text-xs sm:text-sm font-bold text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.18)]"
-                  title="Note IMDb / Spectateurs sur 10"
+                  title={lang === 'en' ? 'IMDb / Audience rating out of 10' : 'Note IMDb / Spectateurs sur 10'}
                 >
                   <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400 shrink-0" />
                   <span>{rating.toFixed(1)}</span>
@@ -424,7 +462,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                   onClick={() => setSynopsisExpanded((v) => !v)}
                   className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-amber-300/90 hover:text-amber-200 underline decoration-amber-500/40 cursor-pointer"
                 >
-                  <span>{synopsisExpanded ? 'Masquer synopsis' : '+ Synopsis'}</span>
+                  <span>{synopsisExpanded ? (lang === 'en' ? 'Hide synopsis' : 'Masquer synopsis') : '+ Synopsis'}</span>
                 </button>
               )}
             </div>
@@ -435,14 +473,14 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 {identity.directorOrCreator && (
                   <p className="line-clamp-1">
                     <strong className="text-amber-200/95 font-semibold">
-                      {identity.mediaType === 'movie' ? 'Réalisation :' : 'Création :'}
+                      {identity.mediaType === 'movie' ? t('director') : t('creator')}
                     </strong>{' '}
                     <span className="text-white font-medium">{identity.directorOrCreator}</span>
                   </p>
                 )}
                 {identity.topCast.length > 0 && (
                   <p className="line-clamp-1">
-                    <strong className="text-amber-200/95 font-semibold">Avec :</strong>{' '}
+                    <strong className="text-amber-200/95 font-semibold">{t('cast')}</strong>{' '}
                     <span>{identity.topCast.slice(0, 4).join(', ')}</span>
                   </p>
                 )}
@@ -456,11 +494,11 @@ export const MediaCandidateCard: React.FC<Props> = ({
                   href={primaryPlexHref}
                   target={isMobileDevice ? undefined : '_blank'}
                   rel={isMobileDevice ? undefined : 'noopener noreferrer'}
-                  title="Cliquer pour ouvrir directement dans Plex"
+                  title={lang === 'en' ? 'Click to open directly in Plex' : 'Cliquer pour ouvrir directement dans Plex'}
                   className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold hover:brightness-110 transition cursor-pointer ${toneBadgeClasses[actionability.statusTone]}`}
                 >
                   <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                  <span>{actionability.userFriendlyStatusLabel}</span>
+                  <span>{getLocalizedStatusLabel(actionability.userFriendlyStatusLabel, lang)}</span>
                 </a>
               ) : (
                 <span
@@ -473,7 +511,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                   ) : (
                     <Clock className="h-3.5 w-3.5 shrink-0" />
                   )}
-                  <span>{actionability.userFriendlyStatusLabel}</span>
+                  <span>{getLocalizedStatusLabel(actionability.userFriendlyStatusLabel, lang)}</span>
                 </span>
               )}
 
@@ -481,7 +519,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-amber-500/25 px-2 py-1 text-[11px] text-amber-200/90">
                   <Clock className="h-3 w-3 text-amber-400 shrink-0" />
                   <span>
-                    Demandé par <strong>{requesterName}</strong>
+                    {t('requested_by', { name: requesterName })}
                     {requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}
                   </span>
                 </span>
@@ -489,7 +527,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
                   <Clock className="h-3 w-3 text-amber-400/80 shrink-0" />
                   <span>
-                    Liste auto{requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}
+                    {t('auto_list')}{requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}
                   </span>
                 </span>
               ) : null}
@@ -497,7 +535,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
               {catalogPresence.state !== 'available_now' && cinemaDateFr && (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
                   <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
-                  <span>Sortie ciné : {cinemaDateFr}</span>
+                  <span>{t('theatrical_release', { date: cinemaDateFr })}</span>
                 </span>
               )}
 
@@ -511,7 +549,9 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 >
                   <Disc className={`h-3 w-3 shrink-0 ${isVodFuture ? 'text-amber-400' : 'text-stone-400'}`} />
                   <span>
-                    VOD/DVD : {identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr}
+                    {t('vod_release', {
+                      date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                    })}
                   </span>
                 </span>
               )}
@@ -622,7 +662,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 }
               >
                 <Play className="h-3.5 w-3.5 fill-stone-950 text-stone-950 shrink-0" />
-                <span>{isMobileDevice ? "Ouvrir l'app Plex" : 'Ouvrir sur Plex'}</span>
+                <span>{isMobileDevice ? t('open_plex_app') : t('open_in_plex')}</span>
               </a>
             )}
 
@@ -789,7 +829,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
               className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-xs sm:text-sm font-semibold text-amber-200 hover:bg-amber-500/20 hover:border-amber-400/60 active:scale-[0.99] transition cursor-pointer"
             >
               <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              <span>{identity.mediaType === 'tv' ? 'Séries similaires' : 'Films similaires'}</span>
+              <span>{identity.mediaType === 'tv' ? t('similar_series') : t('similar_movies')}</span>
             </button>
           )}
         </div>

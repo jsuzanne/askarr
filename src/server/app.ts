@@ -342,6 +342,7 @@ export async function createApp(deps: AppDependencies): Promise<{
   const chatBodySchema = z.object({
     conversationId: z.string().optional(),
     message: z.string().min(1).max(600),
+    lang: z.enum(['fr', 'en']).optional().default('fr'),
     viewerSimulation: z
       .object({
         plexUsername: z.string().max(120).optional(),
@@ -374,7 +375,8 @@ export async function createApp(deps: AppDependencies): Promise<{
       overseerrUserId: session.overseerr.overseerrUserId,
       plexAccess: effectivePlexAccess,
       conversationId: body.conversationId,
-      message: body.message
+      message: body.message,
+      lang: body.lang
     });
     discord.notifyPromptInteraction({
       userEmail: session.email,

@@ -65,6 +65,47 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
      -> Commence toujours ta recommandation par **ce que les autres membres ont regardé récemment sur le serveur Plex** en précisant qu'ils ont été sélectionnés et vus par d'autres membres et qu'ils ont une très bonne note (sans jamais citer le pseudo privé des autres spectateurs, ex: dis *"vu récemment par d'autres membres sur le serveur"* et non *"vu par omercier"*). Si la demande était générale, termine par une phrase ouverte (*"Si tu préfères un genre précis comme une comédie ou un thriller, dis-le-moi !"*).
 10. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour et réponds immédiatement dès le retour des outils. Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
+export const STATIC_ENGLISH_SYSTEM_PROMPT = `You are Askarr, the World Cinema & Series Specialist (in English) and the personal advisor for our family and friends Plex media library.
+You speak to non-technical users with warmth, clarity, cinema culture, and enthusiasm.
+
+ABSOLUTE RULES OF TRUTH, RELEVANCE, AND CINEMA EXPERTISE:
+1. ZERO TECHNICAL JARGON: Never say words like "Radarr", "Sonarr", "Prowlarr", "Overseerr", "indexer", "tracker", "torrent", "usenet", "passkey", or "TMDB". Talk only about "Plex", "the automated waiting list", "digital / VOD release", or "Blu-Ray / DVD release".
+2. ZERO SYSTEMATIC MOVIE LISTS — PROPORTIONATE ANSWERS:
+   - You are NOT required to answer with a list of movies! Always adapt your answer to the user's actual intent:
+   - Account, Plex server access, how things work, or greetings (e.g. "which servers do I have access to?", "how does this work?", "thank you"): answer directly in prose using '[Connected Plex Profile: ...]' WITHOUT calling random discovery tools and WITHOUT listing movies.
+   - Follow-up conversational questions (e.g. "why these films?", "which one is shortest?", "what do you recommend for tonight?"): answer directly in a few natural sentences based on the titles already displayed in the previous turn ('[Displayed Cards: ...]'), WITHOUT re-reciting the bullet list.
+   - Singular requests ("recommend a great movie", "what's the latest film added?", "do you have Inception?"): answer about ONE SINGLE movie (pass 'limit: 1' to the tool or present only the specific requested title), never a list of 5!
+   - Plural requests ("recommend some movies", "what's new this week?", "films by Nolan", "movies in the waiting list"): present 3 to 5 relevant titles smoothly. Avoid long repetitive bullet points since rich visual cards appear right below your message.
+3. CINEMA SPECIALIST EXPERTISE (DIRECTORS, ACTORS, KEYWORDS, PLOTS, OSCARS, CANNES, BAFTAs):
+   - You possess encyclopedic cinema knowledge: Cannes Film Festival (Palme d'Or, Grand Prix, Jury Prize), Oscars, BAFTAs, Golden Globes, Venice, Berlinale, and complete filmographies of international and national directors and actors.
+   - If the user searches by plot ("a movie where..."), keywords, combination (director + actor + year), or awards ("2023 Cannes Palme d'Or", "recent Oscar winners"):
+     -> Identify 1 to 5 specific corresponding titles with your expertise (only 1 if singular), then ALWAYS call 'verify_specific_titles' with their exact titles and years.
+   - If the user asks for works by a director or actor (e.g. "search a film by Denis Villeneuve", "a movie with Cillian Murphy"):
+     -> Correct any spelling errors first.
+     -> Call 'search_person_filmography' with the corrected name AND/OR 'verify_specific_titles' with their major feature films. Never propose obscure "making-of" documentaries instead of real movies!
+   - ZERO OFF-TOPIC MIXING: Never call 'discover_and_recommend_media(scope="on_plex_now")' randomly when the user asks about their servers or searches for a specific director, actor, or title.
+4. ZERO AVAILABILITY INVENTIONS:
+   - Never guess whether a film or series is on Plex or in the waiting list: call a tool ('verify_specific_titles', 'search_person_filmography', 'search_and_check_media', 'get_series_seasons_detail', 'discover_and_recommend_media') and rely strictly on the returned evidence.
+5. MULTI-PLEX SERVERS & USER ACCESS:
+   - What the user wants to know above all is whether they can watch it and on WHICH Plex servers THEY have personal access to ('userAccessibleServers').
+   - When a title is available ('accessibleToCurrentUser !== false'), cite ONLY their accessible servers ('userAccessibleServers') (e.g. "Yes, it is available on your Plex server Plex-Main"). Never cite a Plex server the user does not have permission to access!
+   - If 'accessibleToCurrentUser === false', kindly inform them ("This title is on Plex server ..., but your Plex account only has access to ...").
+6. REQUEST ORIGIN, WAITING LIST & DIGITAL/DVD RELEASES:
+   - Knowing who requested a title is key: each card shows 'requestedBy' and 'sourceOrigin'.
+   - If a title is in the waiting list ('monitored_waiting_release' / 'monitored_searching' / 'canRequestNow=false'):
+     -> Always specify who requested it or if it was added automatically via a list, along with the estimated digital/VOD release date.
+   - If not on Plex and not in the queue ('canRequestNow=true'), indicate whether it is already released or when it will be released, and mention it can be requested via the button on its card.
+7. TWO-STEP REQUESTS & INCOMPLETE TV SEASONS:
+   - If a TV show is partially available on Plex (e.g. Season 1 with 1/8 episodes), clearly state missing episodes and invite the user to complete the season via the card button.
+   - If requesting a title, call 'prepare_media_request' to generate the confirmation button. Never claim it is requested before they click confirm.
+8. RECENT THEATRICAL RELEASES & HOMONYMS:
+   - When an unspecific title is requested without an old year, prioritize recent 2025/2026/2027 theatrical releases while noting the classic version if applicable.
+9. RECENT PLEX ADDITIONS, WATCH HISTORY & RECOMMENDATIONS (TRACEARR):
+   - For recent additions, call 'get_recently_added_on_plex'.
+   - For user history, call 'get_watch_history_and_live_streams' with 'scope: "my_history"'.
+   - For recommendations, call 'discover_and_recommend_media' (excluding already watched titles and highlighting popular community choices).
+10. EFFICIENCY & CONCISENESS: Batch tool calls in ONE single turn. Be warm, natural, and concise (2 to 5 fluid sentences maximum), as rich visual cards appear right underneath your message.`;
+
 export const READ_ONLY_TOOLS_DEFINITIONS = [
   {
     type: 'function',
@@ -579,6 +620,7 @@ export class DeepSeekOrchestratorService {
     };
     conversationId?: string;
     message: string;
+    lang?: 'fr' | 'en';
   }): Promise<{
     conversationId: string;
     messageId?: string;
@@ -610,7 +652,8 @@ export class DeepSeekOrchestratorService {
         userEmail: params.userEmail,
         overseerrUserId: params.overseerrUserId,
         message: params.message,
-        reason: budget.isOverQuota ? 'QUOTA_EXCEEDED' : 'NO_API_KEY'
+        reason: budget.isOverQuota ? 'QUOTA_EXCEEDED' : 'NO_API_KEY',
+        lang: params.lang
       });
     }
 
@@ -627,18 +670,22 @@ export class DeepSeekOrchestratorService {
     let usedProvider: InternalLlmProvider = candidateProviders[0];
     let failoverFromLabel: string | undefined;
     const tStart = Date.now();
+    const isEn = params.lang === 'en';
 
     const allowedSrvList =
       params.plexAccess && params.plexAccess.askarrServerNames.length > 0
         ? params.plexAccess.askarrServerNames.join(', ')
-        : 'Aucun';
+        : isEn ? 'None' : 'Aucun';
     const userAccessContext = params.plexAccess
-      ? `\n[Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Serveurs Plex auxquels cet utilisateur a accès : ${allowedSrvList} — IMPORTANT : dans ta réponse, indique la disponibilité UNIQUEMENT par rapport aux serveurs Plex de cet utilisateur (${allowedSrvList}) et n'utilise jamais le mot "salle".]`
+      ? isEn
+        ? `\n[Connected Plex Profile: ${params.plexAccess.plexUsername || params.userEmail} | Plex servers this user has access to: ${allowedSrvList} — IMPORTANT: in your reply, indicate availability ONLY with respect to this user's accessible Plex servers (${allowedSrvList}) and never use the word "room" for a server.]`
+        : `\n[Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Serveurs Plex auxquels cet utilisateur a accès : ${allowedSrvList} — IMPORTANT : dans ta réponse, indique la disponibilité UNIQUEMENT par rapport aux serveurs Plex de cet utilisateur (${allowedSrvList}) et n'utilise jamais le mot "salle".]`
       : '';
 
-    // Le message system reste 100% statique et immuable pour garantir un Cache Hit maximal sur le préfixe KV de DeepSeek ($0.028/1M au lieu de $0.28/1M)
+    // Le message system reste 100% statique et immuable par langue pour garantir un Cache Hit maximal sur le préfixe KV
+    const systemPrompt = isEn ? STATIC_ENGLISH_SYSTEM_PROMPT : STATIC_FRENCH_SYSTEM_PROMPT;
     const messages: DeepSeekChatMessage[] = [
-      { role: 'system', content: STATIC_FRENCH_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       ...history.slice(-4).map((m) => {
         let content = m.content;
         if (m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0) {
@@ -2049,6 +2096,7 @@ export class DeepSeekOrchestratorService {
     overseerrUserId: number | null;
     message: string;
     reason: string;
+    lang?: 'fr' | 'en';
   }): Promise<{
     conversationId: string;
     messageId?: string;
@@ -2057,14 +2105,15 @@ export class DeepSeekOrchestratorService {
     provenance: ProvenanceEntry[];
     aiMode: 'direct_search_fallback';
   }> {
+    const isEn = params.lang === 'en';
     const cleanedQuery = params.message
       .replace(/[«»"""]/g, ' ')
       .replace(/\(ou une autre[^)]*\)/gi, ' ')
       .replace(
-        /^(est-ce que tu as|est-ce que le film|est-ce que la série|est-ce que|où en est la série|ou en est la serie|as-tu|je cherche|je voudrais voir|y a-t-il|le film|la série|la serie)\s+/i,
+        /^(est-ce que tu as|est-ce que le film|est-ce que la série|est-ce que|où en est la série|ou en est la serie|as-tu|je cherche|je voudrais voir|y a-t-il|le film|la série|la serie|do you have|can i watch|is the movie|is the series|find me|looking for)\s+/i,
         ''
       )
-      .replace(/\s+(est disponible sur plex|est dispo ou quand sort-il en vod|sur plex)\s*/gi, ' ')
+      .replace(/\s+(est disponible sur plex|est dispo ou quand sort-il en vod|sur plex|on plex|available on plex)\s*/gi, ' ')
       .replace(/[?!.]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -2077,7 +2126,7 @@ export class DeepSeekOrchestratorService {
     });
 
     const provenance = searchRes.candidates.flatMap((c) => c.provenance);
-    const reply = this.buildDeterministicSummary(searchRes.candidates);
+    const reply = this.buildDeterministicSummary(searchRes.candidates, isEn);
 
     this.db.recordLlmUsage({
       userEmail: params.userEmail,
@@ -2268,21 +2317,34 @@ export class DeepSeekOrchestratorService {
     return allCards.slice(0, 6);
   }
 
-  public buildDeterministicSummary(cards: MediaEvidence[]): string {
+  public buildDeterministicSummary(cards: MediaEvidence[], isEn: boolean = false): string {
     if (cards.length === 0) {
-      return "Je n'ai trouvé aucun film ni aucune série correspondant à cette recherche. Peux-tu vérifier l'orthographe ou me donner le titre en français ou en anglais ?";
+      return isEn
+        ? "I couldn't find any movie or series matching that search. Could you double-check the spelling or provide the English or French title?"
+        : "Je n'ai trouvé aucun film ni aucune série correspondant à cette recherche. Peux-tu vérifier l'orthographe ou me donner le titre en français ou en anglais ?";
     }
     if (cards.length === 1) {
       const c = cards[0];
       const rating = c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage;
       const ratingTxt = rating ? ` (⭐ ${rating}/10)` : '';
-      const vodDate = formatFrenchDate(c.identity.releaseDates.estimatedVodOrDvdDate);
+      const vodDate = isEn
+        ? (c.identity.releaseDates.estimatedVodOrDvdDate || '')
+        : formatFrenchDate(c.identity.releaseDates.estimatedVodOrDvdDate);
       const dateTxt =
         c.catalogPresence.state !== 'available_now' && vodDate
-          ? ` Sortie VOD/DVD ${c.identity.releaseDates.isEstimatedDate ? 'estimée vers le' : 'prévue le'} ${vodDate}.`
+          ? isEn
+            ? ` Digital/DVD release ${c.identity.releaseDates.isEstimatedDate ? 'estimated around' : 'scheduled for'} ${vodDate}.`
+            : ` Sortie VOD/DVD ${c.identity.releaseDates.isEstimatedDate ? 'estimée vers le' : 'prévue le'} ${vodDate}.`
           : '';
-      return `Voici ce que j'ai trouvé pour **${c.identity.titleFr}** (${c.identity.year || 'N/A'})${ratingTxt} : ${c.actionability.userFriendlyExplanationFr}${dateTxt}`;
+      const expl = isEn && c.actionability.userFriendlyExplanationFr
+        ? (c.catalogPresence.state === 'available_now' ? 'Available now on Plex.' : c.actionability.userFriendlyStatusLabel)
+        : c.actionability.userFriendlyExplanationFr;
+      return isEn
+        ? `Here is what I found for **${c.identity.titleFr}** (${c.identity.year || 'N/A'})${ratingTxt} : ${expl}${dateTxt}`
+        : `Voici ce que j'ai trouvé pour **${c.identity.titleFr}** (${c.identity.year || 'N/A'})${ratingTxt} : ${c.actionability.userFriendlyExplanationFr}${dateTxt}`;
     }
-    return `J'ai trouvé **${cards.length} œuvres** correspondantes. Voici leur disponibilité exacte sur Plex et dans la liste d'attente :`;
+    return isEn
+      ? `Found **${cards.length} matching titles**. Here is their exact availability on Plex and in the queue:`
+      : `J'ai trouvé **${cards.length} œuvres** correspondantes. Voici leur disponibilité exacte sur Plex et dans la liste d'attente :`;
   }
 }
