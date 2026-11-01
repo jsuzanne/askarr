@@ -74,6 +74,52 @@ interface TracearrRawRecentEntry {
   rating_key: string | null;
 }
 
+interface TracearrRawHistoryEntry {
+  id: string;
+  server_name?: string;
+  media_type?: string;
+  media_title?: string;
+  show_title?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
+  year?: number | null;
+  tmdb_id?: number | null;
+  started_at?: string;
+  stopped_at?: string | null;
+  percent_complete?: number;
+  watched?: boolean;
+  device?: string | null;
+  platform?: string | null;
+  is_transcode?: boolean;
+  resolution?: string | null;
+  user?: { username?: string };
+}
+
+export interface TracearrCommunityPopularItem {
+  title: string;
+  year: number | null;
+  mediaType: 'movie' | 'tv';
+  tmdbId: number | null;
+  serverNames: string[];
+  distinctViewersCount: number;
+  totalPlays: number;
+  lastWatchedAt: string;
+}
+
+export interface TracearrUserTasteAndTrends {
+  myRecentWatched: Array<{
+    title: string;
+    year: number | null;
+    mediaType: 'movie' | 'tv';
+    tmdbId: number | null;
+    percentComplete: number;
+    startedAt: string;
+  }>;
+  watchedTmdbIds: Set<number>;
+  watchedNormTitles: Set<string>;
+  communityPopular: TracearrCommunityPopularItem[];
+}
+
 export class TracearrConnector {
   private baseUrl: string;
   private apiKey: string;
@@ -81,6 +127,10 @@ export class TracearrConnector {
   private serverNameCache: { map: Map<string, string>; expiresAt: number } | null = null;
   private recentlyAddedRawCache: {
     items: TracearrRawRecentEntry[];
+    expiresAt: number;
+  } | null = null;
+  private watchHistoryRawCache: {
+    items: TracearrRawHistoryEntry[];
     expiresAt: number;
   } | null = null;
 
@@ -95,6 +145,7 @@ export class TracearrConnector {
     this.apiKey = apiKey.trim();
     this.serverNameCache = null;
     this.recentlyAddedRawCache = null;
+    this.watchHistoryRawCache = null;
   }
 
   isConfigured(): boolean {
@@ -298,40 +349,31 @@ export class TracearrConnector {
     if (!this.isConfigured()) return [];
 
     try {
-      const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=250`, {
-        headers: this.getHeaders(),
-        signal: AbortSignal.timeout(6000)
-      });
-      if (!res.ok) return [];
+      let rawEntries: TracearrRawHistoryEntry[];
+      if (this.watchHistoryRawCache && Date.now() < this.watchHistoryRawCache.expiresAt) {
+        rawEntries = this.watchHistoryRawCache.items;
+      } else {
+        const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=250`, {
+          headers: this.getHeaders(),
+          signal: AbortSignal.timeout(6000)
+        });
+        if (!res.ok) return [];
 
-      const json = (await res.json()) as {
-        data?: Array<{
-          id: string;
-          server_name?: string;
-          media_type?: string;
-          media_title?: string;
-          show_title?: string | null;
-          season_number?: number | null;
-          episode_number?: number | null;
-          year?: number | null;
-          tmdb_id?: number | null;
-          started_at?: string;
-          stopped_at?: string | null;
-          percent_complete?: number;
-          watched?: boolean;
-          device?: string | null;
-          platform?: string | null;
-          is_transcode?: boolean;
-          resolution?: string | null;
-          user?: { username?: string };
-        }>;
-      };
+        const json = (await res.json()) as {
+          data?: TracearrRawHistoryEntry[];
+        };
+        rawEntries = json.data ?? [];
+        this.watchHistoryRawCache = {
+          items: rawEntries,
+          expiresAt: Date.now() + 2 * 60_000
+        };
+      }
 
       const targetUser = options?.plexUsername?.toLowerCase().trim();
       const allowedLower = options?.allowedServers?.map((s) => s.toLowerCase());
       const items: TracearrWatchHistoryItem[] = [];
 
-      for (const raw of json.data ?? []) {
+      for (const raw of rawEntries) {
         const username = raw.user?.username || 'inconnu';
         if (targetUser && username.toLowerCase() !== targetUser) continue;
 
@@ -380,6 +422,156 @@ export class TracearrConnector {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Analyse l'historique de visionnage global Tracearr pour en déduire :
+   * 1) Les derniers films/séries vus par l'utilisateur connecté (et la liste de ses titres déjà vus à exclure)
+   * 2) Les films/séries populaires vus récemment par les AUTRES membres sur ses serveurs Plex accessibles
+   */
+  async getUserTasteAndCommunityTrends(options?: {
+    plexUsername?: string;
+    allowedServers?: string[];
+    mediaType?: 'movie' | 'tv';
+  }): Promise<TracearrUserTasteAndTrends> {
+    const empty: TracearrUserTasteAndTrends = {
+      myRecentWatched: [],
+      watchedTmdbIds: new Set<number>(),
+      watchedNormTitles: new Set<string>(),
+      communityPopular: []
+    };
+    if (!this.isConfigured()) return empty;
+
+    const allHistory = await this.getWatchHistory({
+      allowedServers: options?.allowedServers,
+      mediaType: options?.mediaType,
+      limit: 250
+    });
+    if (allHistory.length === 0) return empty;
+
+    const norm = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const targetUser = options?.plexUsername?.toLowerCase().trim();
+    const myRecentMap = new Map<
+      string,
+      {
+        title: string;
+        year: number | null;
+        mediaType: 'movie' | 'tv';
+        tmdbId: number | null;
+        percentComplete: number;
+        startedAt: string;
+      }
+    >();
+
+    const communityMap = new Map<
+      string,
+      {
+        title: string;
+        year: number | null;
+        mediaType: 'movie' | 'tv';
+        tmdbId: number | null;
+        serverNames: Set<string>;
+        viewers: Set<string>;
+        totalPlays: number;
+        lastWatchedAt: string;
+      }
+    >();
+
+    for (const h of allHistory) {
+      const cleanTitle = (h.showTitle || h.title.replace(/\s*\(S\d+E\d+\)$/i, '')).trim();
+      if (!cleanTitle || cleanTitle === 'Média') continue;
+      const normTitle = norm(cleanTitle);
+      if (!normTitle) continue;
+
+      const isMeaningfulWatch = h.watched || h.percentComplete >= 45 || h.mediaType === 'tv';
+      const itemKey = h.tmdbId && h.tmdbId > 0 ? `tmdb:${h.tmdbId}` : `title:${normTitle}`;
+      const isCurrentUser = Boolean(targetUser && h.username.toLowerCase() === targetUser);
+
+      if (isCurrentUser) {
+        if (h.watched || h.percentComplete >= 35) {
+          if (h.tmdbId && h.tmdbId > 0) {
+            empty.watchedTmdbIds.add(h.tmdbId);
+          }
+          empty.watchedNormTitles.add(normTitle);
+        }
+        if (isMeaningfulWatch && !myRecentMap.has(itemKey) && myRecentMap.size < 10) {
+          myRecentMap.set(itemKey, {
+            title: cleanTitle,
+            year: h.year,
+            mediaType: h.mediaType,
+            tmdbId: h.tmdbId,
+            percentComplete: h.percentComplete,
+            startedAt: h.startedAt
+          });
+        }
+      } else if (isMeaningfulWatch) {
+        const existing = communityMap.get(itemKey);
+        if (!existing) {
+          communityMap.set(itemKey, {
+            title: cleanTitle,
+            year: h.year,
+            mediaType: h.mediaType,
+            tmdbId: h.tmdbId,
+            serverNames: new Set(h.serverName ? [h.serverName] : []),
+            viewers: new Set([h.username.toLowerCase()]),
+            totalPlays: 1,
+            lastWatchedAt: h.startedAt
+          });
+        } else {
+          if (h.serverName) existing.serverNames.add(h.serverName);
+          existing.viewers.add(h.username.toLowerCase());
+          existing.totalPlays += 1;
+          if (h.startedAt > existing.lastWatchedAt) {
+            existing.lastWatchedAt = h.startedAt;
+          }
+        }
+      }
+    }
+
+    const communityPopular: TracearrCommunityPopularItem[] = [];
+    for (const entry of communityMap.values()) {
+      const normTitle = norm(entry.title);
+      if (
+        (entry.tmdbId && empty.watchedTmdbIds.has(entry.tmdbId)) ||
+        empty.watchedNormTitles.has(normTitle)
+      ) {
+        continue;
+      }
+      communityPopular.push({
+        title: entry.title,
+        year: entry.year,
+        mediaType: entry.mediaType,
+        tmdbId: entry.tmdbId,
+        serverNames: Array.from(entry.serverNames),
+        distinctViewersCount: entry.viewers.size,
+        totalPlays: entry.totalPlays,
+        lastWatchedAt: entry.lastWatchedAt
+      });
+    }
+
+    communityPopular.sort((a, b) => {
+      if (b.distinctViewersCount !== a.distinctViewersCount) {
+        return b.distinctViewersCount - a.distinctViewersCount;
+      }
+      if (b.totalPlays !== a.totalPlays) {
+        return b.totalPlays - a.totalPlays;
+      }
+      return b.lastWatchedAt.localeCompare(a.lastWatchedAt);
+    });
+
+    return {
+      myRecentWatched: Array.from(myRecentMap.values()),
+      watchedTmdbIds: empty.watchedTmdbIds,
+      watchedNormTitles: empty.watchedNormTitles,
+      communityPopular: communityPopular.slice(0, 8)
+    };
   }
 
   async getUserActivitySummaryMap(): Promise<Map<string, TracearrUserActivity>> {

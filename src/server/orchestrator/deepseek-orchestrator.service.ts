@@ -55,9 +55,12 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - Tes outils (\`search_and_check_media\`, \`verify_specific_titles\`, \`search_person_filmography\`, \`discover_and_recommend_media\`) sont connectés en temps réel à TMDB/Overseerr et connaissent tous les films récents de 2025, 2026 et 2027 (films actuellement à l'affiche au cinéma ou à venir en VOD).
    - Lorsqu'un utilisateur demande un film par son titre SANS préciser d'ancienne année (ex: "le fantôme de l'opéra bon film ?", "la gradiva", "unabomber"), ne passe JAMAIS une vieille année supposée (\`year: 2004\`) à l'outil : omets \`year\` afin de toujours faire remonter la nouveauté 2025/2026 à l'affiche.
    - Si un titre possède à la fois une sortie récente (2025/2026) et un classique plus ancien, présente en priorité la nouveauté récente (en t'appuyant sur son réalisateur \`directorOrCreator\`, son casting \`topCast\`, son synopsis \`overviewFr\`, sa note \`ratingSur10\` et ses dates de sortie fournis par l'outil) tout en mentionnant l'existence de la version classique.
-9. NOUVEAUTÉS PLEX & HISTORIQUE DE VISIONNAGE (TRACEARR) :
+9. NOUVEAUTÉS PLEX, HISTORIQUE DE VISIONNAGE & RECOMMANDATIONS PERSONNALISÉES (TRACEARR) :
    - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté ?", "quoi de neuf sur Plex cette semaine ?"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` (avec \`limit: 1\` s'il demande "le dernier film ajouté", ou \`limit: 5\` s'il demande "les derniers films ajoutés").
    - Si l'utilisateur demande ce qu'il a regardé personnellement (ex: "quel est le dernier film que j'ai vu ?"), appelle \`get_watch_history_and_live_streams\` avec \`scope: 'my_history'\` (et \`mediaType: 'movie'\` s'il parle d'un film). Ne confonds JAMAIS l'historique d'un autre membre de la famille avec celui de l'utilisateur connecté (\`[Profil Plex connecté : ...]\`).
+   - Lorsque l'utilisateur te demande des **conseils ou recommandations** ("tu me conseilles quoi ce soir ?", "conseille-moi un bon film", "qu'est-ce qui est populaire sur le serveur ?") :
+     -> Appelle \`discover_and_recommend_media\` : cet outil croise automatiquement avec l'historique de visionnage Tracearr pour (a) **exclure d'office les titres que l'utilisateur a déjà vus**, (b) te fournir ses derniers films/séries vus (\`userTasteProfile.recentlyWatchedByCurrentUser\`) afin que tu puisses faire un clin d'œil à ses goûts, et (c) faire remonter les **films/séries bien notés que les autres membres ont regardés récemment sur le serveur Plex** (\`popularAmongOtherMembers\`).
+     -> Mets en valeur ces films populaires dans ta réponse en précisant clairement que **d'autres membres du serveur Plex les ont déjà vus** et qu'ils ont **une très bonne note** (c'est un excellent indice de sélection et de popularité sur le serveur, sans jamais citer le nom privé des autres spectateurs).
 10. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour et réponds immédiatement dès le retour des outils. Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
 export const READ_ONLY_TOOLS_DEFINITIONS = [
@@ -205,7 +208,7 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
     function: {
       name: 'discover_and_recommend_media',
       description:
-        "Conseiller et recommander des films ou séries selon le genre, les notes IMDb/TMDB, une bibliothèque Plex spécifique (ex: 'Cinephile', 'Films', 'Horror') ou la similarité avec une œuvre appréciée.",
+        "Conseiller et recommander des films ou séries personnalisés : croise automatiquement avec l'historique de visionnage du spectateur connecté (pour exclure ce qu'il a déjà vu et tenir compte de ses goûts récents) ainsi qu'avec les films/séries populaires bien notés que les autres membres ont regardés sur les serveurs Plex.",
       parameters: {
         type: 'object',
         properties: {
@@ -1127,22 +1130,212 @@ export class DeepSeekOrchestratorService {
       const similarToTmdbId = typeof args.similarToTmdbId === 'number' ? args.similarToTmdbId : undefined;
       const minRating = typeof args.minRating === 'number' ? args.minRating : 7.0;
       const plexLibraryFilter = typeof args.plexLibraryFilter === 'string' ? args.plexLibraryFilter : undefined;
-      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : undefined;
+      const targetLimit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : 4;
 
-      const cards = await this.aggregator.discoverAndRecommend({
-        scope,
-        mediaType,
-        genre,
-        similarToTmdbId,
-        minRating,
-        plexLibraryFilter,
-        limit,
-        currentUserEmail: params.userEmail,
-        currentUserOverseerrId: params.overseerrUserId,
-        userAllowedServers
+      const normTitleFn = (s: string) =>
+        s
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+      const [rawCards, tasteAndTrends] = await Promise.all([
+        this.aggregator.discoverAndRecommend({
+          scope,
+          mediaType,
+          genre,
+          similarToTmdbId,
+          minRating,
+          plexLibraryFilter,
+          limit: Math.min(8, targetLimit + 3),
+          currentUserEmail: params.userEmail,
+          currentUserOverseerrId: params.overseerrUserId,
+          userAllowedServers
+        }),
+        this.tracearr &&
+        this.tracearr.isConfigured() &&
+        typeof this.tracearr.getUserTasteAndCommunityTrends === 'function'
+          ? this.tracearr.getUserTasteAndCommunityTrends({
+              plexUsername: params.plexAccess?.plexUsername || undefined,
+              allowedServers: userAllowedServers,
+              mediaType: mediaType === 'auto' ? undefined : mediaType
+            })
+          : Promise.resolve(null)
+      ]);
+
+      const isAlreadyWatchedByUser = (c: MediaEvidence): boolean => {
+        if (!tasteAndTrends) return false;
+        if (c.identity.tmdbId > 0 && tasteAndTrends.watchedTmdbIds.has(c.identity.tmdbId)) {
+          return true;
+        }
+        const nFr = normTitleFn(c.identity.titleFr);
+        const nOrig = normTitleFn(c.identity.originalTitle);
+        return (
+          (Boolean(nFr) && tasteAndTrends.watchedNormTitles.has(nFr)) ||
+          (Boolean(nOrig) && tasteAndTrends.watchedNormTitles.has(nOrig))
+        );
+      };
+
+      const unwatchedCards = rawCards.filter((c) => !isAlreadyWatchedByUser(c));
+      const baseCards = unwatchedCards.length > 0 ? unwatchedCards : rawCards;
+
+      // Enrichissement des films/séries populaires vus par les AUTRES membres sur les serveurs Plex accessibles
+      const communityWatchMetaByKey = new Map<
+        string,
+        { distinctViewersCount: number; totalPlays: number }
+      >();
+      const communityCards: MediaEvidence[] = [];
+
+      if (
+        tasteAndTrends &&
+        tasteAndTrends.communityPopular.length > 0 &&
+        scope !== 'similar_to_title'
+      ) {
+        for (const pop of tasteAndTrends.communityPopular) {
+          if (pop.tmdbId && pop.tmdbId > 0) {
+            communityWatchMetaByKey.set(`tmdb:${pop.tmdbId}`, {
+              distinctViewersCount: pop.distinctViewersCount,
+              totalPlays: pop.totalPlays
+            });
+          }
+          communityWatchMetaByKey.set(`title:${normTitleFn(pop.title)}`, {
+            distinctViewersCount: pop.distinctViewersCount,
+            totalPlays: pop.totalPlays
+          });
+        }
+
+        const topCommunityCandidates = tasteAndTrends.communityPopular.slice(0, 3);
+        const enrichedCommunity = await Promise.all(
+          topCommunityCandidates.map(async (pop) => {
+            try {
+              const knownPlexHint =
+                pop.serverNames.length > 0 ? { serverNames: pop.serverNames } : undefined;
+              if (pop.tmdbId && pop.tmdbId > 0) {
+                return await this.aggregator.buildMediaEvidence({
+                  tmdbId: pop.tmdbId,
+                  mediaType: pop.mediaType,
+                  currentUserEmail: params.userEmail,
+                  currentUserOverseerrId: params.overseerrUserId,
+                  userAllowedServers,
+                  knownPlexHint
+                });
+              }
+              const verified = await this.aggregator.verifySpecificTitles({
+                items: [
+                  {
+                    title: pop.title,
+                    year: pop.year ?? undefined,
+                    mediaType: pop.mediaType,
+                    knownPlexHint
+                  }
+                ],
+                currentUserEmail: params.userEmail,
+                currentUserOverseerrId: params.overseerrUserId,
+                userAllowedServers
+              });
+              return verified[0] ?? null;
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        const normGenreFilter = genre ? normTitleFn(genre) : '';
+        for (const cc of enrichedCommunity) {
+          if (!cc) continue;
+          if (isAlreadyWatchedByUser(cc)) continue;
+          if (cc.catalogPresence.accessibleToCurrentUser === false) continue;
+          const cardRating =
+            cc.identity.ratings.imdbOrAudienceRating ??
+            cc.identity.ratings.tmdbVoteAverage ??
+            7.0;
+          if (cardRating < Math.min(minRating, 6.5)) continue;
+          if (
+            normGenreFilter &&
+            cc.identity.genres.length > 0 &&
+            !cc.identity.genres.some((g) => normTitleFn(g).includes(normGenreFilter))
+          ) {
+            continue;
+          }
+          communityCards.push(cc);
+        }
+      }
+
+      // Fusion sans doublons : on place d'abord jusqu'à 2 pépites populaires auprès des autres membres, puis le reste de la sélection
+      const mergedMap = new Map<string, MediaEvidence>();
+      const addCardUnique = (c: MediaEvidence) => {
+        const key =
+          c.identity.tmdbId > 0
+            ? `${c.identity.mediaType}:${c.identity.tmdbId}`
+            : `${c.identity.mediaType}:${normTitleFn(c.identity.titleFr)}`;
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, c);
+        }
+      };
+
+      for (const cc of communityCards.slice(0, Math.min(2, targetLimit))) {
+        addCardUnique(cc);
+      }
+      for (const bc of baseCards) {
+        if (mergedMap.size >= targetLimit) break;
+        addCardUnique(bc);
+      }
+
+      const finalCards = Array.from(mergedMap.values()).slice(0, targetLimit);
+      params.onCardsCollected(finalCards);
+
+      const getCommunityMeta = (c: MediaEvidence) =>
+        (c.identity.tmdbId > 0 ? communityWatchMetaByKey.get(`tmdb:${c.identity.tmdbId}`) : undefined) ||
+        communityWatchMetaByKey.get(`title:${normTitleFn(c.identity.titleFr)}`) ||
+        communityWatchMetaByKey.get(`title:${normTitleFn(c.identity.originalTitle)}`);
+
+      const compacted = this.compactCardsForLlm(finalCards).map((item, idx) => {
+        const card = finalCards[idx];
+        const popMeta = card ? getCommunityMeta(card) : undefined;
+        if (!popMeta) return item;
+        return {
+          ...item,
+          popularAmongOtherMembers: {
+            watchedByOtherMembersCount: popMeta.distinctViewersCount,
+            totalPlaysOnServer: popMeta.totalPlays,
+            badgeFr:
+              popMeta.distinctViewersCount > 1
+                ? `Populaire sur le serveur Plex : déjà vu par ${popMeta.distinctViewersCount} autres membres`
+                : 'Populaire sur le serveur Plex : déjà sélectionné et vu par un autre membre'
+          }
+        };
       });
-      params.onCardsCollected(cards);
-      return this.compactCardsForLlm(cards);
+
+      if (!tasteAndTrends || (tasteAndTrends.myRecentWatched.length === 0 && communityCards.length === 0)) {
+        return compacted;
+      }
+
+      return {
+        userTasteProfile: {
+          plexUsername: params.plexAccess?.plexUsername ?? null,
+          recentlyWatchedByCurrentUser: tasteAndTrends.myRecentWatched.slice(0, 6).map((w) => ({
+            title: w.title,
+            year: w.year,
+            mediaType: w.mediaType
+          })),
+          alreadyWatchedExcludedNote:
+            'Les films et séries déjà vus par cet utilisateur ont été automatiquement écartés des recommandations ci-dessous.'
+        },
+        popularAmongOtherMembersSummary: communityCards.map((c) => {
+          const meta = getCommunityMeta(c);
+          return {
+            titleFr: c.identity.titleFr,
+            year: c.identity.year,
+            ratingSur10:
+              c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage,
+            watchedByOtherMembersCount: meta?.distinctViewersCount ?? 1,
+            noteFr:
+              "Ce titre a déjà été sélectionné et visionné par d'autres membres sur le serveur Plex et affiche une très bonne note."
+          };
+        }),
+        recommendations: compacted
+      };
     }
 
     if (fnName === 'get_my_requests') {
@@ -1405,7 +1598,7 @@ export class DeepSeekOrchestratorService {
     return { error: `UNKNOWN_TOOL_${fnName}` };
   }
 
-  private compactCardsForLlm(cards: MediaEvidence[]): unknown {
+  private compactCardsForLlm(cards: MediaEvidence[]): Array<Record<string, unknown>> {
     return cards.map((c) => {
       const libs = Array.from(
         new Set(c.catalogPresence.matchedItems.map((m) => m.libraryTitle).filter(Boolean))
