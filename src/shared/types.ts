@@ -472,3 +472,56 @@ export interface AdminInteractionsJournalDTO {
   averageRating: number;
   items: AdminInteractionEntryDTO[];
 }
+
+export interface PlexPlayerDeviceDTO {
+  clientIdentifier: string;
+  name: string;
+  displayName: string;
+  product: string;
+  platform: string;
+  device: string;
+  model?: string;
+  isOnline: boolean;
+  detectionSource:
+    | 'gdm_lan'
+    | 'pms_clients'
+    | 'active_session'
+    | 'lan_probe'
+    | 'cloud_presence'
+    | 'cloud_registry';
+  address?: string | null;
+  port?: number | null;
+  protocol?: string;
+  localUri?: string | null;
+  viaServerName?: string | null;
+  activeUser?: string | null;
+  playbackState?: 'playing' | 'paused' | 'buffering' | 'idle' | null;
+  nowPlayingTitle?: string | null;
+  lastSeenAt?: string | null;
+  provides?: string;
+}
+
+export interface PlexCastRequestDTO {
+  clientIdentifier: string;
+  serverName?: string;
+  ratingKey: string;
+  mediaType?: 'movie' | 'tv';
+  offsetMs?: number;
+  playerAddress?: string | null;
+  playerPort?: number | null;
+}
+
+export interface PlexCastResponseDTO {
+  ok: boolean;
+  playerName: string;
+  clientIdentifier: string;
+  serverName: string;
+  ratingKey: string;
+  resolvedKey: string;
+  playQueueId: number | null;
+  deliveryMethod: 'lan_direct' | 'pms_proxy' | 'cloud_pubsub' | 'none';
+  messageFr: string;
+  plexIosDeepLink?: string;
+  plexWebUrl?: string;
+}
+

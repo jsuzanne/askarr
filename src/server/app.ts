@@ -672,6 +672,61 @@ export async function createApp(deps: AppDependencies): Promise<{
     }
   });
 
+  // 7bis. Détection automatique des Plex Players & Cast Direct (Plex Companion / PlayQueue)
+  app.get('/api/plex/players', async (req) => {
+    const { session } = await resolveUserSession(req);
+    const query = (req.query || {}) as { refresh?: string };
+    const forceRefresh = query.refresh === '1' || query.refresh === 'true';
+    const players = await plex.discoverPlayers({
+      forceRefresh,
+      plexUsername: session.overseerr.plexUsername
+    });
+    return {
+      players,
+      onlineCount: players.filter((p) => p.isOnline).length
+    };
+  });
+
+  const plexCastBodySchema = z.object({
+    clientIdentifier: z.string().min(1),
+    serverName: z.string().optional(),
+    ratingKey: z.string().min(1),
+    mediaType: z.enum(['movie', 'tv']).optional(),
+    offsetMs: z.number().int().min(0).optional(),
+    playerAddress: z.string().nullable().optional(),
+    playerPort: z.number().int().positive().nullable().optional()
+  });
+
+  app.post('/api/plex/cast', async (req) => {
+    const { session } = await resolveUserSession(req);
+    const body = plexCastBodySchema.parse(req.body);
+    const result = await plex.castMediaToPlayer(body);
+
+    db.recordAuditLog({
+      actorEmail: session.email,
+      actorRole: session.role,
+      actionType: 'PLEX_CAST_PLAY_MEDIA',
+      targetService: 'plex',
+      summaryFr: `Cast Plex (${body.ratingKey} sur ${result.serverName}) -> ${result.playerName} [${result.deliveryMethod}]`,
+      status: result.ok ? 'SUCCESS' : 'FAILED'
+    });
+
+    return result;
+  });
+
+  const plexCastControlBodySchema = z.object({
+    clientIdentifier: z.string().min(1),
+    action: z.enum(['pause', 'play', 'stop', 'stepForward', 'stepBack']),
+    playerAddress: z.string().nullable().optional(),
+    playerPort: z.number().int().positive().nullable().optional()
+  });
+
+  app.post('/api/plex/cast/control', async (req) => {
+    await resolveUserSession(req);
+    const body = plexCastControlBodySchema.parse(req.body);
+    return plex.controlPlayerPlayback(body);
+  });
+
   // 8. Routes d'Administration (strictement réservées 'admin')
   app.get('/api/admin/health', async (req, reply: FastifyReply) => {
     const { principal } = await resolveUserSession(req);

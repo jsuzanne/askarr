@@ -9,6 +9,7 @@ import {
   sanitizeToolsForProvider
 } from '../../src/server/orchestrator/deepseek-orchestrator.service.js';
 import { loadConfig } from '../../src/server/config/env.js';
+import { PlexMultiServerConnector } from '../../src/server/connectors/plex.connector.js';
 import type { MediaAggregatorService } from '../../src/server/aggregator/media-aggregator.service.js';
 import type { OverseerrConnector } from '../../src/server/connectors/overseerr.connector.js';
 
@@ -154,5 +155,92 @@ describe('AskarrDatabase SQLite WAL & Ledger Tests', () => {
 
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('T-PLEX-PLAYER-01: discovers Plex players (Apple TV) and casts media via PlayQueue + /player/playback/playMedia', async () => {
+    const calledUrls: string[] = [];
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      calledUrls.push(url);
+
+      if (url.includes('plex.tv/devices.xml')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer>
+  <Device name="Apple TV Salon" product="Plex for Apple TV" platform="tvOS" device="Apple TV" model="14,1" clientIdentifier="ATV-TEST-123" provides="client,player,pubsub-player" lastSeenAt="${Math.floor(Date.now() / 1000)}" presence="1">
+    <Connection uri="http://192.168.10.136:32500" />
+  </Device>
+</MediaContainer>`;
+        return new Response(xml, { status: 200, headers: { 'Content-Type': 'application/xml' } });
+      }
+
+      if (url.includes('plex.tv/api/v2/resources')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.includes('/clients') || url.includes('/status/sessions')) {
+        return new Response(JSON.stringify({ MediaContainer: { size: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.includes('192.168.10.136:32500/resources')) {
+        return new Response('<MediaContainer><Player title="Apple TV Salon" machineIdentifier="ATV-TEST-123"/></MediaContainer>', {
+          status: 200
+        });
+      }
+
+      if (url.includes('/playQueues')) {
+        return new Response(
+          JSON.stringify({
+            MediaContainer: {
+              playQueueID: 4126,
+              Metadata: [{ key: '/library/metadata/14585', ratingKey: '14585' }]
+            }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('192.168.10.136:32500/player/playback/playMedia')) {
+        return new Response('<Response code="200" status="OK"/>', { status: 200 });
+      }
+
+      return new Response('{}', { status: 200 });
+    };
+
+    const plex = new PlexMultiServerConnector(
+      [
+        {
+          name: 'NucVillers',
+          baseUrl: 'http://192.168.1.163:32400'
+        }
+      ],
+      'test-plex-token',
+      mockFetch
+    );
+
+    const players = await plex.discoverPlayers({ forceRefresh: true });
+    expect(players.length).toBeGreaterThanOrEqual(1);
+    const appleTv = players.find((p) => p.clientIdentifier === 'ATV-TEST-123');
+    expect(appleTv).toBeDefined();
+    expect(appleTv?.name).toBe('Apple TV Salon');
+    expect(appleTv?.isOnline).toBe(true);
+    expect(appleTv?.address).toBe('192.168.10.136');
+
+    const castRes = await plex.castMediaToPlayer({
+      clientIdentifier: 'ATV-TEST-123',
+      ratingKey: '14585',
+      serverName: 'NucVillers'
+    });
+
+    expect(castRes.ok).toBe(true);
+    expect(castRes.deliveryMethod).toBe('lan_direct');
+    expect(castRes.playQueueId).toBe(4126);
+    expect(calledUrls.some((u) => u.includes('/playQueues'))).toBe(true);
+    expect(calledUrls.some((u) => u.includes('192.168.10.136:32500/player/playback/playMedia'))).toBe(true);
   });
 });

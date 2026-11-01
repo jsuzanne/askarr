@@ -5,6 +5,23 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.7] - 2026-11-01
+
+### Ajouté
+- **Détection Automatique des Lecteurs Plex (`Plex Players`) & Lancement Direct sur Apple TV / Smart TV (`📺 Lancer sur Apple TV`)** :
+  - **Découverte hybride en temps réel (`GET /api/plex/players`)** combinant 4 sources en parallèle :
+    1. `plex.tv/devices.xml` et `plex.tv/api/v2/resources` (`presence="1"`, `lastSeenAt`, URI locales `http://192.168.x.x:32500`).
+    2. `GET /clients` sur les 5 serveurs Plex configurés (`NucVillers`, `NucBuntu`, `EQ12buntu`, `MacMini`, `Macmini4`).
+    3. `GET /status/sessions` sur tous les serveurs pour identifier les lecteurs en cours de lecture active.
+    4. Scan réseau local **Plex GDM** (UDP port `32412` `M-SEARCH * HTTP/1.1` broadcast + unicast inter-VLAN `192.168.1.x` / `192.168.10.x`) + sonde HTTP directe `GET http://<ip>:32500/resources` (650 ms) pour vérifier instantanément si une Apple TV ou Smart TV est allumée.
+  - **Indicateur de présence TV dans la barre de salle (`📺 Apple TV ...`)** avec pastille verte pulsante dès qu'un lecteur est détecté en ligne, polling automatique en arrière-plan (15 s) et menu déroulant permettant de choisir le téléviseur cible ou de relancer un scan réseau.
+  - **Bouton `📺 Lancer sur <Apple TV / TV>` sur chaque affiche disponible dans Plex** :
+    - Création automatique d'une **PlayQueue officielle Plex** (`POST /playQueues?type=video`) sur le serveur hébergeant le média (avec résolution automatique du 1er épisode pour les séries TV).
+    - Envoi de la commande `playMedia` via cascade multi-canal : (1) **LAN Direct** vers le port `:32500` de l'Apple TV avec sélection automatique de l'IP du serveur Plex sur le même VLAN (`192.168.10.210` / `192.168.1.163`), (2) **Proxy PMS** (`/player/playback/playMedia`), (3) **Relais Cloud PubSub `plex.tv`**.
+    - Mini-télécommande intégrée sous l'affiche après le lancement (**Pause**, **Reprendre**, **Stop**, **Début** via `POST /api/plex/cast/control`).
+
+---
+
 ## [1.2.6] - 2026-11-01
 
 ### Ajouté

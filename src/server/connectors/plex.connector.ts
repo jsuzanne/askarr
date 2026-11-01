@@ -1,5 +1,13 @@
+import dgram from 'node:dgram';
 import type { PlexServerConfig } from '../config/env.js';
-import type { MediaType, PlexMatchedItem, ProvenanceEntry } from '../../shared/types.js';
+import type {
+  MediaType,
+  PlexMatchedItem,
+  ProvenanceEntry,
+  PlexPlayerDeviceDTO,
+  PlexCastRequestDTO,
+  PlexCastResponseDTO
+} from '../../shared/types.js';
 
 export interface PlexSectionInfo {
   key: string;
@@ -143,6 +151,8 @@ function parseXmlAttributes(attrString: string): Record<string, string> {
 export class PlexMultiServerConnector {
   private sectionsCache = new Map<string, { expiresAt: number; sections: PlexSectionInfo[] }>();
   private sharedUsersCache: { expiresAt: number; users: PlexCloudSharedUser[] } | null = null;
+  private playersCache: { expiresAt: number; players: PlexPlayerDeviceDTO[] } | null = null;
+  private commandCounter = 1;
 
   constructor(
     private servers: PlexServerConfig[],
@@ -922,6 +932,874 @@ export class PlexMultiServerConnector {
       allServerNames: matched.allServerNames,
       askarrServerNames: matched.askarrServerNames,
       configuredServerNames
+    };
+  }
+
+  /**
+   * Scan UDP GDM local (port 32412) pour détecter les lecteurs Plex actifs sur le LAN.
+   */
+  private async scanLocalGdmPlayers(unicastIps: string[] = []): Promise<
+    Array<{
+      clientIdentifier: string;
+      name: string;
+      product: string;
+      version: string;
+      address: string;
+      port: number;
+    }>
+  > {
+    return new Promise((resolve) => {
+      const discovered = new Map<
+        string,
+        {
+          clientIdentifier: string;
+          name: string;
+          product: string;
+          version: string;
+          address: string;
+          port: number;
+        }
+      >();
+      let socket: dgram.Socket | null = null;
+      const finish = () => {
+        if (socket) {
+          try {
+            socket.close();
+          } catch {
+            // ignore
+          }
+          socket = null;
+        }
+        resolve(Array.from(discovered.values()));
+      };
+
+      const timeout = setTimeout(finish, 420);
+      try {
+        socket = dgram.createSocket('udp4');
+        socket.on('error', () => {
+          clearTimeout(timeout);
+          finish();
+        });
+        socket.on('message', (msg, rinfo) => {
+          const text = msg.toString('utf8');
+          if (!text.includes('200 OK') && !text.includes('Resource-Identifier:')) return;
+          const headers: Record<string, string> = {};
+          for (const line of text.split(/\r?\n/)) {
+            const idx = line.indexOf(':');
+            if (idx > 0) {
+              headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+            }
+          }
+          const cid = headers['resource-identifier'];
+          if (!cid) return;
+          const port = Number(headers['port'] || 32500) || 32500;
+          discovered.set(cid, {
+            clientIdentifier: cid,
+            name: headers['name'] || 'Plex Player',
+            product: headers['product'] || 'Plex Player',
+            version: headers['version'] || '',
+            address: rinfo.address,
+            port
+          });
+        });
+        socket.bind(0, () => {
+          if (!socket) return;
+          try {
+            socket.setBroadcast(true);
+          } catch {
+            // ignore
+          }
+          const packet = Buffer.from('M-SEARCH * HTTP/1.1\r\n\r\n');
+          const targets = new Set<string>([
+            '255.255.255.255',
+            '239.0.0.250',
+            '192.168.1.255',
+            '192.168.10.255',
+            ...unicastIps.filter(Boolean)
+          ]);
+          for (const ip of targets) {
+            try {
+              socket.send(packet, 0, packet.length, 32412, ip);
+            } catch {
+              // ignore
+            }
+          }
+        });
+      } catch {
+        clearTimeout(timeout);
+        finish();
+      }
+    });
+  }
+
+  /**
+   * Détecte automatiquement les lecteurs Plex (Apple TV, Smart TV, PS5, Fire TV, iOS, Desktop)
+   * en combinant :
+   * 1) `GET /clients` sur chaque serveur Plex configuré
+   * 2) `GET /status/sessions` (sessions de lecture actives) sur chaque serveur
+   * 3) `https://plex.tv/devices.xml` & `https://plex.tv/api/v2/resources`
+   * 4) Scan GDM UDP (32412) + Probe HTTP directe sur le port Companion local (`:32500/resources`)
+   */
+  public async discoverPlayers(options?: {
+    forceRefresh?: boolean;
+    plexUsername?: string | null;
+  }): Promise<PlexPlayerDeviceDTO[]> {
+    if (!this.plexToken) return [];
+    const now = Date.now();
+    if (!options?.forceRefresh && this.playersCache && this.playersCache.expiresAt > now) {
+      return this.playersCache.players;
+    }
+
+    const byId = new Map<string, PlexPlayerDeviceDTO>();
+    const candidateLanIps = new Set<string>();
+
+    const upsertPlayer = (partial: Partial<PlexPlayerDeviceDTO> & { clientIdentifier: string }) => {
+      const cid = partial.clientIdentifier.trim();
+      if (!cid) return;
+      const existing = byId.get(cid);
+      const name = partial.name || existing?.name || 'Lecteur Plex';
+      const product = partial.product || existing?.product || 'Plex';
+      const platform = partial.platform || existing?.platform || '';
+      const device = partial.device || existing?.device || platform || 'TV';
+      const address = partial.address ?? existing?.address ?? null;
+      const port = partial.port ?? existing?.port ?? null;
+      const isOnline = Boolean(partial.isOnline || existing?.isOnline);
+      const detectionSource =
+        partial.isOnline && partial.detectionSource
+          ? partial.detectionSource
+          : existing?.isOnline && existing?.detectionSource
+            ? existing.detectionSource
+            : partial.detectionSource || existing?.detectionSource || 'cloud_registry';
+
+      byId.set(cid, {
+        clientIdentifier: cid,
+        name,
+        displayName: partial.displayName || existing?.displayName || name,
+        product,
+        platform,
+        device,
+        model: partial.model || existing?.model,
+        isOnline,
+        detectionSource,
+        address,
+        port,
+        protocol: partial.protocol || existing?.protocol || 'http',
+        localUri:
+          partial.localUri ||
+          existing?.localUri ||
+          (address && port ? `http://${address}:${port}` : null),
+        viaServerName: partial.viaServerName ?? existing?.viaServerName ?? null,
+        activeUser: partial.activeUser ?? existing?.activeUser ?? null,
+        playbackState: partial.playbackState ?? existing?.playbackState ?? null,
+        nowPlayingTitle: partial.nowPlayingTitle ?? existing?.nowPlayingTitle ?? null,
+        lastSeenAt: partial.lastSeenAt ?? existing?.lastSeenAt ?? null,
+        provides: partial.provides ?? existing?.provides
+      });
+    };
+
+    // 1. Cloud Registry (`plex.tv/devices.xml` + `plex.tv/api/v2/resources`)
+    await Promise.all([
+      (async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3500);
+        try {
+          const res = await this.fetchImpl('https://plex.tv/devices.xml', {
+            method: 'GET',
+            headers: { 'X-Plex-Token': this.plexToken, Accept: 'application/xml' },
+            signal: controller.signal
+          });
+          if (!res.ok) return;
+          const xml = await res.text();
+          const deviceRegex = /<Device\s+([^>]*?)(?:\/>|>([\s\S]*?)<\/Device>)/g;
+          let m: RegExpExecArray | null;
+          while ((m = deviceRegex.exec(xml)) !== null) {
+            const attrs = parseXmlAttributes(m[1] || '');
+            const inner = m[2] || '';
+            const cid = (attrs.clientIdentifier || '').trim();
+            if (!cid) continue;
+            const provides = (attrs.provides || '').toLowerCase();
+            const product = attrs.product || '';
+            const platform = attrs.platform || '';
+            const device = attrs.device || '';
+            if (provides.includes('server')) continue;
+
+            const connRegex = /<Connection\s+([^>]*?)\/?>/g;
+            let cm: RegExpExecArray | null;
+            let localAddress: string | null = null;
+            let localPort: number | null = null;
+            let localUri: string | null = null;
+            while ((cm = connRegex.exec(inner)) !== null) {
+              const cAttrs = parseXmlAttributes(cm[1] || '');
+              const uri = (cAttrs.uri || '').trim();
+              if (!uri) continue;
+              try {
+                const parsed = new URL(uri);
+                const host = parsed.hostname;
+                const p = Number(parsed.port || 32500);
+                if (
+                  host.startsWith('192.168.') ||
+                  host.startsWith('10.') ||
+                  host.startsWith('172.')
+                ) {
+                  localAddress = host;
+                  localPort = p;
+                  localUri = uri;
+                  candidateLanIps.add(host);
+                }
+              } catch {
+                // ignore
+              }
+            }
+
+            const isLikelyPlayer =
+              provides.includes('player') ||
+              product.toLowerCase().includes('apple tv') ||
+              product.toLowerCase().includes('samsung') ||
+              product.toLowerCase().includes('android') ||
+              product.toLowerCase().includes('playstation') ||
+              product.toLowerCase().includes('media player') ||
+              product.toLowerCase().includes('htpc') ||
+              platform.toLowerCase() === 'tvos' ||
+              platform.toLowerCase() === 'tizen' ||
+              Boolean(localPort === 32500 || localPort === 32433);
+
+            if (!isLikelyPlayer) continue;
+
+            const lastSeenEpoch = Number(attrs.lastSeenAt || 0);
+            const lastSeenAt =
+              lastSeenEpoch > 0 ? new Date(lastSeenEpoch * 1000).toISOString() : null;
+
+            upsertPlayer({
+              clientIdentifier: cid,
+              name: attrs.name || product || 'Lecteur Plex',
+              product,
+              platform,
+              device,
+              model: attrs.model || undefined,
+              isOnline: false,
+              detectionSource: 'cloud_registry',
+              address: localAddress,
+              port: localPort,
+              localUri,
+              lastSeenAt,
+              provides: attrs.provides
+            });
+          }
+        } catch {
+          // ignore
+        } finally {
+          clearTimeout(timer);
+        }
+      })(),
+      (async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000);
+        try {
+          const res = await this.fetchImpl(
+            'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1',
+            {
+              method: 'GET',
+              headers: {
+                'X-Plex-Token': this.plexToken,
+                'X-Plex-Client-Identifier': 'askarr-cinema-controller',
+                'X-Plex-Provides': 'controller',
+                Accept: 'application/json'
+              },
+              signal: controller.signal
+            }
+          );
+          if (!res.ok) return;
+          const items = (await res.json()) as Array<Record<string, unknown>>;
+          if (!Array.isArray(items)) return;
+          for (const item of items) {
+            const provides = String(item.provides || '');
+            if (!provides.includes('player')) continue;
+            const cid = String(item.clientIdentifier || '').trim();
+            if (!cid) continue;
+            const presence = Boolean(item.presence);
+            let localAddress: string | null = null;
+            let localPort: number | null = null;
+            let localUri: string | null = null;
+            if (Array.isArray(item.connections)) {
+              for (const c of item.connections as Array<Record<string, unknown>>) {
+                if (c.local && typeof c.address === 'string') {
+                  localAddress = c.address;
+                  localPort = Number(c.port || 32500);
+                  localUri = typeof c.uri === 'string' ? c.uri : `http://${localAddress}:${localPort}`;
+                  candidateLanIps.add(localAddress);
+                  break;
+                }
+              }
+            }
+            upsertPlayer({
+              clientIdentifier: cid,
+              name: String(item.name || item.product || 'Plex Player'),
+              product: String(item.product || 'Plex'),
+              platform: String(item.platform || ''),
+              device: String(item.device || ''),
+              isOnline: presence,
+              detectionSource: presence ? 'cloud_presence' : 'cloud_registry',
+              address: localAddress,
+              port: localPort,
+              localUri,
+              lastSeenAt: typeof item.lastSeenAt === 'string' ? item.lastSeenAt : null,
+              provides
+            });
+          }
+        } catch {
+          // ignore
+        } finally {
+          clearTimeout(timer);
+        }
+      })()
+    ]);
+
+    // 2. Interrogation en parallèle de `/clients` et `/status/sessions` sur chaque serveur Plex configuré + GDM UDP
+    await Promise.all([
+      ...this.servers.map(async (srv) => {
+        const base = srv.baseUrl.replace(/\/+$/, '');
+        // 2a. GET /clients
+        const ctrlClients = new AbortController();
+        const tClients = setTimeout(() => ctrlClients.abort(), 1800);
+        try {
+          const res = await this.fetchImpl(`${base}/clients`, {
+            method: 'GET',
+            headers: {
+              'X-Plex-Token': this.plexToken,
+              Accept: 'application/json'
+            },
+            signal: ctrlClients.signal
+          });
+          if (res.ok) {
+            const text = await res.text();
+            if (text.trim().startsWith('{')) {
+              const json = JSON.parse(text) as {
+                MediaContainer?: { Server?: Array<Record<string, unknown>> };
+              };
+              const list = json.MediaContainer?.Server || [];
+              for (const c of list) {
+                const cid = String(c.machineIdentifier || c.clientIdentifier || '').trim();
+                if (!cid) continue;
+                const address = String(c.address || c.host || '').trim() || null;
+                const port = Number(c.port || 32500) || 32500;
+                if (address) candidateLanIps.add(address);
+                upsertPlayer({
+                  clientIdentifier: cid,
+                  name: String(c.name || c.title || 'Plex Player'),
+                  product: String(c.product || c.deviceClass || 'Plex Player'),
+                  platform: String(c.platform || c.deviceClass || ''),
+                  device: String(c.device || c.deviceClass || 'TV'),
+                  isOnline: true,
+                  detectionSource: 'pms_clients',
+                  address,
+                  port,
+                  protocol: String(c.protocol || 'http'),
+                  viaServerName: srv.name,
+                  lastSeenAt: new Date().toISOString()
+                });
+              }
+            }
+          }
+        } catch {
+          // ignore
+        } finally {
+          clearTimeout(tClients);
+        }
+
+        // 2b. GET /status/sessions
+        const ctrlSessions = new AbortController();
+        const tSessions = setTimeout(() => ctrlSessions.abort(), 1800);
+        try {
+          const res = await this.fetchImpl(`${base}/status/sessions`, {
+            method: 'GET',
+            headers: {
+              'X-Plex-Token': this.plexToken,
+              Accept: 'application/json'
+            },
+            signal: ctrlSessions.signal
+          });
+          if (res.ok) {
+            const text = await res.text();
+            if (text.trim().startsWith('{')) {
+              const json = JSON.parse(text) as {
+                MediaContainer?: { Metadata?: Array<Record<string, unknown>> };
+              };
+              const list = json.MediaContainer?.Metadata || [];
+              for (const meta of list) {
+                const player = meta.Player as Record<string, unknown> | undefined;
+                if (!player) continue;
+                const cid = String(player.machineIdentifier || '').trim();
+                if (!cid) continue;
+                const userObj = meta.User as Record<string, unknown> | undefined;
+                const activeUser = userObj ? String(userObj.title || userObj.name || '') : null;
+                const rawAddr = String(player.address || '').trim();
+                const isLanAddr =
+                  rawAddr.startsWith('192.168.') ||
+                  rawAddr.startsWith('10.') ||
+                  rawAddr.startsWith('172.');
+                const stateRaw = String(player.state || 'playing').toLowerCase();
+                const playbackState =
+                  stateRaw === 'paused'
+                    ? 'paused'
+                    : stateRaw === 'buffering'
+                      ? 'buffering'
+                      : 'playing';
+                upsertPlayer({
+                  clientIdentifier: cid,
+                  name: String(player.title || player.device || 'Plex Player'),
+                  product: String(player.product || 'Plex'),
+                  platform: String(player.platform || ''),
+                  device: String(player.device || player.platform || 'TV'),
+                  isOnline: true,
+                  detectionSource: 'active_session',
+                  address: isLanAddr ? rawAddr : undefined,
+                  port: isLanAddr ? 32500 : undefined,
+                  viaServerName: srv.name,
+                  activeUser,
+                  playbackState,
+                  nowPlayingTitle: String(meta.grandparentTitle || meta.title || ''),
+                  lastSeenAt: new Date().toISOString()
+                });
+              }
+            }
+          }
+        } catch {
+          // ignore
+        } finally {
+          clearTimeout(tSessions);
+        }
+      }),
+      (async () => {
+        const gdmPlayers = await this.scanLocalGdmPlayers(Array.from(candidateLanIps));
+        for (const gp of gdmPlayers) {
+          upsertPlayer({
+            clientIdentifier: gp.clientIdentifier,
+            name: gp.name,
+            product: gp.product,
+            isOnline: true,
+            detectionSource: 'gdm_lan',
+            address: gp.address,
+            port: gp.port,
+            lastSeenAt: new Date().toISOString()
+          });
+        }
+      })()
+    ]);
+
+    // 3. Probe HTTP directe rapide (650ms) sur les joueurs disposant d'une IP LAN (`:32500/resources`)
+    const offlineWithLan = Array.from(byId.values()).filter(
+      (p) => !p.isOnline && p.address && p.port
+    );
+    if (offlineWithLan.length > 0) {
+      await Promise.all(
+        offlineWithLan.map(async (p) => {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 650);
+          try {
+            const probeUrl = `http://${p.address}:${p.port}/resources`;
+            const res = await this.fetchImpl(probeUrl, {
+              method: 'GET',
+              headers: {
+                'X-Plex-Token': this.plexToken,
+                'X-Plex-Client-Identifier': 'askarr-cinema-controller'
+              },
+              signal: ctrl.signal
+            });
+            if (res.status === 200 || res.status === 401 || res.status === 406) {
+              upsertPlayer({
+                clientIdentifier: p.clientIdentifier,
+                isOnline: true,
+                detectionSource: 'lan_probe',
+                lastSeenAt: new Date().toISOString()
+              });
+            }
+          } catch {
+            // Player asleep or Plex app closed
+          } finally {
+            clearTimeout(timer);
+          }
+        })
+      );
+    }
+
+    // 4. Construction d'un displayName distinctif (ex: quand 2 Apple TV ont le même nom "Apple TV")
+    const allPlayers = Array.from(byId.values());
+    const nameCounts = new Map<string, number>();
+    for (const p of allPlayers) {
+      const k = p.name.trim().toLowerCase();
+      nameCounts.set(k, (nameCounts.get(k) || 0) + 1);
+    }
+    for (const p of allPlayers) {
+      const k = p.name.trim().toLowerCase();
+      if ((nameCounts.get(k) || 0) > 1) {
+        const suffixParts: string[] = [];
+        if (p.address) {
+          const lastOctet = p.address.split('.').slice(-2).join('.');
+          suffixParts.push(`.${lastOctet}`);
+        } else if (p.model) {
+          suffixParts.push(`Gen ${p.model}`);
+        } else {
+          suffixParts.push(p.clientIdentifier.slice(0, 4));
+        }
+        p.displayName = `${p.name} (${suffixParts.join(' • ')})`;
+      } else {
+        p.displayName = p.name;
+      }
+    }
+
+    // 5. Tri intelligent : En ligne d'abord -> TV/Apple TV/Salon en priorité -> vus récemment
+    const isTvScreen = (p: PlexPlayerDeviceDTO) => {
+      const s = `${p.name} ${p.product} ${p.platform} ${p.device}`.toLowerCase();
+      return (
+        s.includes('apple tv') ||
+        s.includes('tvos') ||
+        s.includes('tizen') ||
+        s.includes('samsung') ||
+        s.includes('android (tv)') ||
+        s.includes('playstation') ||
+        s.includes('ps5') ||
+        s.includes('shield') ||
+        s.includes('fire')
+      );
+    };
+
+    const targetUser = (options?.plexUsername || '').trim().toLowerCase();
+    allPlayers.sort((a, b) => {
+      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+      if (targetUser) {
+        const aMatch = (a.activeUser || '').toLowerCase() === targetUser;
+        const bMatch = (b.activeUser || '').toLowerCase() === targetUser;
+        if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      }
+      const aTv = isTvScreen(a);
+      const bTv = isTvScreen(b);
+      if (aTv !== bTv) return aTv ? -1 : 1;
+      const aTime = a.lastSeenAt ? Date.parse(a.lastSeenAt) : 0;
+      const bTime = b.lastSeenAt ? Date.parse(b.lastSeenAt) : 0;
+      return bTime - aTime;
+    });
+
+    const filtered = allPlayers.slice(0, 12);
+    this.playersCache = {
+      expiresAt: Date.now() + 5000,
+      players: filtered
+    };
+    return filtered;
+  }
+
+  /**
+   * Lance immédiatement un film ou une série sur un lecteur Plex (Apple TV, Smart TV, iOS, etc.)
+   * via création d'une PlayQueue officielle + commande Plex Companion `/player/playback/playMedia`.
+   */
+  public async castMediaToPlayer(params: PlexCastRequestDTO): Promise<PlexCastResponseDTO> {
+    const players = await this.discoverPlayers({ forceRefresh: false });
+    const targetPlayer = players.find((p) => p.clientIdentifier === params.clientIdentifier);
+    const playerName = targetPlayer?.displayName || targetPlayer?.name || 'Lecteur Plex';
+    const playerAddress = params.playerAddress || targetPlayer?.address || null;
+    const playerPort = params.playerPort || targetPlayer?.port || 32500;
+
+    // Choix du serveur Plex source
+    const requestedServerName = (params.serverName || '').trim();
+    const targetServer =
+      this.servers.find((s) => s.name.toLowerCase() === requestedServerName.toLowerCase()) ||
+      this.servers[0];
+
+    if (!targetServer || !this.plexToken) {
+      return {
+        ok: false,
+        playerName,
+        clientIdentifier: params.clientIdentifier,
+        serverName: requestedServerName || 'Plex',
+        ratingKey: params.ratingKey,
+        resolvedKey: `/library/metadata/${params.ratingKey}`,
+        playQueueId: null,
+        deliveryMethod: 'none',
+        messageFr: 'Serveur ou token Plex non configuré.'
+      };
+    }
+
+    const serverName = targetServer.name;
+    const base = targetServer.baseUrl.replace(/\/+$/, '');
+    const parsedServerUrl = new URL(base);
+    const machineIdentifier =
+      PLEX_SERVER_MACHINE_IDS[serverName.trim().toLowerCase()] ||
+      PLEX_SERVER_MACHINE_IDS.nucvillers;
+    const deepLinks = buildPlexDeepLinks(serverName, params.ratingKey);
+
+    // Si le player est sur le VLAN 192.168.10.x et que le serveur est NucVillers ou MacMini,
+    // on fournit l'IP du serveur sur le même sous-réseau 192.168.10.x pour une connexion directe optimale
+    let pmsAddressForPlayer = parsedServerUrl.hostname;
+    if (playerAddress?.startsWith('192.168.10.')) {
+      if (serverName.toLowerCase() === 'nucvillers') {
+        pmsAddressForPlayer = '192.168.10.210';
+      } else if (serverName.toLowerCase() === 'macmini') {
+        pmsAddressForPlayer = '192.168.10.126';
+      }
+    }
+    const pmsPortForPlayer = Number(parsedServerUrl.port || 32400);
+    const pmsProtocolForPlayer = parsedServerUrl.protocol.replace(':', '') || 'http';
+
+    // 1. Création de la PlayQueue sur le serveur Plex (indispensable pour tvOS / Apple TV)
+    let playQueueId: number | null = null;
+    let resolvedKey = `/library/metadata/${params.ratingKey}`;
+    let resolvedOffsetMs = params.offsetMs ?? 0;
+
+    try {
+      const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${params.ratingKey}`;
+      const pqUrl = `${base}/playQueues?type=video&continuous=1&repeat=0&own=1&includeChapters=1&includeMarkers=1&uri=${encodeURIComponent(uri)}`;
+      const pqCtrl = new AbortController();
+      const pqTimer = setTimeout(() => pqCtrl.abort(), 4000);
+      try {
+        const pqRes = await this.fetchImpl(pqUrl, {
+          method: 'POST',
+          headers: {
+            'X-Plex-Token': this.plexToken,
+            'X-Plex-Client-Identifier': 'askarr-cinema-controller',
+            'X-Plex-Device-Name': 'Askarr Grand Cinema',
+            Accept: 'application/json'
+          },
+          signal: pqCtrl.signal
+        });
+        if (pqRes.ok) {
+          const pqJson = (await pqRes.json()) as {
+            MediaContainer?: {
+              playQueueID?: number;
+              Metadata?: Array<{ key?: string; viewOffset?: number }>;
+            };
+          };
+          if (typeof pqJson.MediaContainer?.playQueueID === 'number') {
+            playQueueId = pqJson.MediaContainer.playQueueID;
+          }
+          const firstItem = pqJson.MediaContainer?.Metadata?.[0];
+          if (firstItem?.key) {
+            resolvedKey = firstItem.key;
+          }
+          if (
+            params.offsetMs === undefined &&
+            typeof firstItem?.viewOffset === 'number' &&
+            firstItem.viewOffset > 0
+          ) {
+            resolvedOffsetMs = firstItem.viewOffset;
+          }
+        }
+      } finally {
+        clearTimeout(pqTimer);
+      }
+    } catch {
+      // Fallback sans PlayQueue si l'appel échoue
+    }
+
+    const commandId = ++this.commandCounter;
+    const queryParams = new URLSearchParams({
+      key: resolvedKey,
+      offset: String(resolvedOffsetMs),
+      machineIdentifier,
+      address: pmsAddressForPlayer,
+      port: String(pmsPortForPlayer),
+      protocol: pmsProtocolForPlayer,
+      token: this.plexToken,
+      type: 'video',
+      commandID: String(commandId)
+    });
+    if (playQueueId) {
+      queryParams.set('containerKey', `/playQueues/${playQueueId}?own=1&window=200`);
+    }
+
+    const companionHeaders: Record<string, string> = {
+      'X-Plex-Token': this.plexToken,
+      'X-Plex-Client-Identifier': 'askarr-cinema-controller',
+      'X-Plex-Device-Name': 'Askarr Grand Cinema',
+      'X-Plex-Product': 'Askarr',
+      'X-Plex-Version': '1.2.7',
+      'X-Plex-Platform': 'Web',
+      'X-Plex-Provides': 'controller',
+      'X-Plex-Target-Client-Identifier': params.clientIdentifier
+    };
+
+    // Stratégie 1 : Connexion Companion LAN directe vers le player (`http://<playerIp>:32500/player/playback/playMedia`)
+    if (playerAddress && playerPort) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3200);
+      try {
+        const directUrl = `http://${playerAddress}:${playerPort}/player/playback/playMedia?${queryParams.toString()}`;
+        const res = await this.fetchImpl(directUrl, {
+          method: 'GET',
+          headers: companionHeaders,
+          signal: ctrl.signal
+        });
+        if (res.ok) {
+          return {
+            ok: true,
+            playerName,
+            clientIdentifier: params.clientIdentifier,
+            serverName,
+            ratingKey: params.ratingKey,
+            resolvedKey,
+            playQueueId,
+            deliveryMethod: 'lan_direct',
+            messageFr: `Lecture lancée directement sur ${playerName} (${serverName}) !`,
+            plexIosDeepLink: deepLinks.plexIosDeepLink,
+            plexWebUrl: deepLinks.plexWebUrl
+          };
+        }
+      } catch {
+        // On passe à la stratégie 2
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // Stratégie 2 : Proxy Companion via le(s) serveur(s) Plex Media Server
+    const candidateServers = [
+      targetServer,
+      ...this.servers.filter((s) => s.name !== targetServer.name)
+    ];
+    for (const srv of candidateServers) {
+      const srvBase = srv.baseUrl.replace(/\/+$/, '');
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2200);
+      try {
+        const pmsUrl = `${srvBase}/player/playback/playMedia?${queryParams.toString()}`;
+        const res = await this.fetchImpl(pmsUrl, {
+          method: 'GET',
+          headers: companionHeaders,
+          signal: ctrl.signal
+        });
+        if (res.ok) {
+          return {
+            ok: true,
+            playerName,
+            clientIdentifier: params.clientIdentifier,
+            serverName,
+            ratingKey: params.ratingKey,
+            resolvedKey,
+            playQueueId,
+            deliveryMethod: 'pms_proxy',
+            messageFr: `Lecture envoyée à ${playerName} via ${srv.name} !`,
+            plexIosDeepLink: deepLinks.plexIosDeepLink,
+            plexWebUrl: deepLinks.plexWebUrl
+          };
+        }
+      } catch {
+        // continue
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // Stratégie 3 : Relais Cloud PubSub Plex.tv (`https://plex.tv/player/playback/playMedia`)
+    {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        const cloudUrl = `https://plex.tv/player/playback/playMedia?${queryParams.toString()}`;
+        const res = await this.fetchImpl(cloudUrl, {
+          method: 'GET',
+          headers: companionHeaders,
+          signal: ctrl.signal
+        });
+        if (res.ok) {
+          return {
+            ok: true,
+            playerName,
+            clientIdentifier: params.clientIdentifier,
+            serverName,
+            ratingKey: params.ratingKey,
+            resolvedKey,
+            playQueueId,
+            deliveryMethod: 'cloud_pubsub',
+            messageFr: `Signal de lecture transmis à ${playerName} via Plex Cloud !`,
+            plexIosDeepLink: deepLinks.plexIosDeepLink,
+            plexWebUrl: deepLinks.plexWebUrl
+          };
+        }
+      } catch {
+        // ignore
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    return {
+      ok: false,
+      playerName,
+      clientIdentifier: params.clientIdentifier,
+      serverName,
+      ratingKey: params.ratingKey,
+      resolvedKey,
+      playQueueId,
+      deliveryMethod: 'none',
+      messageFr: `${playerName} ne répond pas encore sur le réseau. Assure-toi que l'application Plex est ouverte au premier plan sur l'écran (${playerName}), puis réessaie.`,
+      plexIosDeepLink: deepLinks.plexIosDeepLink,
+      plexWebUrl: deepLinks.plexWebUrl
+    };
+  }
+
+  /**
+   * Contrôle la lecture en cours (Pause / Lecture / Stop) sur un Plex Player.
+   */
+  public async controlPlayerPlayback(params: {
+    clientIdentifier: string;
+    action: 'pause' | 'play' | 'stop' | 'stepForward' | 'stepBack';
+    playerAddress?: string | null;
+    playerPort?: number | null;
+  }): Promise<{ ok: boolean; messageFr: string }> {
+    const players = await this.discoverPlayers({ forceRefresh: false });
+    const targetPlayer = players.find((p) => p.clientIdentifier === params.clientIdentifier);
+    const playerName = targetPlayer?.displayName || targetPlayer?.name || 'Lecteur Plex';
+    const playerAddress = params.playerAddress || targetPlayer?.address || null;
+    const playerPort = params.playerPort || targetPlayer?.port || 32500;
+    const commandId = ++this.commandCounter;
+
+    const headers: Record<string, string> = {
+      'X-Plex-Token': this.plexToken,
+      'X-Plex-Client-Identifier': 'askarr-cinema-controller',
+      'X-Plex-Device-Name': 'Askarr Grand Cinema',
+      'X-Plex-Provides': 'controller',
+      'X-Plex-Target-Client-Identifier': params.clientIdentifier
+    };
+
+    const query = `type=video&commandID=${commandId}`;
+    if (playerAddress && playerPort) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2200);
+      try {
+        const res = await this.fetchImpl(
+          `http://${playerAddress}:${playerPort}/player/playback/${params.action}?${query}`,
+          { method: 'GET', headers, signal: ctrl.signal }
+        );
+        if (res.ok) {
+          return { ok: true, messageFr: `Commande ${params.action} envoyée à ${playerName}.` };
+        }
+      } catch {
+        // continue
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    for (const srv of this.servers) {
+      const srvBase = srv.baseUrl.replace(/\/+$/, '');
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1800);
+      try {
+        const res = await this.fetchImpl(
+          `${srvBase}/player/playback/${params.action}?${query}`,
+          { method: 'GET', headers, signal: ctrl.signal }
+        );
+        if (res.ok) {
+          return { ok: true, messageFr: `Commande ${params.action} envoyée à ${playerName}.` };
+        }
+      } catch {
+        // continue
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    return {
+      ok: false,
+      messageFr: `Impossible de joindre ${playerName} pour la commande ${params.action}.`
     };
   }
 }

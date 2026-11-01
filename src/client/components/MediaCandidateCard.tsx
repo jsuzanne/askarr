@@ -18,10 +18,18 @@ import {
   Terminal,
   Clapperboard,
   Play,
+  Pause,
+  Square,
+  RefreshCw,
   ExternalLink,
   Smartphone
 } from 'lucide-react';
-import type { MediaEvidence, PreparedActionDTO } from '../../shared/types.js';
+import type {
+  MediaEvidence,
+  PlexCastResponseDTO,
+  PlexPlayerDeviceDTO,
+  PreparedActionDTO
+} from '../../shared/types.js';
 import { cinemaAudio } from '../utils/cinema-audio.js';
 
 interface Props {
@@ -29,6 +37,11 @@ interface Props {
   onAskSimilar?: (evidence: MediaEvidence) => void;
   onEvidenceUpdated?: (updated: MediaEvidence) => void;
   showTechnicalTrace?: boolean;
+  plexPlayers?: PlexPlayerDeviceDTO[];
+  selectedPlayerId?: string | null;
+  onSelectPlayerId?: (id: string) => void;
+  onRefreshPlayers?: (force?: boolean) => Promise<void>;
+  scanningPlayers?: boolean;
 }
 
 function formatDuration(minutes: number | null): string | null {
@@ -49,7 +62,12 @@ export const MediaCandidateCard: React.FC<Props> = ({
   evidence,
   onAskSimilar,
   onEvidenceUpdated,
-  showTechnicalTrace = false
+  showTechnicalTrace = false,
+  plexPlayers = [],
+  selectedPlayerId = null,
+  onSelectPlayerId,
+  onRefreshPlayers,
+  scanningPlayers = false
 }) => {
   const [localEvidence, setLocalEvidence] = useState<MediaEvidence>(evidence);
   const [showAllSeasons, setShowAllSeasons] = useState(false);
@@ -57,6 +75,12 @@ export const MediaCandidateCard: React.FC<Props> = ({
   const [preparedAction, setPreparedAction] = useState<PreparedActionDTO | null>(null);
   const [loadingAction, setLoadingAction] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // État Cast Plex Player (Apple TV / Smart TV / LAN Companion)
+  const [showPlayerMenu, setShowPlayerMenu] = useState(false);
+  const [castingInProgress, setCastingInProgress] = useState(false);
+  const [castResult, setCastResult] = useState<PlexCastResponseDTO | null>(null);
+  const [remoteControlMsg, setRemoteControlMsg] = useState<string | null>(null);
 
   const { identity, catalogPresence, acquisitionPipeline, episodeCoverage, actionability } = localEvidence;
 
@@ -176,6 +200,83 @@ export const MediaCandidateCard: React.FC<Props> = ({
   const isMobileDevice =
     typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const primaryPlexHref = isMobileDevice ? plexIosDeepLink || plexWebUrl : plexWebUrl;
+
+  const activePlayer =
+    (selectedPlayerId ? plexPlayers.find((p) => p.clientIdentifier === selectedPlayerId) : null) ||
+    plexPlayers.find((p) => p.isOnline) ||
+    plexPlayers[0] ||
+    null;
+
+  const handleCastToPlayer = async (targetPlayer?: PlexPlayerDeviceDTO, offsetMs?: number) => {
+    const player = targetPlayer || activePlayer;
+    if (!player || !primaryPlexMatch) {
+      setShowPlayerMenu(true);
+      void onRefreshPlayers?.(true);
+      return;
+    }
+    onSelectPlayerId?.(player.clientIdentifier);
+    setShowPlayerMenu(false);
+    setCastingInProgress(true);
+    setCastResult(null);
+    setRemoteControlMsg(null);
+    try {
+      const res = await fetch('/api/plex/cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientIdentifier: player.clientIdentifier,
+          serverName: primaryPlexMatch.serverName,
+          ratingKey: primaryPlexMatch.ratingKey,
+          mediaType: identity.mediaType,
+          offsetMs,
+          playerAddress: player.address,
+          playerPort: player.port
+        })
+      });
+      const data = (await res.json()) as PlexCastResponseDTO;
+      setCastResult(data);
+      if (data.ok) {
+        cinemaAudio.playTicketPunchSfx();
+      }
+    } catch {
+      setCastResult({
+        ok: false,
+        playerName: player.displayName || player.name,
+        clientIdentifier: player.clientIdentifier,
+        serverName: primaryPlexMatch.serverName,
+        ratingKey: primaryPlexMatch.ratingKey,
+        resolvedKey: `/library/metadata/${primaryPlexMatch.ratingKey}`,
+        playQueueId: null,
+        deliveryMethod: 'none',
+        messageFr: 'Erreur de communication avec le serveur lors du lancement sur le lecteur.'
+      });
+    } finally {
+      setCastingInProgress(false);
+    }
+  };
+
+  const handleControlPlayer = async (
+    action: 'pause' | 'play' | 'stop' | 'stepForward' | 'stepBack'
+  ) => {
+    const player = activePlayer;
+    if (!player) return;
+    try {
+      const res = await fetch('/api/plex/cast/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientIdentifier: player.clientIdentifier,
+          action,
+          playerAddress: player.address,
+          playerPort: player.port
+        })
+      });
+      const data = (await res.json()) as { ok: boolean; messageFr: string };
+      setRemoteControlMsg(data.messageFr);
+    } catch {
+      setRemoteControlMsg('Impossible d’envoyer la commande au lecteur.');
+    }
+  };
 
   return (
     <div className="group cinema-poster-card rounded-2xl p-4 sm:p-5 lg:p-6 flex flex-col justify-between relative overflow-hidden">
@@ -383,6 +484,130 @@ export const MediaCandidateCard: React.FC<Props> = ({
               </a>
             )}
 
+            {/* Bouton Lancer directement sur TV / Plex Player (Apple TV, Smart TV, PS5, LAN Companion) */}
+            {primaryPlexMatch && (
+              <div className="relative inline-flex items-center">
+                <div className="inline-flex items-center rounded-xl border border-emerald-500/50 bg-emerald-950/75 shadow-[0_0_15px_rgba(16,185,129,0.18)] overflow-hidden">
+                  <button
+                    type="button"
+                    disabled={castingInProgress}
+                    onClick={() => void handleCastToPlayer()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-bold text-emerald-100 hover:bg-emerald-800/60 active:scale-[0.99] transition cursor-pointer disabled:opacity-60"
+                    title={
+                      activePlayer
+                        ? `Lancer immédiatement sur ${activePlayer.displayName} (${activePlayer.isOnline ? 'En ligne sur le réseau' : 'Veille / Ouvrir Plex sur la TV'})`
+                        : 'Choisir un lecteur Plex (Apple TV, Smart TV...) pour lancer le film'
+                    }
+                  >
+                    {castingInProgress ? (
+                      <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-emerald-300 shrink-0" />
+                    ) : (
+                      <Tv className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-400 shrink-0" />
+                    )}
+                    {activePlayer?.isOnline && (
+                      <span
+                        className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] animate-pulse shrink-0"
+                        title="Lecteur détecté actif en temps réel"
+                      />
+                    )}
+                    <span>
+                      {castingInProgress
+                        ? 'Lancement...'
+                        : activePlayer
+                          ? `Lancer sur ${activePlayer.displayName}`
+                          : 'Caster sur TV'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !showPlayerMenu;
+                      setShowPlayerMenu(next);
+                      if (next) {
+                        void onRefreshPlayers?.(true);
+                      }
+                    }}
+                    className="px-2 py-1.5 border-l border-emerald-500/40 text-emerald-300 hover:bg-emerald-800/60 transition cursor-pointer"
+                    title="Changer d'écran Plex ou scanner le réseau"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {showPlayerMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 rounded-2xl bg-[#11090d]/98 border border-emerald-500/50 shadow-[0_20px_50px_rgba(0,0,0,0.95)] backdrop-blur-xl p-3 z-50 text-left">
+                    <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-emerald-500/20">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300 uppercase tracking-wider">
+                        <Tv className="h-3.5 w-3.5" />
+                        <span>Lecteurs Plex (Companion)</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={scanningPlayers}
+                        onClick={() => void onRefreshPlayers?.(true)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/40 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${scanningPlayers ? 'animate-spin' : ''}`} />
+                        <span>{scanningPlayers ? 'Scan...' : 'Scanner'}</span>
+                      </button>
+                    </div>
+
+                    {plexPlayers.length === 0 ? (
+                      <div className="py-3 text-xs text-stone-400 text-center">
+                        Aucun lecteur détecté. Ouvre l&apos;app Plex sur ton Apple TV puis clique sur{' '}
+                        <strong className="text-emerald-300">Scanner</strong>.
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
+                        {plexPlayers.map((p) => {
+                          const isSelected = activePlayer?.clientIdentifier === p.clientIdentifier;
+                          return (
+                            <button
+                              key={p.clientIdentifier}
+                              type="button"
+                              onClick={() => void handleCastToPlayer(p)}
+                              className={`w-full text-left p-2 rounded-xl border transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-emerald-500/20 border-emerald-400/70 text-white'
+                                  : 'bg-stone-900/80 border-stone-800 text-stone-200 hover:bg-stone-800/80 hover:border-stone-700'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 text-xs font-bold">
+                                  <span
+                                    className={`h-2 w-2 rounded-full shrink-0 ${
+                                      p.isOnline
+                                        ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]'
+                                        : 'bg-stone-600'
+                                    }`}
+                                  />
+                                  <span className="truncate">{p.displayName}</span>
+                                </div>
+                                <div className="text-[10px] text-stone-400 mt-0.5 truncate">
+                                  {p.product}
+                                  {p.address ? ` • ${p.address}` : ''}
+                                  {p.nowPlayingTitle ? ` • ▶ ${p.nowPlayingTitle}` : ''}
+                                </div>
+                              </div>
+                              <span
+                                className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  p.isOnline
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                    : 'bg-stone-800 text-stone-400 border-stone-700'
+                                }`}
+                              >
+                                {p.isOnline ? '🟢 Prêt' : 'Veille'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {evidence.identity.tmdbId > 0 && onAskSimilar && (
               <button
                 type="button"
@@ -395,6 +620,81 @@ export const MediaCandidateCard: React.FC<Props> = ({
             )}
           </div>
         </div>
+
+        {/* Bandeau Retour Cast & Télécommande Directe Plex Player */}
+        {castResult && (
+          <div
+            className={`rounded-xl border px-3.5 py-2.5 text-xs sm:text-sm flex flex-wrap items-center justify-between gap-2.5 ${
+              castResult.ok
+                ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-100'
+                : 'bg-amber-950/80 border-amber-500/50 text-amber-100'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {castResult.ok ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+              )}
+              <span>{castResult.messageFr}</span>
+              {remoteControlMsg && (
+                <span className="text-xs text-emerald-300/90 font-mono">({remoteControlMsg})</span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {castResult.ok ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleControlPlayer('pause')}
+                    className="inline-flex items-center gap-1 rounded-lg bg-black/60 hover:bg-black/90 border border-emerald-500/40 px-2.5 py-1 text-xs font-semibold text-emerald-200 cursor-pointer"
+                  >
+                    <Pause className="h-3 w-3" />
+                    <span>Pause</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleControlPlayer('play')}
+                    className="inline-flex items-center gap-1 rounded-lg bg-black/60 hover:bg-black/90 border border-emerald-500/40 px-2.5 py-1 text-xs font-semibold text-emerald-200 cursor-pointer"
+                  >
+                    <Play className="h-3 w-3" />
+                    <span>Reprendre</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleControlPlayer('stop')}
+                    className="inline-flex items-center gap-1 rounded-lg bg-black/60 hover:bg-black/90 border border-rose-500/40 px-2.5 py-1 text-xs font-semibold text-rose-200 cursor-pointer"
+                  >
+                    <Square className="h-3 w-3" />
+                    <span>Stop</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCastToPlayer(activePlayer || undefined, 0)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-black/60 hover:bg-black/90 border border-amber-500/40 px-2.5 py-1 text-xs font-semibold text-amber-200 cursor-pointer"
+                    title="Relancer depuis le début (00:00)"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    <span>Début</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await onRefreshPlayers?.(true);
+                    await handleCastToPlayer();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/25 hover:bg-amber-500/40 border border-amber-400/60 px-3 py-1 text-xs font-bold text-amber-100 cursor-pointer"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Scanner & Réessayer</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Détail multi-serveurs Plex & Accès Personnel de l'utilisateur */}
         {catalogPresence.matchedItems.length > 0 && (
