@@ -136,6 +136,7 @@ describe('AskarrDatabase SQLite WAL & Ledger Tests', () => {
     cfg.llmRoutingMode = 'priority_cascade';
     const turn = await orchestrator.handleUserMessage({
       userEmail: 'friend@example.com',
+      overseerrUserId: null,
       message: 'Merci beaucoup !'
     });
 
