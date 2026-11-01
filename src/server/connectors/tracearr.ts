@@ -353,9 +353,9 @@ export class TracearrConnector {
       if (this.watchHistoryRawCache && Date.now() < this.watchHistoryRawCache.expiresAt) {
         rawEntries = this.watchHistoryRawCache.items;
       } else {
-        const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=250`, {
+        const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=1000`, {
           headers: this.getHeaders(),
-          signal: AbortSignal.timeout(6000)
+          signal: AbortSignal.timeout(8000)
         });
         if (!res.ok) return [];
 
@@ -445,7 +445,7 @@ export class TracearrConnector {
     const allHistory = await this.getWatchHistory({
       allowedServers: options?.allowedServers,
       mediaType: options?.mediaType,
-      limit: 250
+      limit: 1000
     });
     if (allHistory.length === 0) return empty;
 
@@ -570,7 +570,7 @@ export class TracearrConnector {
       myRecentWatched: Array.from(myRecentMap.values()),
       watchedTmdbIds: empty.watchedTmdbIds,
       watchedNormTitles: empty.watchedNormTitles,
-      communityPopular: communityPopular.slice(0, 8)
+      communityPopular: communityPopular.slice(0, 20)
     };
   }
 

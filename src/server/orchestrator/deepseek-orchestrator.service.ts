@@ -58,9 +58,10 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
 9. NOUVEAUTÉS PLEX, HISTORIQUE DE VISIONNAGE & RECOMMANDATIONS PERSONNALISÉES (TRACEARR) :
    - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté ?", "quoi de neuf sur Plex cette semaine ?"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` (avec \`limit: 1\` s'il demande "le dernier film ajouté", ou \`limit: 5\` s'il demande "les derniers films ajoutés").
    - Si l'utilisateur demande ce qu'il a regardé personnellement (ex: "quel est le dernier film que j'ai vu ?"), appelle \`get_watch_history_and_live_streams\` avec \`scope: 'my_history'\` (et \`mediaType: 'movie'\` s'il parle d'un film). Ne confonds JAMAIS l'historique d'un autre membre de la famille avec celui de l'utilisateur connecté (\`[Profil Plex connecté : ...]\`).
-   - Lorsque l'utilisateur te demande des **conseils ou recommandations** ("tu me conseilles quoi ce soir ?", "conseille-moi un bon film", "qu'est-ce qui est populaire sur le serveur ?") :
-     -> Appelle \`discover_and_recommend_media\` : cet outil croise automatiquement avec l'historique de visionnage Tracearr pour (a) **exclure d'office les titres que l'utilisateur a déjà vus**, (b) te fournir ses derniers films/séries vus (\`userTasteProfile.recentlyWatchedByCurrentUser\`) afin que tu puisses faire un clin d'œil à ses goûts, et (c) faire remonter les **films/séries bien notés que les autres membres ont regardés récemment sur le serveur Plex** (\`popularAmongOtherMembers\`).
-     -> Mets en valeur ces films populaires dans ta réponse en précisant clairement que **d'autres membres du serveur Plex les ont déjà vus** et qu'ils ont **une très bonne note** (c'est un excellent indice de sélection et de popularité sur le serveur, sans jamais citer le nom privé des autres spectateurs).
+   - Lorsque l'utilisateur te demande des **conseils ou recommandations** (que ce soit en général comme *"tu me conseilles quoi ce soir ?"*, *"as-tu des conseils pour ce soir ?"*, ou par genre comme *"une comédie française"*, *"un film populaire"*) :
+     -> **NE RÉPONDS JAMAIS par une simple question à vide sans proposer de films !** Appelle **IMMÉDIATEMENT** \`discover_and_recommend_media\` (avec \`scope: 'on_plex_now'\`, \`mediaType: 'movie'\`, \`limit: 4\` ou le \`genre\` demandé).
+     -> Cet outil croise automatiquement avec l'historique de visionnage Tracearr pour (a) **exclure d'office les titres que l'utilisateur a déjà vus**, (b) te fournir ses derniers films/séries vus (\`userTasteProfile.recentlyWatchedByCurrentUser\`) afin que tu puisses faire un clin d'œil à ses goûts, et (c) **placer EN PREMIER ce que les autres membres regardent récemment sur le serveur Plex** (\`popularAmongOtherMembers\`), suivi des nouveautés récentes bien notées sur Plex.
+     -> Commence toujours ta recommandation par **ce que les autres membres ont regardé récemment sur le serveur Plex** en précisant qu'ils ont été sélectionnés et vus par d'autres membres et qu'ils ont une très bonne note (sans jamais citer le pseudo privé des autres spectateurs, ex: dis *"vu récemment par d'autres membres sur le serveur"* et non *"vu par omercier"*). Si la demande était générale, termine par une phrase ouverte (*"Si tu préfères un genre précis comme une comédie ou un thriller, dis-le-moi !"*).
 10. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour et réponds immédiatement dès le retour des outils. Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
 export const READ_ONLY_TOOLS_DEFINITIONS = [
@@ -1205,7 +1206,21 @@ export class DeepSeekOrchestratorService {
           });
         }
 
-        const topCommunityCandidates = tasteAndTrends.communityPopular.slice(0, 3);
+        const genreMatchTerms = (gRaw?: string): string[] => {
+          if (!gRaw) return [];
+          const g = normTitleFn(gRaw);
+          if (g.includes('comed')) return ['comedie', 'comedy'];
+          if (g.includes('dram')) return ['drame', 'drama'];
+          if (g.includes('horr') || g.includes('epouvant')) return ['horreur', 'epouvante', 'horror'];
+          if (g.includes('science') || g.includes('sci')) return ['science fiction', 'sci fi'];
+          if (g.includes('aventur') || g.includes('adventur')) return ['aventure', 'adventure'];
+          if (g.includes('fantas')) return ['fantastique', 'fantasy'];
+          if (g.includes('polic') || g.includes('crim')) return ['policier', 'crime', 'thriller'];
+          return [g];
+        };
+        const targetGenreTerms = genreMatchTerms(genre);
+
+        const topCommunityCandidates = tasteAndTrends.communityPopular.slice(0, 8);
         const enrichedCommunity = await Promise.all(
           topCommunityCandidates.map(async (pop) => {
             try {
@@ -1241,7 +1256,6 @@ export class DeepSeekOrchestratorService {
           })
         );
 
-        const normGenreFilter = genre ? normTitleFn(genre) : '';
         for (const cc of enrichedCommunity) {
           if (!cc) continue;
           if (isAlreadyWatchedByUser(cc)) continue;
@@ -1250,11 +1264,14 @@ export class DeepSeekOrchestratorService {
             cc.identity.ratings.imdbOrAudienceRating ??
             cc.identity.ratings.tmdbVoteAverage ??
             7.0;
-          if (cardRating < Math.min(minRating, 6.5)) continue;
+          if (cardRating < Math.min(minRating, 6.2)) continue;
           if (
-            normGenreFilter &&
+            targetGenreTerms.length > 0 &&
             cc.identity.genres.length > 0 &&
-            !cc.identity.genres.some((g) => normTitleFn(g).includes(normGenreFilter))
+            !cc.identity.genres.some((g) => {
+              const ng = normTitleFn(g);
+              return targetGenreTerms.some((term) => ng.includes(term));
+            })
           ) {
             continue;
           }
@@ -1262,7 +1279,15 @@ export class DeepSeekOrchestratorService {
         }
       }
 
-      // Fusion sans doublons : on place d'abord jusqu'à 2 pépites populaires auprès des autres membres, puis le reste de la sélection
+      // Tri des cartes catalogue de secours pour privilégier les films récents (2020+) avant les vieux classiques
+      const sortedBaseCards = [...baseCards].sort((a, b) => {
+        const aRecent = (a.identity.year ?? 0) >= 2020 ? 1 : 0;
+        const bRecent = (b.identity.year ?? 0) >= 2020 ? 1 : 0;
+        if (bRecent !== aRecent) return bRecent - aRecent;
+        return (b.identity.year ?? 0) - (a.identity.year ?? 0);
+      });
+
+      // Fusion sans doublons : on place EN PREMIER ce que les autres membres regardent sur Plex, puis le reste de la sélection
       const mergedMap = new Map<string, MediaEvidence>();
       const addCardUnique = (c: MediaEvidence) => {
         const key =
@@ -1274,10 +1299,10 @@ export class DeepSeekOrchestratorService {
         }
       };
 
-      for (const cc of communityCards.slice(0, Math.min(2, targetLimit))) {
+      for (const cc of communityCards.slice(0, targetLimit)) {
         addCardUnique(cc);
       }
-      for (const bc of baseCards) {
+      for (const bc of sortedBaseCards) {
         if (mergedMap.size >= targetLimit) break;
         addCardUnique(bc);
       }
@@ -1476,8 +1501,9 @@ export class DeepSeekOrchestratorService {
       const [myOrGlobalHistory, liveStreams] = await Promise.all([
         this.tracearr.getWatchHistory({
           plexUsername: scope === 'my_history' ? connectedPlexUsername : undefined,
+          allowedServers: userAllowedServers,
           mediaType: mediaTypeFilter,
-          limit: 20
+          limit: 40
         }),
         this.tracearr.getActiveStreams()
       ]);
@@ -1497,6 +1523,7 @@ export class DeepSeekOrchestratorService {
         const enriched = await Promise.all(
           toEnrich.map(async (h) => {
             try {
+              const knownPlexHint = h.serverName ? { serverNames: [h.serverName] } : undefined;
               if (h.tmdbId && h.tmdbId > 0) {
                 return await this.aggregator.buildMediaEvidence({
                   tmdbId: h.tmdbId,
@@ -1504,7 +1531,7 @@ export class DeepSeekOrchestratorService {
                   currentUserEmail: params.userEmail,
                   currentUserOverseerrId: params.overseerrUserId,
                   userAllowedServers,
-                  knownPlexHint: h.serverName ? { serverNames: [h.serverName] } : undefined
+                  knownPlexHint
                 });
               }
               const cleanTitle = (h.showTitle || h.title.replace(/\s*\(S\d+E\d+\)$/i, '')).trim();
@@ -1514,7 +1541,8 @@ export class DeepSeekOrchestratorService {
                   {
                     title: cleanTitle,
                     year: h.year ?? undefined,
-                    mediaType: h.mediaType
+                    mediaType: h.mediaType,
+                    knownPlexHint
                   }
                 ],
                 currentUserEmail: params.userEmail,

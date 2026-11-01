@@ -1396,7 +1396,30 @@ export class MediaAggregatorService {
         }
       }
 
+      const tmdbEnriched = await Promise.all(
+        plexDisc.items.map(async (item) => {
+          try {
+            if (typeof this.overseerr?.search !== 'function') return null;
+            const mType = item.type === 'show' ? 'tv' : 'movie';
+            const results = await this.overseerr.search(item.title, mType, {
+              includePersonFallback: false
+            });
+            if (!results || results.length === 0) return null;
+            const matched =
+              results.find(
+                (r) =>
+                  r.mediaType === mType &&
+                  (!item.year || !r.year || Math.abs(r.year - item.year) <= 1)
+              ) || results[0];
+            return matched ?? null;
+          } catch {
+            return null;
+          }
+        })
+      );
+
       return plexDisc.items.map((item, idx) => {
+        const tmdbMatch = tmdbEnriched[idx];
         const availableServers =
           typeof this.plex.getServersHostingLibrary === 'function'
             ? this.plex.getServersHostingLibrary(item.librarySectionTitle, item.serverName)
@@ -1417,21 +1440,21 @@ export class MediaAggregatorService {
         return {
           identity: {
             mediaType: item.type === 'show' ? 'tv' : 'movie',
-            tmdbId: -(idx + 1),
+            tmdbId: tmdbMatch?.tmdbId && tmdbMatch.tmdbId > 0 ? tmdbMatch.tmdbId : -(idx + 1),
             tvdbId: null,
             imdbId: null,
             titleFr: item.title,
-            originalTitle: item.originalTitle || item.title,
-            year: item.year,
-            overviewFr: item.summary,
-            posterUrl: null,
+            originalTitle: item.originalTitle || tmdbMatch?.originalTitle || item.title,
+            year: item.year ?? tmdbMatch?.year ?? null,
+            overviewFr: item.summary || tmdbMatch?.overviewFr || null,
+            posterUrl: tmdbMatch?.posterUrl ?? null,
             genres: item.genres,
             runtimeMinutes: item.durationMinutes,
             directorOrCreator: item.directors[0] || null,
             topCast: item.cast,
             ratings: {
               imdbOrAudienceRating: item.audienceRating,
-              tmdbVoteAverage: null,
+              tmdbVoteAverage: tmdbMatch?.voteAverage ?? null,
               criticRating: item.criticRating
             },
             releaseDates: {

@@ -688,8 +688,28 @@ export class PlexMultiServerConnector {
           const k = normalizePlexLibraryKey(title);
           if (k === 'films' || k === 'seriestv') return 1;
           if (k === 'cinephile' || k === 'films4k') return 2;
-          if (k === 'filmslegacy' || k === 'horror' || k === 'musical') return 3;
+          if (k === 'horror' || k === 'musical') return 3;
+          if (k === 'filmslegacy') return 5;
           return 10; // 'enfants', 'serieskids', 'truecrimes', 'videodivers' en dernier si non demandés explicitement
+        };
+
+        const stripAccents = (s: string) =>
+          s
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
+
+        const genreEquivalents = (gRaw: string): string[] => {
+          const g = stripAccents(gRaw);
+          if (g.includes('comed')) return ['comedie', 'comedy'];
+          if (g.includes('dram')) return ['drame', 'drama'];
+          if (g.includes('horr') || g.includes('epouvant')) return ['horreur', 'epouvante', 'horror'];
+          if (g.includes('science') || g.includes('sci')) return ['science-fiction', 'science fiction', 'sci-fi'];
+          if (g.includes('aventur') || g.includes('adventur')) return ['aventure', 'adventure'];
+          if (g.includes('fantas')) return ['fantastique', 'fantasy'];
+          if (g.includes('polic') || g.includes('crim')) return ['policier', 'crime', 'thriller'];
+          return [g];
         };
 
         const matchingSections = sections
@@ -703,7 +723,7 @@ export class PlexMultiServerConnector {
           })
           .sort((a, b) => sectionPriority(a.title) - sectionPriority(b.title));
 
-        const containerSize = personNorm || params.yearFilter ? 80 : 25;
+        const containerSize = personNorm || params.yearFilter || params.genre ? 80 : 35;
         for (const sec of matchingSections.slice(0, 3)) {
           const yearParam = params.yearFilter ? `&year=${encodeURIComponent(String(params.yearFilter))}` : '';
           const data = await this.fetchPlexJson<{
@@ -731,10 +751,13 @@ export class PlexMultiServerConnector {
               .filter(Boolean);
 
             if (params.genre) {
-              const gNorm = params.genre.trim().toLowerCase();
+              const targetTerms = genreEquivalents(params.genre);
               const matchesGenre =
-                genres.some((g) => g.toLowerCase().includes(gNorm)) ||
-                sec.title.toLowerCase().includes(gNorm);
+                genres.some((g) => {
+                  const gClean = stripAccents(g);
+                  return targetTerms.some((term) => gClean.includes(term));
+                }) ||
+                targetTerms.some((term) => stripAccents(sec.title).includes(term));
               if (!matchesGenre) continue;
             }
 
