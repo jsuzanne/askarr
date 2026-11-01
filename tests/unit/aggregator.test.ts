@@ -351,4 +351,111 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
     expect(cards[0].identity.tmdbId).toBe(1365378);
     expect(cards[0].identity.titleFr).toBe('Le rêve américain');
   });
+
+  it('T-AGG-05: marks partially_available TV series (e.g. The Staircase 1/8 episodes) as actionable with requestableSeasons', async () => {
+    const mockPlex = {
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'available_now',
+        serversQueried: ['NucVillers', 'NucBuntu'],
+        matchedDetails: [],
+        matchedItems: [
+          {
+            serverName: 'NucVillers',
+            ratingKey: '991',
+            libraryTitle: 'Series TV',
+            isSharedAcrossAllServers: true,
+            title: 'The Staircase',
+            originalTitle: 'The Staircase',
+            year: 2022
+          }
+        ],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    const mockOverseerr = {
+      getMediaDetail: vi.fn().mockResolvedValue({
+        tmdbId: 113988,
+        mediaType: 'tv',
+        tvdbId: 392556,
+        imdbId: 'tt11324406',
+        titleFr: 'The Staircase',
+        originalTitle: 'The Staircase',
+        year: 2022,
+        overviewFr: "L'histoire de Michael Peterson...",
+        posterUrl: null,
+        genres: ['Drame', 'Crime'],
+        runtimeMinutes: 65,
+        voteAverage: 7.1,
+        directorOrCreator: 'Antonio Campos',
+        topCast: ['Colin Firth', 'Toni Collette'],
+        tmdbReleases: {
+          inCinemas: null,
+          digitalRelease: null,
+          physicalRelease: null
+        },
+        totalSeasons: 1,
+        seasonsMeta: [{ seasonNumber: 1, episodeCount: 8, status: 4 }],
+        requestInfo: {
+          mediaStatus: 4,
+          latestRequestId: 50,
+          latestRequestStatus: 2,
+          requestedAt: '2026-10-01T10:00:00Z',
+          requestedByUserId: 1,
+          requestedByEmail: 'user@example.com',
+          requestedByDisplayName: 'Jean',
+          requestedSeasons: [1]
+        }
+      })
+    } as unknown as OverseerrConnector;
+
+    const mockSonarr = {
+      getSeriesByTvdbId: vi.fn().mockResolvedValue({
+        series: {
+          id: 77,
+          tvdbId: 392556,
+          title: 'The Staircase',
+          monitored: false,
+          seasons: [
+            {
+              seasonNumber: 1,
+              monitored: false,
+              episodeFileCount: 1,
+              episodeCount: 8,
+              totalEpisodeCount: 8,
+              percentOfEpisodes: 12.5
+            }
+          ],
+          statistics: {
+            episodeFileCount: 1,
+            episodeCount: 8,
+            totalEpisodeCount: 8,
+            percentOfEpisodes: 12.5
+          }
+        },
+        latencyMs: 5
+      }),
+      getQueueForSeries: vi.fn().mockResolvedValue({ items: [], latencyMs: 2 })
+    } as unknown as SonarrConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      {} as unknown as RadarrConnector,
+      mockSonarr,
+      {} as unknown as ProwlarrConnector
+    );
+
+    const ev = await aggregator.buildMediaEvidence({
+      tmdbId: 113988,
+      mediaType: 'tv',
+      currentUserEmail: 'user@example.com'
+    });
+
+    expect(ev.catalogPresence.state).toBe('partially_available');
+    expect(ev.actionability.canRequestNow).toBe(true);
+    expect(ev.actionability.requestableSeasons).toEqual([1]);
+    expect(ev.actionability.userFriendlyStatusLabel).toContain('1/8 ép.');
+    expect(ev.actionability.userFriendlyExplanationFr).toContain('7 épisode(s) manquant(s)');
+  });
 });

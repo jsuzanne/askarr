@@ -5,6 +5,23 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.9] - 2026-11-01
+
+### Ajouté
+- **Complétion des épisodes manquants pour les séries TV partiellement disponibles (`partially_available`) via Sonarr & Overseerr** :
+  - Lorsqu'une série TV est incomplète sur Plex (ex: *The Staircase* avec `1/8 ép.` présents et `7` épisodes manquants), les saisons en état `partially_available` sont désormais éligibles à l'action (`canRequestNow: true`, `requestableSeasons`).
+  - Ajout de `SonarrConnector.monitorAndSearchSeasons` : lors de la confirmation d'une demande sur une série déjà présente dans Sonarr, Askarr active la surveillance (`monitored: true`) sur la série, la saison ciblée et les épisodes manquants (`PUT /api/v3/episode/monitor`), puis déclenche immédiatement une recherche d'indexeurs (`POST /api/v3/command` `SeasonSearch`) en parallèle d'Overseerr.
+  - Le Projectionniste propose désormais spontanément de lancer le téléchargement des épisodes manquants et prépare le jeton de confirmation en 1 clic.
+
+### Modifié
+- **Refonte Ergonomique « Fiche-Séance Tout-en-Un » (Proposition A)** :
+  - **Fusion des blocs** : la fiche média (`MediaCandidateCard`) est désormais intégrée **à l'intérieur** du conteneur `.cinema-screen-card` du Projectionniste, juste au-dessus de la barre de notation 5 étoiles (`Note cette séance :`), supprimant le double bloc séparé.
+  - **Bandeau de métadonnées unifié** : fusion des 4 lignes empilées (statut, serveurs Plex, accès utilisateur, origine Overseerr) en une seule ligne de badges compacts et lisibles.
+  - **Synopsis repliable (`+ Synopsis`)** dans les cartes intégrées au chat pour éviter la redondance avec le commentaire du Projectionniste.
+  - **Barre d'actions horizontale unifiée** regroupant `Ouvrir sur Plex`, `Lancer sur Apple TV`, `📥 Compléter Saison X (Y ép. manquants)` / `Demander sur Plex` et `Séries/Films similaires`.
+
+---
+
 ## [1.2.8] - 2026-11-01
 
 ### Modifié

@@ -2154,10 +2154,16 @@ export function App() {
                     }`}
                   >
                     <div
-                      className={`w-full sm:w-auto rounded-2xl relative overflow-hidden ${
+                      className={`rounded-2xl relative overflow-hidden ${
                         msg.role === 'user'
                           ? 'cinema-velvet-pill text-white w-fit max-w-[92%] sm:max-w-2xl px-5 py-3.5 sm:px-6 sm:py-4 text-[15px] sm:text-base lg:text-[17px] leading-relaxed font-medium'
-                          : 'cinema-screen-card max-w-4xl text-stone-100 px-5 py-4 sm:px-7 sm:py-6'
+                          : `cinema-screen-card text-stone-100 px-5 py-4 sm:px-7 sm:py-6 ${
+                              msg.mediaCards && msg.mediaCards.length > 1
+                                ? 'w-full max-w-5xl'
+                                : msg.mediaCards && msg.mediaCards.length === 1
+                                  ? 'w-full max-w-4xl'
+                                  : 'w-full sm:w-auto max-w-4xl'
+                            }`
                       }`}
                     >
                       {/* Reflet supérieur de l'écran de cinéma pour les réponses de l'assistant */}
@@ -2192,6 +2198,31 @@ export function App() {
                         <RichMarkdownText text={msg.content} />
                       ) : (
                         <div className="whitespace-pre-line">{msg.content}</div>
+                      )}
+
+                      {/* Fiche-Séance intégrée dans le bloc Projectionniste (Proposition A — Tout-en-Un) */}
+                      {msg.mediaCards && msg.mediaCards.length > 0 && (
+                        <div
+                          className={`mt-4 pt-4 border-t border-amber-500/20 w-full grid grid-cols-1 ${
+                            msg.mediaCards.length > 1 ? 'lg:grid-cols-2 gap-4' : 'gap-3.5'
+                          }`}
+                        >
+                          {msg.mediaCards.map((cand) => (
+                            <MediaCandidateCard
+                              key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
+                              evidence={cand}
+                              onAskSimilar={handleAskSimilar}
+                              showTechnicalTrace={showInlineDebug}
+                              plexPlayers={plexPlayers}
+                              selectedPlayerId={selectedPlayerId}
+                              onSelectPlayerId={handleSelectPlayerId}
+                              onRefreshPlayers={fetchPlexPlayers}
+                              scanningPlayers={scanningPlayers}
+                              embeddedInChat={true}
+                              compactSynopsis={true}
+                            />
+                          ))}
+                        </div>
                       )}
 
                       {/* Barre de Note Spectateur / Critique (1 à 5 étoiles) */}
@@ -2420,25 +2451,6 @@ export function App() {
                         </div>
                       )}
                     </div>
-
-                    {/* Affiches de Films & Fiches Distributeur */}
-                    {msg.mediaCards && msg.mediaCards.length > 0 && (
-                      <div className="mt-4 sm:mt-5 w-full grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
-                        {msg.mediaCards.map((cand) => (
-                          <MediaCandidateCard
-                            key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
-                            evidence={cand}
-                            onAskSimilar={handleAskSimilar}
-                            showTechnicalTrace={showInlineDebug}
-                            plexPlayers={plexPlayers}
-                            selectedPlayerId={selectedPlayerId}
-                            onSelectPlayerId={handleSelectPlayerId}
-                            onRefreshPlayers={fetchPlexPlayers}
-                            scanningPlayers={scanningPlayers}
-                          />
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}

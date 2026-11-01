@@ -205,11 +205,149 @@ export class SonarrConnector {
         }),
         signal: controller.signal
       });
+      this.catalogCache = null;
       return res.ok;
     } catch {
       return false;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Active la surveillance (série + saisons ciblées + épisodes manquants de ces saisons)
+   * et déclenche immédiatement une recherche d'indexeurs (SeasonSearch) dans Sonarr.
+   * Idéal lorsqu'une série est incomplète sur Plex (ex: 1/8 épisodes présents).
+   */
+  public async monitorAndSearchSeasons(params: {
+    sonarrSeriesId?: number | null;
+    tvdbId?: number | null;
+    seasons: number[];
+  }): Promise<{
+    ok: boolean;
+    seriesId: number | null;
+    monitoredEpisodesCount: number;
+    searchedSeasons: number[];
+  }> {
+    const targetSeasons = Array.from(
+      new Set((params.seasons || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))
+    );
+    if (targetSeasons.length === 0) {
+      return { ok: false, seriesId: null, monitoredEpisodesCount: 0, searchedSeasons: [] };
+    }
+
+    try {
+      let rawSeries: Record<string, unknown> | null = null;
+      if (params.sonarrSeriesId && params.sonarrSeriesId > 0) {
+        rawSeries = await this.getJson<Record<string, unknown>>(
+          `/api/v3/series/${encodeURIComponent(String(params.sonarrSeriesId))}`
+        ).catch(() => null);
+      }
+      if (!rawSeries && params.tvdbId && params.tvdbId > 0) {
+        const list = await this.getJson<Array<Record<string, unknown>>>(
+          `/api/v3/series?tvdbId=${encodeURIComponent(String(params.tvdbId))}`
+        ).catch(() => []);
+        rawSeries = list[0] || null;
+      }
+
+      if (!rawSeries || !rawSeries.id) {
+        return { ok: false, seriesId: null, monitoredEpisodesCount: 0, searchedSeasons: [] };
+      }
+
+      const seriesId = Number(rawSeries.id);
+      const rawSeasons = Array.isArray(rawSeries.seasons)
+        ? (rawSeries.seasons as Array<Record<string, unknown>>)
+        : [];
+
+      const updatedSeasons = rawSeasons.map((s) => {
+        const sNum = Number(s.seasonNumber);
+        if (targetSeasons.includes(sNum)) {
+          return { ...s, monitored: true };
+        }
+        return s;
+      });
+
+      const updatedSeriesPayload = {
+        ...rawSeries,
+        monitored: true,
+        seasons: updatedSeasons
+      };
+
+      await this.fetchImpl(`${this.baseUrl}/api/v3/series/${seriesId}`, {
+        method: 'PUT',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(updatedSeriesPayload)
+      }).catch(() => null);
+
+      // Activer aussi monitored=true sur tous les épisodes des saisons demandées
+      let monitoredEpisodesCount = 0;
+      const episodes = await this.getJson<Array<Record<string, unknown>>>(
+        `/api/v3/episode?seriesId=${seriesId}`,
+        6000
+      ).catch(() => []);
+
+      const episodeIdsToMonitor = episodes
+        .filter((ep) => {
+          const sNum = Number(ep.seasonNumber);
+          const hasFile = Boolean(ep.hasFile);
+          const isMonitored = Boolean(ep.monitored);
+          return targetSeasons.includes(sNum) && (!isMonitored || !hasFile);
+        })
+        .map((ep) => Number(ep.id))
+        .filter((id) => id > 0);
+
+      if (episodeIdsToMonitor.length > 0) {
+        const epRes = await this.fetchImpl(`${this.baseUrl}/api/v3/episode/monitor`, {
+          method: 'PUT',
+          headers: {
+            'X-Api-Key': this.apiKey,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({
+            episodeIds: episodeIdsToMonitor,
+            monitored: true
+          })
+        }).catch(() => null);
+        if (epRes?.ok) {
+          monitoredEpisodesCount = episodeIdsToMonitor.length;
+        }
+      }
+
+      // Déclencher SeasonSearch dans Sonarr pour chaque saison demandée
+      const searchedSeasons: number[] = [];
+      for (const seasonNumber of targetSeasons) {
+        const cmdRes = await this.fetchImpl(`${this.baseUrl}/api/v3/command`, {
+          method: 'POST',
+          headers: {
+            'X-Api-Key': this.apiKey,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({
+            name: 'SeasonSearch',
+            seriesId,
+            seasonNumber
+          })
+        }).catch(() => null);
+        if (cmdRes?.ok) {
+          searchedSeasons.push(seasonNumber);
+        }
+      }
+
+      this.catalogCache = null;
+      return {
+        ok: searchedSeasons.length > 0 || monitoredEpisodesCount > 0,
+        seriesId,
+        monitoredEpisodesCount,
+        searchedSeasons
+      };
+    } catch {
+      return { ok: false, seriesId: null, monitoredEpisodesCount: 0, searchedSeasons: [] };
     }
   }
 }

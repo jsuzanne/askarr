@@ -589,18 +589,62 @@ export async function createApp(deps: AppDependencies): Promise<{
     }
 
     try {
-      const createdReq = await overseerr.createMediaRequest({
-        mediaType: record.payload.mediaType,
-        tmdbId: record.payload.tmdbId,
-        seasons: seasonsToRequest,
-        overseerrUserId: record.overseerrUserId ?? session.overseerr.overseerrUserId
-      });
+      const extId = freshEvidence.acquisitionPipeline.externalServiceId;
+      let sonarrSearchResult = {
+        ok: false,
+        seriesId: null as number | null,
+        monitoredEpisodesCount: 0,
+        searchedSeasons: [] as number[]
+      };
+
+      // Si c'est une série déjà présente dans Sonarr (ex: saison incomplète sur Plex comme The Staircase 1/8 ép.),
+      // on active immédiatement la surveillance de la série + saison(s) + épisodes manquants et on déclenche SeasonSearch dans Sonarr.
+      if (
+        record.payload.mediaType === 'tv' &&
+        seasonsToRequest &&
+        seasonsToRequest.length > 0 &&
+        (extId || freshEvidence.identity.tvdbId) &&
+        typeof sonarr.monitorAndSearchSeasons === 'function'
+      ) {
+        sonarrSearchResult = await sonarr.monitorAndSearchSeasons({
+          sonarrSeriesId: extId,
+          tvdbId: freshEvidence.identity.tvdbId,
+          seasons: seasonsToRequest
+        });
+      }
+
+      let createdReq: {
+        requestId: number;
+        status: number;
+        mediaStatus: number;
+        createdAt: string;
+      };
+      try {
+        createdReq = await overseerr.createMediaRequest({
+          mediaType: record.payload.mediaType,
+          tmdbId: record.payload.tmdbId,
+          seasons: seasonsToRequest,
+          overseerrUserId: record.overseerrUserId ?? session.overseerr.overseerrUserId
+        });
+      } catch (osErr) {
+        // Si la série était déjà dans Sonarr/Overseerr et que la relance Sonarr (SeasonSearch) a réussi,
+        // on ne bloque pas l'utilisateur sur un refus 400/409 d'Overseerr.
+        if (sonarrSearchResult.ok) {
+          createdReq = {
+            requestId: freshEvidence.requestState.requestId || 0,
+            status: 2,
+            mediaStatus: 3,
+            createdAt: new Date().toISOString()
+          };
+        } else {
+          throw osErr;
+        }
+      }
 
       // Si l'œuvre était déjà présente dans Radarr/Sonarr mais en 'monitored=false' (ex: ancienne demande #113 dans Overseerr),
       // on réactive explicitement la surveillance (monitored=true) dans Radarr/Sonarr !
-      let reactivatedInArr = false;
-      const extId = freshEvidence.acquisitionPipeline.externalServiceId;
-      if (extId && freshEvidence.acquisitionPipeline.state === 'unmonitored_no_file') {
+      let reactivatedInArr = sonarrSearchResult.ok;
+      if (extId && freshEvidence.acquisitionPipeline.state === 'unmonitored_no_file' && !reactivatedInArr) {
         if (record.payload.mediaType === 'movie') {
           reactivatedInArr = await radarr.setMovieMonitored(extId, true);
         } else {
@@ -611,22 +655,28 @@ export async function createApp(deps: AppDependencies): Promise<{
       db.completePreparedAction({
         token: record.token,
         status: 'EXECUTED',
-        externalResult: { ...createdReq, reactivatedInArr }
+        externalResult: {
+          ...createdReq,
+          reactivatedInArr,
+          sonarrSearchedSeasons: sonarrSearchResult.searchedSeasons,
+          sonarrMonitoredEpisodes: sonarrSearchResult.monitoredEpisodesCount
+        }
       });
 
       db.recordAuditLog({
         actorEmail: session.email,
         actorRole: session.role,
         actionType: record.actionType,
-        targetService: 'overseerr',
+        targetService: sonarrSearchResult.ok ? 'sonarr+overseerr' : 'overseerr',
         actionToken: record.token,
-        summaryFr: `Demande confirmée (#${createdReq.requestId}${reactivatedInArr ? ' + surveillance Radarr/Sonarr réactivée' : ''}) : ${record.payload.summaryFr}`,
+        summaryFr: `Demande confirmée (#${createdReq.requestId}${sonarrSearchResult.ok ? ` + recherche Sonarr S${sonarrSearchResult.searchedSeasons.join(',')}` : reactivatedInArr ? ' + surveillance Radarr/Sonarr réactivée' : ''}) : ${record.payload.summaryFr}`,
         diffRedacted: {
           tmdbId: record.payload.tmdbId,
           mediaType: record.payload.mediaType,
           seasons: seasonsToRequest,
           overseerrRequestId: createdReq.requestId,
-          reactivatedInArr
+          reactivatedInArr,
+          sonarrSearchedSeasons: sonarrSearchResult.searchedSeasons
         },
         status: 'SUCCESS'
       });
@@ -643,9 +693,11 @@ export async function createApp(deps: AppDependencies): Promise<{
       return {
         status: 'EXECUTED',
         overseerrRequestId: createdReq.requestId,
-        messageFr: reactivatedInArr
-          ? `La surveillance automatique de "${record.payload.title}" a été réactivée dans la liste d'attente (Radarr/Sonarr) !`
-          : `Ta demande pour "${record.payload.title}" a bien été envoyée ! Elle est maintenant dans la liste d'attente automatique.`,
+        messageFr: sonarrSearchResult.ok
+          ? `La recherche automatique des épisodes manquants de "${record.payload.title}" (Saison(s) ${(seasonsToRequest || []).join(', ')}) a été lancée ! Ils arriveront sur Plex dès la fin du téléchargement.`
+          : reactivatedInArr
+            ? `La surveillance automatique de "${record.payload.title}" a été réactivée dans la liste d'attente !`
+            : `Ta demande pour "${record.payload.title}" a bien été envoyée ! Elle est maintenant dans la liste d'attente automatique.`,
         evidence: updatedEvidence
       };
     } catch (err) {

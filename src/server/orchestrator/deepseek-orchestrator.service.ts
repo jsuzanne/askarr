@@ -45,8 +45,9 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
      -> Précise TOUJOURS **qui l'a demandé** (\`requestedBy\`, ex: "Demandé par jsuzanne le 31 octobre 2026") ou indique qu'il a été **ajouté automatiquement via une liste** (\`sourceOrigin === 'auto_list'\`, ex: "Ajouté automatiquement via une liste le 25 octobre 2026"), ainsi que sa date de sortie VOD ou DVD/Blu-Ray prévue ou estimée (\`estimatedAvailabilityDate\`).
    - Si l'utilisateur demande quels films sont en attente, qui a demandé quoi, ou les derniers films ajoutés dans la liste d'attente (même s'il utilise le mot "Radarr"), appelle OBLIGATOIREMENT \`get_my_requests\`.
    - Si le film n'est ni sur Plex ni dans la liste d'attente (\`canRequestNow=true\`), indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
-7. DEMANDES EN 2 ÉTAPES (CONFIRMATION OBLIGATOIRE) :
-   - Si l'utilisateur demande explicitement d'ajouter un film ou une série qui est éligible (\`canRequestNow=true\`), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
+7. DEMANDES EN 2 ÉTAPES & SÉRIES INCOMPLÈTES (ÉPISODES MANQUANTS) :
+   - Si une série est incomplète sur Plex (\`plexState: 'partially_available'\`, ex: Saison 1 avec \`1/8\` épisodes présents et 7 manquants), indique clairement combien d'épisodes sont présents et combien il en manque, et **propose proactivement** à l'utilisateur de lancer la recherche et le téléchargement des épisodes manquants grâce au bouton **« Compléter la Saison »** situé directement dans la fiche ci-dessous (ou en te disant oui).
+   - Si l'utilisateur demande explicitement d'ajouter un film, une série ou les épisodes manquants d'une saison (\`canRequestNow=true\`), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
 8. SORTIES RÉCENTES AU CINÉMA (2025, 2026, 2027) & HOMONYMES :
    - Tes outils (\`search_and_check_media\`, \`verify_specific_titles\`, \`search_person_filmography\`, \`discover_and_recommend_media\`) sont connectés en temps réel à TMDB/Overseerr et connaissent tous les films récents de 2025, 2026 et 2027 (films actuellement à l'affiche au cinéma ou à venir en VOD).
    - Lorsqu'un utilisateur demande un film par son titre SANS préciser d'ancienne année (ex: "le fantôme de l'opéra bon film ?", "la gradiva", "unabomber"), ne passe JAMAIS une vieille année supposée (\`year: 2004\`) à l'outil : omets \`year\` afin de toujours faire remonter la nouveauté 2025/2026 à l'affiche.
@@ -902,11 +903,22 @@ export class DeepSeekOrchestratorService {
 
     const actionType = params.mediaType === 'tv' ? 'OVERSEERR_REQUEST_TV' : 'OVERSEERR_REQUEST_MOVIE';
     const yearTxt = evidence.identity.year ? ` (${evidence.identity.year})` : '';
+    const isCompletingPartialSeason =
+      params.mediaType === 'tv' &&
+      Boolean(
+        selectedSeasons?.some((sNum) =>
+          evidence.episodeCoverage?.seasons.some(
+            (s) => s.seasonNumber === sNum && s.state === 'partially_available'
+          )
+        )
+      );
     const seasonsTxt =
       params.mediaType === 'tv' && selectedSeasons
         ? ` — Saison(s) ${selectedSeasons.join(', ')}`
         : '';
-    const summaryFr = `Demander l'ajout de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`;
+    const summaryFr = isCompletingPartialSeason
+      ? `Compléter les épisodes manquants de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`
+      : `Demander l'ajout de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`;
 
     const created = this.db.createPreparedAction({
       userEmail: params.userEmail,

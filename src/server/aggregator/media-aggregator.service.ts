@@ -779,8 +779,13 @@ export class MediaAggregatorService {
       }
     }
 
+    // Une saison est demandable / complétable si elle n'est pas encore demandée ('not_requested')
+    // OU si elle est incomplète sur Plex ('partially_available', ex: 1/8 épisodes présents sur The Staircase)
+    // afin de permettre à l'utilisateur de relancer la recherche des épisodes manquants dans Sonarr/Overseerr.
     const requestableSeasons =
-      episodeCoverage?.seasons.filter((s) => s.state === 'not_requested').map((s) => s.seasonNumber) || [];
+      episodeCoverage?.seasons
+        .filter((s) => s.state === 'not_requested' || s.state === 'partially_available')
+        .map((s) => s.seasonNumber) || [];
 
     const arrAddedAt = radarrMovie?.added || sonarrSeries?.added || null;
     const overseerrRequestedAt = osDetail.requestInfo.requestedAt || params.knownRequestHint?.requestedAt || null;
@@ -946,14 +951,31 @@ export class MediaAggregatorService {
       const availS = params.episodeCoverage.seasons
         .filter((s) => s.state === 'available_on_plex')
         .map((s) => `S${s.seasonNumber}`);
+      const partialS = params.episodeCoverage.seasons.filter((s) => s.state === 'partially_available');
+      const partialDetails = partialS.map((s) => {
+        const presentCount = Math.max(s.plexEpisodeCount, s.sonarrEpisodeFileCount);
+        const missing = Math.max(0, s.totalEpisodeCount - presentCount);
+        return s.totalEpisodeCount > 0
+          ? `S${s.seasonNumber} (${presentCount}/${s.totalEpisodeCount} ép., ${missing} épisode(s) manquant(s))`
+          : `S${s.seasonNumber} (${presentCount} ép.)`;
+      });
       const canReqMore = params.requestableSeasons.length > 0;
+      const summaryBadges = [
+        ...availS,
+        ...partialS.map((s) => {
+          const presentCount = Math.max(s.plexEpisodeCount, s.sonarrEpisodeFileCount);
+          return s.totalEpisodeCount > 0 ? `S${s.seasonNumber} ${presentCount}/${s.totalEpisodeCount} ép.` : `S${s.seasonNumber}`;
+        })
+      ];
       return {
         canRequestNow: canReqMore,
         requestableSeasons: params.requestableSeasons,
         blockReason: canReqMore ? null : 'ALREADY_REQUESTED_OR_MONITORED',
-        userFriendlyStatusLabel: `Partiellement sur Plex (${availS.join(', ') || 'Épisodes partiels'})`,
+        userFriendlyStatusLabel: `Partiellement sur Plex (${summaryBadges.join(', ') || 'Épisodes partiels'})`,
         userFriendlyExplanationFr: canReqMore
-          ? `Certaines saisons sont déjà sur Plex (${availS.join(', ')}). Les saisons ${params.requestableSeasons.map((n) => `S${n}`).join(', ')} peuvent être demandées.`
+          ? partialDetails.length > 0 && availS.length === 0
+            ? `Série incomplète sur Plex : ${partialDetails.join(', ')}. Tu peux lancer la recherche des épisodes manquants dès maintenant.`
+            : `Disponible partiellement sur Plex (${[...availS.map((a) => `${a} complète`), ...partialDetails].join(', ')}). Les saisons ou épisodes manquants (${params.requestableSeasons.map((n) => `S${n}`).join(', ')}) peuvent être demandés.`
           : `Certaines saisons sont déjà sur Plex et les autres sont déjà en cours de suivi.`,
         statusTone: 'sky'
       };
