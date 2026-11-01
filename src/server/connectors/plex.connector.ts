@@ -686,10 +686,10 @@ export class PlexMultiServerConnector {
         const sections = await this.getServerSections(srv);
         const sectionPriority = (title: string): number => {
           const k = normalizePlexLibraryKey(title);
-          if (k === 'films' || k === 'seriestv') return 1;
-          if (k === 'cinephile' || k === 'films4k') return 2;
+          if (k === 'films' || k === 'seriestv') return 1; // Films & Séries récents en priorité absolue
+          if (k === 'films4k') return 2;
           if (k === 'horror' || k === 'musical') return 3;
-          if (k === 'filmslegacy') return 5;
+          if (k === 'cinephile' || k === 'filmslegacy') return 8; // Bibliothèques de films anciens / classiques
           return 10; // 'enfants', 'serieskids', 'truecrimes', 'videodivers' en dernier si non demandés explicitement
         };
 
@@ -712,6 +712,11 @@ export class PlexMultiServerConnector {
           return [g];
         };
 
+        const isComedyGenre = Boolean(params.genre && stripAccents(params.genre).includes('comed'));
+        const effectiveMinRating =
+          params.minRating ??
+          (params.personFilter || params.yearFilter ? 0 : isComedyGenre ? 6.2 : minRating);
+
         const matchingSections = sections
           .filter((s) => {
             if (params.libraryFilter) {
@@ -723,21 +728,38 @@ export class PlexMultiServerConnector {
           })
           .sort((a, b) => sectionPriority(a.title) - sectionPriority(b.title));
 
-        const containerSize = personNorm || params.yearFilter || params.genre ? 80 : 35;
+        const containerSize = personNorm || params.yearFilter || params.genre ? 100 : 50;
         for (const sec of matchingSections.slice(0, 3)) {
+          const secKeyNorm = normalizePlexLibraryKey(sec.title);
+          // Ne pas déborder dans les bibliothèques anciennes (Cinephile / FilmsLegacy) si on a déjà trouvé des films récents dans 'Films'
+          if (
+            (secKeyNorm === 'cinephile' || secKeyNorm === 'filmslegacy') &&
+            !params.libraryFilter &&
+            !personNorm &&
+            (!params.yearFilter || params.yearFilter >= 2015) &&
+            results.length > 0
+          ) {
+            continue;
+          }
+
           const yearParam = params.yearFilter ? `&year=${encodeURIComponent(String(params.yearFilter))}` : '';
+          // Dans la bibliothèque récente 'Films', on mélange les ajouts/sorties récentes et les mieux notés
+          const sortOrder =
+            secKeyNorm === 'films' && !params.yearFilter && !personNorm
+              ? 'year:desc'
+              : 'audienceRating:desc';
           const data = await this.fetchPlexJson<{
             MediaContainer?: { Metadata?: Array<Record<string, unknown>> };
           }>(
             srv.baseUrl,
-            `/library/sections/${encodeURIComponent(sec.key)}/all?sort=audienceRating:desc${yearParam}&X-Plex-Container-Start=0&X-Plex-Container-Size=${containerSize}`
+            `/library/sections/${encodeURIComponent(sec.key)}/all?sort=${sortOrder}${yearParam}&X-Plex-Container-Start=0&X-Plex-Container-Size=${containerSize}`
           );
 
           for (const raw of data.MediaContainer?.Metadata || []) {
             const audienceRating = typeof raw.audienceRating === 'number' ? raw.audienceRating : null;
             const criticRating = typeof raw.rating === 'number' ? raw.rating : null;
             const bestRating = audienceRating ?? criticRating ?? 0;
-            if (bestRating < minRating) continue;
+            if (bestRating < effectiveMinRating) continue;
 
             const genres = ((raw.Genre as Array<{ tag?: string }> | undefined) || [])
               .map((g) => g.tag || '')
