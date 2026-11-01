@@ -10,10 +10,12 @@
  *   l'`AudioContext` est suspendu (`suspend()`), libérant immédiatement la carte son.
  */
 
-export type CinemaAudioMode = 'off' | 'sfx_only' | 'projector' | 'grand_cinema';
+export type CinemaAudioMode = 'off' | 'sfx_only' | 'projector' | 'grand_cinema' | 'fip_jazz';
 
 const STORAGE_MODE_KEY = 'askarr_cinema_audio_mode';
 const STORAGE_VOLUME_KEY = 'askarr_cinema_audio_volume';
+const FIP_JAZZ_STREAM_URL = 'https://icecast.radiofrance.fr/fipjazz-midfi.mp3';
+const FIP_JAZZ_FALLBACK_URL = 'https://direct.fipradio.fr/live/fip-webradio2.mp3';
 
 class CinemaAudioEngine {
   private ctx: AudioContext | null = null;
@@ -24,9 +26,19 @@ class CinemaAudioEngine {
   private padGain: GainNode | null = null;
   private padLfo: OscillatorNode | null = null;
 
-  private mode: CinemaAudioMode = 'off';
+  private mode: CinemaAudioMode = 'sfx_only';
   private volume = 0.45; // 0.0 -> 1.0
   private isAmbientRunning = false;
+
+  // Boucle dédiée au projecteur rétro pendant la recherche / attente de réponse IA
+  private retroSpinBuffer: AudioBuffer | null = null;
+  private retroSpinSource: AudioBufferSourceNode | null = null;
+  private retroSpinGain: GainNode | null = null;
+  private retroSpinStopTimer: number | null = null;
+
+  // Flux live Radio France "FIP Autour du Jazz" (créé uniquement à la demande, 0 impact hors mode FIP)
+  private fipAudio: HTMLAudioElement | null = null;
+  private isFipDucked = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -35,7 +47,8 @@ class CinemaAudioEngine {
         savedMode === 'off' ||
         savedMode === 'sfx_only' ||
         savedMode === 'projector' ||
-        savedMode === 'grand_cinema'
+        savedMode === 'grand_cinema' ||
+        savedMode === 'fip_jazz'
       ) {
         this.mode = savedMode;
       }
@@ -46,11 +59,20 @@ class CinemaAudioEngine {
 
       // Pause automatiquement le moteur audio quand l'onglet n'est plus visible (0 batterie sur mobile)
       document.addEventListener('visibilitychange', () => {
-        if (!this.ctx) return;
         if (document.hidden) {
-          void this.ctx.suspend().catch(() => undefined);
+          if (this.ctx) {
+            void this.ctx.suspend().catch(() => undefined);
+          }
+          if (this.fipAudio && !this.fipAudio.paused) {
+            this.fipAudio.pause();
+          }
         } else if (this.mode !== 'off') {
-          void this.ctx.resume().catch(() => undefined);
+          if (this.ctx) {
+            void this.ctx.resume().catch(() => undefined);
+          }
+          if (this.mode === 'fip_jazz' && this.fipAudio && this.fipAudio.paused) {
+            void this.fipAudio.play().catch(() => undefined);
+          }
         }
       });
     }
@@ -72,6 +94,45 @@ class CinemaAudioEngine {
     if (this.masterGain && this.ctx) {
       this.masterGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.08);
     }
+    this.syncFipVolume();
+  }
+
+  private syncFipVolume(): void {
+    if (!this.fipAudio) return;
+    const baseVol = Math.max(0.03, Math.min(1, this.volume * (this.isFipDucked ? 0.22 : 0.55)));
+    this.fipAudio.volume = baseVol;
+  }
+
+  private startFipJazzStream(): void {
+    if (typeof window === 'undefined') return;
+    if (!this.fipAudio) {
+      const audio = new Audio();
+      audio.preload = 'none';
+      audio.crossOrigin = 'anonymous';
+      audio.onerror = () => {
+        if (audio.src !== FIP_JAZZ_FALLBACK_URL && this.mode === 'fip_jazz') {
+          audio.src = FIP_JAZZ_FALLBACK_URL;
+          void audio.play().catch(() => undefined);
+        }
+      };
+      this.fipAudio = audio;
+    }
+    if (!this.fipAudio.src || (!this.fipAudio.src.includes('radiofrance') && !this.fipAudio.src.includes('fipradio'))) {
+      this.fipAudio.src = FIP_JAZZ_STREAM_URL;
+    }
+    this.syncFipVolume();
+    void this.fipAudio.play().catch(() => undefined);
+  }
+
+  private stopFipJazzStream(): void {
+    if (!this.fipAudio) return;
+    try {
+      this.fipAudio.pause();
+      this.fipAudio.removeAttribute('src');
+      this.fipAudio.load();
+    } catch {
+      // Ignore
+    }
   }
 
   public setMode(newMode: CinemaAudioMode): void {
@@ -82,6 +143,8 @@ class CinemaAudioEngine {
 
     if (newMode === 'off') {
       this.stopAmbientNodes();
+      this.stopFipJazzStream();
+      this.stopRetroProjectorSpin(true);
       if (this.ctx && this.ctx.state === 'running') {
         void this.ctx.suspend().catch(() => undefined);
       }
@@ -93,8 +156,14 @@ class CinemaAudioEngine {
 
     if (newMode === 'sfx_only') {
       this.stopAmbientNodes();
+      this.stopFipJazzStream();
+      this.playCurtainChimeSfx();
+    } else if (newMode === 'fip_jazz') {
+      this.stopAmbientNodes();
+      this.startFipJazzStream();
       this.playCurtainChimeSfx();
     } else {
+      this.stopFipJazzStream();
       this.startOrUpdateAmbientNodes();
       this.playCurtainChimeSfx();
     }
@@ -109,6 +178,10 @@ class CinemaAudioEngine {
     if (this.mode === 'projector' || this.mode === 'grand_cinema') {
       if (!this.isAmbientRunning) {
         this.startOrUpdateAmbientNodes();
+      }
+    } else if (this.mode === 'fip_jazz') {
+      if (!this.fipAudio || this.fipAudio.paused) {
+        this.startFipJazzStream();
       }
     }
   }
@@ -275,28 +348,193 @@ class CinemaAudioEngine {
   }
 
   /**
-   * Micro-SFX 1 : Envoi d'une question au projectionniste (petit enclenchement mécanique doux).
+   * Micro-SFX 1 : Envoi d'une question au projectionniste (enclenchement mécanique + démarrage
+   * du projecteur rétro qui tourne pendant toute l'attente de la réponse).
    */
   public playSearchReelSfx(): void {
+    this.startRetroProjectorSpin();
+  }
+
+  /**
+   * Génère un buffer matériel de 2 secondes reproduisant fidèlement un projecteur rétro 16mm/35mm
+   * en pleine recherche :
+   * - Mécanisme intermittent à croix de Malte (double cliquetis mécanique : griffe + obturateur à 20 img/s)
+   * - Frottement cyclique de la bobine celluloïd (légère modulation à chaque tour de bobine)
+   * - Ronronnement chaud du moteur électrique et de la lampe ventilée
+   */
+  private getOrCreateRetroSpinBuffer(ctx: AudioContext): AudioBuffer {
+    if (this.retroSpinBuffer && this.retroSpinBuffer.sampleRate === ctx.sampleRate) {
+      return this.retroSpinBuffer;
+    }
+
+    const durationSec = 2;
+    const sampleRate = ctx.sampleRate;
+    const length = sampleRate * durationSec;
+    const buffer = ctx.createBuffer(1, length, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const fps = 20; // Cadence projecteur rétro bien audible et cinématographique
+    const samplesPerFrame = Math.floor(sampleRate / fps);
+    const secondaryTickOffset = Math.floor(sampleRate * 0.011); // Obturateur 11 ms après la griffe
+
+    let lpNoise = 0;
+    let bpState1 = 0;
+    let bpState2 = 0;
+
+    for (let i = 0; i < length; i++) {
+      const t = i / sampleRate;
+      const white = Math.random() * 2 - 1;
+
+      // 1. Souffle mécanique et frottement de pellicule modulé par la rotation de la bobine (1.5 tour/s)
+      lpNoise = (lpNoise + 0.04 * white) / 1.04;
+      const reelSwish = 0.8 + 0.35 * Math.sin(2 * Math.PI * 1.5 * t);
+      let sample = lpNoise * 0.18 * reelSwish;
+
+      // 2. Ronronnement du moteur synchrone rétro (55 Hz + 110 Hz + 165 Hz)
+      sample += Math.sin(2 * Math.PI * 55 * t) * 0.022;
+      sample += Math.sin(2 * Math.PI * 110 * t) * 0.014;
+      sample += Math.sin(2 * Math.PI * 165 * t) * 0.007;
+
+      // 3. Cliquetis mécanique de la croix de Malte (griffe d'entraînement + pale d'obturateur)
+      const posInFrame = i % samplesPerFrame;
+      const frameIndex = Math.floor(i / samplesPerFrame);
+      const frameAccent = frameIndex % 4 === 0 ? 1.2 : frameIndex % 2 === 0 ? 0.95 : 0.82;
+
+      // Impulsion principale (griffe qui tire la perforation 35mm)
+      if (posInFrame < sampleRate * 0.0055) {
+        const env = Math.exp(-posInFrame / (sampleRate * 0.0012));
+        const woodyClick = Math.sin(2 * Math.PI * 820 * (posInFrame / sampleRate)) * 0.55 + white * 0.85;
+        sample += woodyClick * env * 0.14 * frameAccent;
+      }
+
+      // Impulsion secondaire (fermeture de la pale d'obturateur)
+      const posSecondary = posInFrame - secondaryTickOffset;
+      if (posSecondary >= 0 && posSecondary < sampleRate * 0.0035) {
+        const env2 = Math.exp(-posSecondary / (sampleRate * 0.0008));
+        const metalTick = Math.sin(2 * Math.PI * 1650 * (posSecondary / sampleRate)) * 0.45 + white * 0.65;
+        sample += metalTick * env2 * 0.075 * frameAccent;
+      }
+
+      // Léger lissage résonant pour donner la couleur "boîtier métallique vintage"
+      bpState1 = 0.85 * bpState1 + 0.15 * sample;
+      bpState2 = 0.92 * bpState2 + 0.08 * bpState1;
+      data[i] = sample * 0.75 + bpState2 * 0.35;
+    }
+
+    this.retroSpinBuffer = buffer;
+    return buffer;
+  }
+
+  /**
+   * Démarre le bruit de projecteur rétro qui tourne en continu pendant que l'utilisateur
+   * attend la réponse du projectionniste IA.
+   * Inclut une vraie mise en vitesse mécanique (inertie de la bobine au démarrage).
+   */
+  public startRetroProjectorSpin(autoStopAfterMs?: number): void {
     if (this.mode === 'off') return;
     const ctx = this.ensureContext();
     if (!ctx || !this.masterGain) return;
 
+    // Nettoie une éventuelle boucle précédente
+    this.stopRetroProjectorSpin(true);
+
+    // Si FIP Jazz tourne, baisse légèrement son volume ("ducking") pendant que le projecteur tourne
+    this.isFipDucked = true;
+    this.syncFipVolume();
+
     const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
 
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(220, now);
-    osc.frequency.exponentialRampToValueAtTime(330, now + 0.09);
+    // Petit "clac" d'interrupteur mécanique à bascule au démarrage
+    const switchOsc = ctx.createOscillator();
+    const switchGain = ctx.createGain();
+    switchOsc.type = 'triangle';
+    switchOsc.frequency.setValueAtTime(190, now);
+    switchOsc.frequency.exponentialRampToValueAtTime(420, now + 0.045);
+    switchGain.gain.setValueAtTime(0.09, now);
+    switchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    switchOsc.connect(switchGain);
+    switchGain.connect(this.masterGain);
+    switchOsc.start(now);
+    switchOsc.stop(now + 0.06);
 
-    gain.gain.setValueAtTime(0.06, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    // Boucle matérielle du projecteur rétro
+    const buffer = this.getOrCreateRetroSpinBuffer(ctx);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
 
-    osc.connect(gain);
-    gain.connect(this.masterGain);
-    osc.start(now);
-    osc.stop(now + 0.12);
+    // Inertie mécanique : la bobine démarre plus lentement (0.55x) et atteint sa vitesse nominale (1.0x) en 0.45s
+    source.playbackRate.setValueAtTime(0.55, now);
+    source.playbackRate.exponentialRampToValueAtTime(1.0, now + 0.45);
+
+    // Filtre passe-bande chaud pour le timbre "projecteur rétro"
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1400, now);
+    filter.frequency.exponentialRampToValueAtTime(2400, now + 0.45);
+
+    const spinGain = ctx.createGain();
+    spinGain.gain.setValueAtTime(0.001, now);
+    spinGain.gain.linearRampToValueAtTime(0.32, now + 0.18);
+
+    source.connect(filter);
+    filter.connect(spinGain);
+    spinGain.connect(this.masterGain);
+
+    source.start(now);
+    this.retroSpinSource = source;
+    this.retroSpinGain = spinGain;
+
+    if (autoStopAfterMs && typeof window !== 'undefined') {
+      this.retroSpinStopTimer = window.setTimeout(() => {
+        this.stopRetroProjectorSpin(false);
+      }, autoStopAfterMs);
+    }
+  }
+
+  /**
+   * Arrête le projecteur rétro lorsque la réponse est prête, avec un effet réaliste
+   * de décélération de bobine (freinage mécanique doux).
+   */
+  public stopRetroProjectorSpin(immediate = false): void {
+    if (this.retroSpinStopTimer !== null && typeof window !== 'undefined') {
+      window.clearTimeout(this.retroSpinStopTimer);
+      this.retroSpinStopTimer = null;
+    }
+
+    const source = this.retroSpinSource;
+    const gain = this.retroSpinGain;
+    this.retroSpinSource = null;
+    this.retroSpinGain = null;
+
+    // Remonte le volume de FIP Jazz en douceur
+    this.isFipDucked = false;
+    this.syncFipVolume();
+
+    if (!source || !gain || !this.ctx) return;
+
+    try {
+      const now = this.ctx.currentTime;
+      if (immediate) {
+        source.stop(now);
+        source.disconnect();
+        gain.disconnect();
+        return;
+      }
+
+      // Décélération mécanique de la bobine (1.0x -> 0.42x) + fondu de sortie sur 260 ms
+      source.playbackRate.cancelScheduledValues(now);
+      source.playbackRate.setValueAtTime(source.playbackRate.value || 1.0, now);
+      source.playbackRate.exponentialRampToValueAtTime(0.42, now + 0.26);
+
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value || 0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+
+      source.stop(now + 0.28);
+    } catch {
+      // Ignore si déjà arrêté
+    }
   }
 
   /**

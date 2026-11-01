@@ -5,6 +5,18 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.2] - 2026-11-01
+
+### Ajouté
+- **Projecteur Rétro 16mm/35mm pendant l'attente de réponse (`startRetroProjectorSpin` / `stopRetroProjectorSpin`)** :
+  - Synthèse procédurale du mécanisme intermittent à croix de Malte (double cliquetis griffe + obturateur à 20 img/s, frottement cyclique de bobine celluloïd et moteur synchrone) avec inertie mécanique au démarrage (`0.55x` $\rightarrow$ `1.0x`) et freinage de bobine à l'arrivée de la réponse (`1.0x` $\rightarrow$ `0.42x`).
+  - Bouton rapide `Bobine 35mm ON / Son muet` directement dans la carte de chargement du chat et bouton de test `📽️ Projecteur (2s)` dans le menu `Ambiance`.
+- **Mode `🎷 Radio FIP Jazz (Foyer Ciné-Club)` (`fip_jazz`)** :
+  - Intégration en *lazy streaming* (`preload="none"`, 0 octet consommé hors écoute, coupure automatique du flux en arrière-plan) de la webradio officielle **Radio France — FIP Autour du Jazz** (`icecast.radiofrance.fr/fipjazz-midfi.mp3`).
+  - **Auto-Ducking ciné-club** : atténuation automatique du volume de FIP Jazz pendant que le projecteur rétro 35mm tourne lors d'une recherche, puis retour au volume normal dès l'affichage de la réponse.
+
+---
+
 ## [1.2.1] - 2026-11-01
 
 ### Ajouté

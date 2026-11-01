@@ -1024,7 +1024,7 @@ export function App() {
 
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
-    cinemaAudio.playSearchReelSfx();
+    cinemaAudio.startRetroProjectorSpin();
 
     try {
       const res = await fetch('/api/chat/messages', {
@@ -1082,6 +1082,7 @@ export function App() {
         }
       ]);
     } finally {
+      cinemaAudio.stopRetroProjectorSpin();
       setLoading(false);
     }
   }
@@ -1225,10 +1226,12 @@ export function App() {
                   {audioMode === 'off'
                     ? 'Muet'
                     : audioMode === 'sfx_only'
-                      ? 'SFX'
+                      ? 'Projecteur'
                       : audioMode === 'projector'
-                        ? '35mm'
-                        : 'Grand Ciné'}
+                        ? 'Cabine 35mm'
+                        : audioMode === 'fip_jazz'
+                          ? '🎷 FIP Jazz'
+                          : 'Grand Ciné'}
                 </span>
               </button>
 
@@ -1259,8 +1262,8 @@ export function App() {
                         },
                         {
                           id: 'sfx_only',
-                          title: '🎟️ Bruitages Cinéma seuls (SFX)',
-                          desc: 'Cliquetis bobine à l’envoi, accord rideau & poinçon de billet'
+                          title: '📽️ Projecteur Rétro à la recherche + SFX',
+                          desc: 'Le projecteur 35mm tourne pendant que l’IA cherche la réponse + ouverture rideau & billet'
                         },
                         {
                           id: 'projector',
@@ -1271,6 +1274,11 @@ export function App() {
                           id: 'grand_cinema',
                           title: '🍿 Prélude Grand Cinéma + 35mm',
                           desc: 'Nappe harmonique chaude avant-séance + projecteur 35mm + SFX'
+                        },
+                        {
+                          id: 'fip_jazz',
+                          title: '🎷 Radio FIP Jazz (Foyer Ciné-Club)',
+                          desc: 'Flux direct FIP Autour du Jazz (s’atténue automatiquement quand le projecteur tourne)'
                         }
                       ] as Array<{ id: CinemaAudioMode; title: string; desc: string }>
                     ).map((opt) => {
@@ -1319,11 +1327,11 @@ export function App() {
                         type="button"
                         onClick={() => {
                           if (audioMode === 'off') handleSelectAudioMode('sfx_only');
-                          cinemaAudio.playSearchReelSfx();
+                          cinemaAudio.startRetroProjectorSpin(2200);
                         }}
                         className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
                       >
-                        🎞️ Tester Bobine
+                        📽️ Projecteur (2s)
                       </button>
                       <button
                         type="button"
@@ -1897,11 +1905,40 @@ export function App() {
               })}
 
               {loading && (
-                <div className="flex items-center gap-3.5 text-amber-100 cinema-screen-card rounded-2xl px-5 py-4 w-fit">
+                <div className="flex flex-wrap items-center gap-3.5 text-amber-100 cinema-screen-card rounded-2xl px-5 py-4 w-fit">
                   <RefreshCw className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
                   <span className="text-sm sm:text-base font-medium">
-                    Projecteur en marche : recherche cinéma & vérification des salles Plex (`NucVillers` & `NucBuntu`)...
+                    Projecteur 35mm en marche : recherche cinéma & vérification des salles Plex...
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (audioMode === 'off') {
+                        handleSelectAudioMode('sfx_only');
+                        cinemaAudio.startRetroProjectorSpin();
+                      } else {
+                        handleSelectAudioMode('off');
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      audioMode !== 'off'
+                        ? 'bg-amber-500/20 text-amber-200 border-amber-400/50 hover:bg-amber-500/30'
+                        : 'bg-stone-900/90 text-stone-400 border-stone-700 hover:text-stone-200'
+                    }`}
+                    title={audioMode !== 'off' ? 'Couper le bruit du projecteur' : 'Activer le bruit du projecteur rétro'}
+                  >
+                    {audioMode !== 'off' ? (
+                      <>
+                        <Volume2 className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                        <span>Bobine 35mm ON</span>
+                      </>
+                    ) : (
+                      <>
+                        <VolumeX className="w-3.5 h-3.5 text-stone-400" />
+                        <span>Son muet</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               )}
 
