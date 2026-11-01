@@ -40,6 +40,7 @@ export class MediaAggregatorService {
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
     maxCandidates?: number;
+    userQueryContext?: string;
   }): Promise<{
     query: string;
     exactMatchFound: boolean;
@@ -47,10 +48,14 @@ export class MediaAggregatorService {
     candidates: MediaEvidence[];
   }> {
     const maxCandidates = params.maxCandidates || 4;
+    const localSearchQuery =
+      params.userQueryContext && params.userQueryContext.trim().length > params.query.trim().length
+        ? `${params.query} ${params.userQueryContext}`
+        : params.query;
     const [rawCandidates, localCatalogMatches] = await Promise.all([
       this.overseerr.search(params.query, params.mediaType),
       this.searchLocalCatalogByKeywords({
-        query: params.query,
+        query: localSearchQuery,
         mediaType: params.mediaType,
         year: params.year,
         limit: 3
@@ -1094,6 +1099,7 @@ export class MediaAggregatorService {
     }>;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userQueryContext?: string;
   }): Promise<MediaEvidence[]> {
     const cleanItems = params.items
       .filter((i) => i && typeof i.title === 'string' && i.title.trim().length > 0)
@@ -1107,49 +1113,78 @@ export class MediaAggregatorService {
         .replace(/[^a-z0-9]+/g, ' ')
         .trim();
 
-    const results = await Promise.all(
-      cleanItems.map(async (item) => {
+    const localContextPromise =
+      params.userQueryContext && params.userQueryContext.trim().length >= 8
+        ? this.searchLocalCatalogByKeywords({
+            query: params.userQueryContext,
+            limit: 2
+          })
+        : Promise.resolve([]);
+
+    const [localMatches, results] = await Promise.all([
+      localContextPromise,
+      Promise.all(
+        cleanItems.map(async (item) => {
+          try {
+            const targetTitle = norm(item.title);
+            const searchRes = await this.overseerr.search(item.title.trim(), item.mediaType || 'auto', {
+              includePersonFallback: false
+            });
+            if (searchRes.length === 0) return null;
+
+            // Score each candidate by exact title match + year match so a movie like "Goliath" (2022)
+            // or "Titane" (2021) is selected accurately
+            const scored = searchRes.map((c, idx) => {
+              const tFr = norm(c.titleFr);
+              const tOrig = norm(c.originalTitle);
+              let score = Math.max(0, 20 - idx * 2);
+              if (tFr === targetTitle || tOrig === targetTitle) {
+                score += 100;
+              } else if (tFr.includes(targetTitle) || tOrig.includes(targetTitle)) {
+                score += 40;
+              }
+              if (item.year && c.year) {
+                const diff = Math.abs(c.year - item.year);
+                if (diff === 0) score += 90;
+                else if (diff === 1) score += 60;
+                else score -= Math.min(80, diff * 10);
+              }
+              if (item.mediaType && item.mediaType !== 'auto' && c.mediaType === item.mediaType) {
+                score += 25;
+              }
+              return { c, score };
+            });
+
+            scored.sort((a, b) => b.score - a.score);
+            const best = scored[0].c;
+
+            return await this.buildMediaEvidence({
+              tmdbId: best.tmdbId,
+              mediaType: best.mediaType,
+              currentUserEmail: params.currentUserEmail,
+              currentUserOverseerrId: params.currentUserOverseerrId,
+              includeSeasons: best.mediaType === 'tv',
+              checkIndexers: false,
+              knownPlexHint: item.knownPlexHint
+            });
+          } catch {
+            return null;
+          }
+        })
+      )
+    ]);
+
+    const highConfidenceLocal = localMatches.filter((m) => m.score >= 35);
+    const localEvidences = await Promise.all(
+      highConfidenceLocal.map(async (loc) => {
         try {
-          const targetTitle = norm(item.title);
-          const searchRes = await this.overseerr.search(item.title.trim(), item.mediaType || 'auto', {
-            includePersonFallback: false
-          });
-          if (searchRes.length === 0) return null;
-
-          // Score each candidate by exact title match + year match so a movie like "Goliath" (2022)
-          // or "Titane" (2021) is selected accurately
-          const scored = searchRes.map((c, idx) => {
-            const tFr = norm(c.titleFr);
-            const tOrig = norm(c.originalTitle);
-            let score = Math.max(0, 20 - idx * 2);
-            if (tFr === targetTitle || tOrig === targetTitle) {
-              score += 100;
-            } else if (tFr.includes(targetTitle) || tOrig.includes(targetTitle)) {
-              score += 40;
-            }
-            if (item.year && c.year) {
-              const diff = Math.abs(c.year - item.year);
-              if (diff === 0) score += 90;
-              else if (diff === 1) score += 60;
-              else score -= Math.min(80, diff * 10);
-            }
-            if (item.mediaType && item.mediaType !== 'auto' && c.mediaType === item.mediaType) {
-              score += 25;
-            }
-            return { c, score };
-          });
-
-          scored.sort((a, b) => b.score - a.score);
-          const best = scored[0].c;
-
           return await this.buildMediaEvidence({
-            tmdbId: best.tmdbId,
-            mediaType: best.mediaType,
+            tmdbId: loc.tmdbId,
+            mediaType: loc.mediaType,
             currentUserEmail: params.currentUserEmail,
             currentUserOverseerrId: params.currentUserOverseerrId,
-            includeSeasons: best.mediaType === 'tv',
-            checkIndexers: false,
-            knownPlexHint: item.knownPlexHint
+            includeSeasons: loc.mediaType === 'tv',
+            checkIndexers: false
           });
         } catch {
           return null;
@@ -1159,7 +1194,7 @@ export class MediaAggregatorService {
 
     const seen = new Set<string>();
     const deduped: MediaEvidence[] = [];
-    for (const ev of results) {
+    for (const ev of [...localEvidences, ...results]) {
       if (!ev) continue;
       const key = `${ev.identity.mediaType}:${ev.identity.tmdbId}`;
       if (!seen.has(key)) {

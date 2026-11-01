@@ -250,4 +250,105 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
     expect(ev.identity.releaseDates.isEstimatedDate).toBe(true);
     expect(ev.identity.releaseDates.estimatedVodOrDvdDate).toBe('2026-11-29');
   });
+
+  it('T-AGG-04: verifySpecificTitles injects high-confidence local Radarr catalog matches from userQueryContext', async () => {
+    const mockPlex = {
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'available_now',
+        serversQueried: ['NucVillers'],
+        matchedDetails: [],
+        matchedItems: [
+          {
+            serverName: 'NucVillers',
+            ratingKey: '555',
+            libraryTitle: 'Films',
+            isSharedAcrossAllServers: true,
+            title: 'Le rêve américain',
+            originalTitle: 'Le rêve américain',
+            year: 2026
+          }
+        ],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    const mockOverseerr = {
+      search: vi.fn().mockResolvedValue([]),
+      getMediaDetail: vi.fn().mockResolvedValue({
+        tmdbId: 1365378,
+        mediaType: 'movie',
+        tvdbId: null,
+        imdbId: 'tt33550099',
+        titleFr: 'Le rêve américain',
+        originalTitle: 'Le rêve américain',
+        year: 2026,
+        overviewFr:
+          "Personne n'aurait parié sur Jérémy et Bouna pour devenir des agents qui comptent en NBA.",
+        posterUrl: null,
+        genres: ['Comédie', 'Drame'],
+        runtimeMinutes: 120,
+        voteAverage: 7.4,
+        directorOrCreator: 'Anthony Marciano',
+        topCast: ['Jean-Pascal Zadi', 'Raphaël Quenard'],
+        tmdbReleases: {
+          inCinemas: '2026-02-18',
+          digitalRelease: null,
+          physicalRelease: null
+        },
+        totalSeasons: 0,
+        seasonsMeta: [],
+        requestInfo: {
+          mediaStatus: 5,
+          latestRequestId: null,
+          latestRequestStatus: null,
+          requestedAt: null,
+          requestedByUserId: null,
+          requestedByEmail: null,
+          requestedByDisplayName: null,
+          requestedSeasons: []
+        }
+      })
+    } as unknown as OverseerrConnector;
+
+    const mockRadarr = {
+      getCatalogIndex: vi.fn().mockResolvedValue({
+        movies: [
+          {
+            id: 3333,
+            tmdbId: 1365378,
+            title: 'Le rêve américain',
+            originalTitle: 'Le rêve américain',
+            alternateTitles: [],
+            year: 2026,
+            overview:
+              "Personne n'aurait parié sur Jérémy, coincé derrière le comptoir d'un vidéo club à Amiens, ou sur Bouna, lorsqu'il faisait le ménage à l'aéroport d'Orly. Sans contacts, sans argent et avec un anglais plus qu'approximatif, rien ne les prédestinait à devenir des agents qui comptent en NBA.",
+            originalLanguage: 'French',
+            monitored: true,
+            hasFile: true
+          }
+        ],
+        latencyMs: 1
+      }),
+      getMovieByTmdbId: vi.fn().mockResolvedValue({ movie: null }),
+      getQueueForMovie: vi.fn().mockResolvedValue(null)
+    } as unknown as RadarrConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      mockRadarr,
+      {} as unknown as SonarrConnector,
+      {} as unknown as ProwlarrConnector
+    );
+
+    const cards = await aggregator.verifySpecificTitles({
+      items: [{ title: 'Un1que, Victor Wembanyama', year: 2023, mediaType: 'movie' }],
+      userQueryContext:
+        "Je cherche le film français récent qui raconte l'histoire de deux Français devenus agents de joueurs NBA comme Wembanyama"
+    });
+
+    expect(cards.length).toBeGreaterThanOrEqual(1);
+    expect(cards[0].identity.tmdbId).toBe(1365378);
+    expect(cards[0].identity.titleFr).toBe('Le rêve américain');
+  });
 });

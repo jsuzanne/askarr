@@ -708,6 +708,7 @@ export class DeepSeekOrchestratorService {
           const toolResult = await this.executeReadOnlyTool({
             fnName,
             args,
+            userMessage: params.message,
             userEmail: params.userEmail,
             overseerrUserId: params.overseerrUserId,
             plexAccess: params.plexAccess,
@@ -886,6 +887,7 @@ export class DeepSeekOrchestratorService {
   private async executeReadOnlyTool(params: {
     fnName: string;
     args: Record<string, unknown>;
+    userMessage?: string;
     userEmail: string;
     overseerrUserId: number | null;
     plexAccess?: {
@@ -912,7 +914,8 @@ export class DeepSeekOrchestratorService {
         mediaType,
         year,
         currentUserEmail: params.userEmail,
-        currentUserOverseerrId: params.overseerrUserId
+        currentUserOverseerrId: params.overseerrUserId,
+        userQueryContext: params.userMessage
       });
       params.onCardsCollected(res.candidates);
       return this.compactCardsForLlm(res.candidates);
@@ -956,7 +959,8 @@ export class DeepSeekOrchestratorService {
       const cards = await this.aggregator.verifySpecificTitles({
         items,
         currentUserEmail: params.userEmail,
-        currentUserOverseerrId: params.overseerrUserId
+        currentUserOverseerrId: params.overseerrUserId,
+        userQueryContext: params.userMessage
       });
       params.onCardsCollected(cards);
       return this.compactCardsForLlm(cards);

@@ -5,6 +5,15 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.4] - 2026-11-01
+
+### Corrigé
+- **Injection du contexte utilisateur dans `verify_specific_titles` (`userQueryContext`)** :
+  - Lorsqu'un utilisateur décrit un film par son intrigue (ex: *« film français récent qui raconte l'histoire de deux Français devenus agents de joueurs NBA comme Wembanyama »*), le LLM appelle souvent `verify_specific_titles` avec sa propre hypothèse issue de sa coupure de connaissance (ex: *Un1que, Victor Wembanyama*).
+  - Désormais, `verifySpecificTitles` interroge aussi en parallèle l'index RAM local Radarr/Sonarr (`searchLocalCatalogByKeywords`) avec le message complet de l'utilisateur (`userQueryContext`) et injecte en tête de résultat toute correspondance locale à score élevé ($\ge 35$, comme ***Le rêve américain* (2026)**, `tmdbId: 1365378`), permettant au LLM de l'identifier dès le 1er tour d'outil.
+
+---
+
 ## [1.2.3] - 2026-11-01
 
 ### Ajouté
