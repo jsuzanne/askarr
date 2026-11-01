@@ -2,6 +2,11 @@ export interface RadarrMovieStatus {
   id: number;
   tmdbId: number;
   title: string;
+  originalTitle?: string;
+  alternateTitles?: string[];
+  overview?: string | null;
+  originalLanguage?: string | null;
+  genres?: string[];
   year: number | null;
   status: string; // 'announced' | 'inCinemas' | 'released' | 'deleted'
   monitored: boolean;
@@ -25,6 +30,12 @@ export interface RadarrQueueItem {
 }
 
 export class RadarrConnector {
+  private catalogCache: {
+    expiresAt: number;
+    movies: RadarrMovieStatus[];
+    byTmdbId: Map<number, RadarrMovieStatus>;
+  } | null = null;
+
   constructor(
     private baseUrl: string,
     private apiKey: string,
@@ -38,6 +49,7 @@ export class RadarrConnector {
     if (typeof apiKey === 'string' && apiKey.trim() && !apiKey.includes('••••')) {
       this.apiKey = apiKey.trim();
     }
+    this.catalogCache = null;
   }
 
   private async getJson<T>(pathWithQuery: string, timeoutMs = 4500): Promise<T> {
@@ -76,10 +88,32 @@ export class RadarrConnector {
   }
 
   private mapRawMovie(raw: Record<string, unknown>, fallbackTmdbId?: number): RadarrMovieStatus {
+    const rawAlt = Array.isArray(raw.alternateTitles)
+      ? (raw.alternateTitles as Array<Record<string, unknown>>)
+      : [];
+    const alternateTitles = rawAlt
+      .map((a) => (typeof a?.title === 'string' ? a.title.trim() : ''))
+      .filter((t) => t.length > 0);
+    const origLangObj = raw.originalLanguage as Record<string, unknown> | undefined;
+    const originalLanguage =
+      typeof origLangObj?.name === 'string'
+        ? origLangObj.name.trim()
+        : typeof raw.originalLanguage === 'string'
+          ? raw.originalLanguage.trim()
+          : null;
+    const genres = Array.isArray(raw.genres)
+      ? (raw.genres as unknown[]).filter((g): g is string => typeof g === 'string')
+      : [];
+
     return {
       id: Number(raw.id),
       tmdbId: Number(raw.tmdbId || fallbackTmdbId || 0),
       title: String(raw.title || ''),
+      originalTitle: typeof raw.originalTitle === 'string' ? raw.originalTitle : String(raw.title || ''),
+      alternateTitles,
+      overview: typeof raw.overview === 'string' ? raw.overview : '',
+      originalLanguage,
+      genres,
       year: typeof raw.year === 'number' ? raw.year : null,
       status: String(raw.status || 'released'),
       monitored: Boolean(raw.monitored),
@@ -92,8 +126,51 @@ export class RadarrConnector {
     };
   }
 
+  public async getCatalogIndex(forceRefresh = false): Promise<{
+    movies: RadarrMovieStatus[];
+    byTmdbId: Map<number, RadarrMovieStatus>;
+    latencyMs: number;
+  }> {
+    const t0 = Date.now();
+    const now = Date.now();
+    if (!forceRefresh && this.catalogCache && this.catalogCache.expiresAt > now) {
+      return {
+        movies: this.catalogCache.movies,
+        byTmdbId: this.catalogCache.byTmdbId,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    const rawItems = await this.getJson<Array<Record<string, unknown>>>('/api/v3/movie', 6000);
+    const items: RadarrMovieStatus[] = [];
+    const byTmdbId = new Map<number, RadarrMovieStatus>();
+    for (const raw of rawItems || []) {
+      const m = this.mapRawMovie(raw);
+      if (m.tmdbId > 0) {
+        items.push(m);
+        byTmdbId.set(m.tmdbId, m);
+      }
+    }
+    this.catalogCache = {
+      expiresAt: now + 10 * 60 * 1000,
+      movies: items,
+      byTmdbId
+    };
+    return {
+      movies: items,
+      byTmdbId,
+      latencyMs: Date.now() - t0
+    };
+  }
+
   public async getMovieByTmdbId(tmdbId: number): Promise<{ movie: RadarrMovieStatus | null; latencyMs: number }> {
     const t0 = Date.now();
+    if (this.catalogCache && this.catalogCache.expiresAt > Date.now()) {
+      const cached = this.catalogCache.byTmdbId.get(tmdbId) || null;
+      if (cached) {
+        return { movie: cached, latencyMs: Date.now() - t0 };
+      }
+    }
     const items = await this.getJson<Array<Record<string, unknown>>>(`/api/v3/movie?tmdbId=${encodeURIComponent(String(tmdbId))}`);
     const raw = items[0];
     if (!raw) {

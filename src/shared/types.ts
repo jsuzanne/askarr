@@ -433,3 +433,42 @@ export interface FeedbackStatsDTO {
   lowRatingCount: number;
   items: ResponseFeedbackDTO[];
 }
+
+export type QaReviewStatus = 'unreviewed' | 'to_fix' | 'validated';
+
+export interface AdminInteractionEntryDTO {
+  messageId: string;
+  conversationId: string;
+  userEmail: string;
+  createdAt: string;
+  userPrompt: string;
+  assistantReply: string;
+  mediaCardsCount: number;
+  mediaCardsSummary: Array<{
+    tmdbId: number;
+    mediaType: string;
+    titleFr: string;
+    year: number | null;
+    plexState: string;
+  }>;
+  autoFlagReason: string | null;
+  reviewStatus: QaReviewStatus;
+  adminNote: string | null;
+  reviewedAt: string | null;
+  feedback: {
+    id: number;
+    rating: number;
+    quickTag: string | null;
+    comment: string | null;
+  } | null;
+}
+
+export interface AdminInteractionsJournalDTO {
+  totalInteractions: number;
+  last7DaysCount: number;
+  flaggedOrToFixCount: number;
+  validatedCount: number;
+  ratedCount: number;
+  averageRating: number;
+  items: AdminInteractionEntryDTO[];
+}

@@ -10,7 +10,11 @@ export interface SonarrSeasonStatus {
 export interface SonarrSeriesStatus {
   id: number;
   tvdbId: number;
+  tmdbId?: number;
   title: string;
+  alternateTitles?: string[];
+  overview?: string;
+  genres?: string[];
   year: number | null;
   status: string;
   monitored: boolean;
@@ -31,6 +35,11 @@ export interface SonarrQueueItem {
 }
 
 export class SonarrConnector {
+  private catalogCache: {
+    expiresAt: number;
+    items: SonarrSeriesStatus[];
+  } | null = null;
+
   constructor(
     private baseUrl: string,
     private apiKey: string,
@@ -44,6 +53,7 @@ export class SonarrConnector {
     if (typeof apiKey === 'string' && apiKey.trim() && !apiKey.includes('••••')) {
       this.apiKey = apiKey.trim();
     }
+    this.catalogCache = null;
   }
 
   private async getJson<T>(pathWithQuery: string, timeoutMs = 4500): Promise<T> {
@@ -81,14 +91,7 @@ export class SonarrConnector {
     }
   }
 
-  public async getSeriesByTvdbId(tvdbId: number): Promise<{ series: SonarrSeriesStatus | null; latencyMs: number }> {
-    const t0 = Date.now();
-    const items = await this.getJson<Array<Record<string, unknown>>>(`/api/v3/series?tvdbId=${encodeURIComponent(String(tvdbId))}`);
-    const raw = items[0];
-    if (!raw) {
-      return { series: null, latencyMs: Date.now() - t0 };
-    }
-
+  private mapRawSeries(raw: Record<string, unknown>, fallbackTvdbId?: number): SonarrSeriesStatus {
     const rawSeasons = (raw.seasons as Array<Record<string, unknown>> | undefined) || [];
     const seasons: SonarrSeasonStatus[] = rawSeasons
       .filter((s) => typeof s.seasonNumber === 'number' && s.seasonNumber > 0)
@@ -104,18 +107,67 @@ export class SonarrConnector {
         };
       });
 
+    const rawAlt = Array.isArray(raw.alternateTitles)
+      ? (raw.alternateTitles as Array<Record<string, unknown>>)
+      : [];
+    const alternateTitles = rawAlt
+      .map((a) => (typeof a?.title === 'string' ? a.title.trim() : ''))
+      .filter((t) => t.length > 0);
+    const genres = Array.isArray(raw.genres)
+      ? (raw.genres as unknown[]).filter((g): g is string => typeof g === 'string')
+      : [];
+
     return {
-      series: {
-        id: Number(raw.id),
-        tvdbId: Number(raw.tvdbId || tvdbId),
-        title: String(raw.title || ''),
-        year: typeof raw.year === 'number' ? raw.year : null,
-        status: String(raw.status || 'continuing'),
-        monitored: Boolean(raw.monitored),
-        added: typeof raw.added === 'string' && raw.added.length >= 10 ? raw.added.slice(0, 10) : null,
-        nextAiring: typeof raw.nextAiring === 'string' ? raw.nextAiring.slice(0, 10) : null,
-        seasons
-      },
+      id: Number(raw.id),
+      tvdbId: Number(raw.tvdbId || fallbackTvdbId || 0),
+      tmdbId: typeof raw.tmdbId === 'number' ? raw.tmdbId : undefined,
+      title: String(raw.title || ''),
+      alternateTitles,
+      overview: typeof raw.overview === 'string' ? raw.overview : '',
+      genres,
+      year: typeof raw.year === 'number' ? raw.year : null,
+      status: String(raw.status || 'continuing'),
+      monitored: Boolean(raw.monitored),
+      added: typeof raw.added === 'string' && raw.added.length >= 10 ? raw.added.slice(0, 10) : null,
+      nextAiring: typeof raw.nextAiring === 'string' ? raw.nextAiring.slice(0, 10) : null,
+      seasons
+    };
+  }
+
+  public async getCatalogIndex(forceRefresh = false): Promise<{
+    series: SonarrSeriesStatus[];
+    latencyMs: number;
+  }> {
+    const t0 = Date.now();
+    const now = Date.now();
+    if (!forceRefresh && this.catalogCache && this.catalogCache.expiresAt > now) {
+      return {
+        series: this.catalogCache.items,
+        latencyMs: Date.now() - t0
+      };
+    }
+    const rawItems = await this.getJson<Array<Record<string, unknown>>>('/api/v3/series', 6000);
+    const items = (rawItems || []).map((r) => this.mapRawSeries(r));
+    this.catalogCache = {
+      expiresAt: now + 10 * 60 * 1000,
+      items
+    };
+    return {
+      series: items,
+      latencyMs: Date.now() - t0
+    };
+  }
+
+  public async getSeriesByTvdbId(tvdbId: number): Promise<{ series: SonarrSeriesStatus | null; latencyMs: number }> {
+    const t0 = Date.now();
+    const items = await this.getJson<Array<Record<string, unknown>>>(`/api/v3/series?tvdbId=${encodeURIComponent(String(tvdbId))}`);
+    const raw = items[0];
+    if (!raw) {
+      return { series: null, latencyMs: Date.now() - t0 };
+    }
+
+    return {
+      series: this.mapRawSeries(raw, tvdbId),
       latencyMs: Date.now() - t0
     };
   }

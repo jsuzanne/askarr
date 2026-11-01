@@ -419,6 +419,11 @@ export class PlexMultiServerConnector {
 
     const candidateRatingKeys = new Set<string>();
     const expectedPlexType = params.mediaType === 'tv' ? 'show' : 'movie';
+    const targetTmdbGuid = `tmdb://${params.tmdbId}`;
+    const targetTvdbGuid = params.tvdbId ? `tvdb://${params.tvdbId}` : null;
+    const targetImdbGuid = params.imdbId ? `imdb://${params.imdbId}` : null;
+    const normTitleFr = params.titleFr.trim().toLowerCase();
+    const normOrig = (params.originalTitle || '').trim().toLowerCase();
 
     const searchResponses = await Promise.all(
       queries.map((q) => {
@@ -427,7 +432,14 @@ export class PlexMultiServerConnector {
           MediaContainer?: {
             Hub?: Array<{
               type?: string;
-              Metadata?: Array<{ ratingKey?: string; type?: string; year?: number }>;
+              Metadata?: Array<{
+                ratingKey?: string;
+                type?: string;
+                title?: string;
+                originalTitle?: string;
+                year?: number;
+                Guid?: Array<{ id?: string }>;
+              }>;
             }>;
           };
         }>(server.baseUrl, path);
@@ -442,6 +454,26 @@ export class PlexMultiServerConnector {
             if (params.year && typeof m.year === 'number' && Math.abs(m.year - params.year) > 2) {
               continue;
             }
+            // Si Plex renvoie directement les GUIDs dans /hubs/search?includeGuids=1,
+            // on pré-filtre immédiatement pour éviter 5 appels HTTP getMetadataByRatingKey inutiles
+            // sur des résultats partiels qui ne sont pas le film cherché (ex: "Le Rêve américain" absent).
+            if (Array.isArray(m.Guid) && m.Guid.length > 0) {
+              const inlineGuids = m.Guid.map((g) => String(g.id || '').toLowerCase());
+              const hasGuidMatch = inlineGuids.some(
+                (g) =>
+                  g === targetTmdbGuid ||
+                  (targetTvdbGuid && g === targetTvdbGuid) ||
+                  (targetImdbGuid && g === targetImdbGuid)
+              );
+              const mTitleNorm = (m.title || '').trim().toLowerCase();
+              const mOrigNorm = (m.originalTitle || '').trim().toLowerCase();
+              const hasExactTitleMatch =
+                (mTitleNorm && (mTitleNorm === normTitleFr || (normOrig && mTitleNorm === normOrig))) ||
+                (mOrigNorm && (mOrigNorm === normTitleFr || (normOrig && mOrigNorm === normOrig)));
+              if (!hasGuidMatch && !hasExactTitleMatch) {
+                continue;
+              }
+            }
             candidateRatingKeys.add(String(m.ratingKey));
           }
         }
@@ -449,9 +481,6 @@ export class PlexMultiServerConnector {
     }
 
     const matched: PlexMetadataDetail[] = [];
-    const targetTmdbGuid = `tmdb://${params.tmdbId}`;
-    const targetTvdbGuid = params.tvdbId ? `tvdb://${params.tvdbId}` : null;
-    const targetImdbGuid = params.imdbId ? `imdb://${params.imdbId}` : null;
 
     const keysToInspect = Array.from(candidateRatingKeys).slice(0, 5);
     const details = await Promise.all(
@@ -465,8 +494,6 @@ export class PlexMultiServerConnector {
         (g) => g === targetTmdbGuid || (targetTvdbGuid && g === targetTvdbGuid) || (targetImdbGuid && g === targetImdbGuid)
       );
 
-      const normTitleFr = params.titleFr.trim().toLowerCase();
-      const normOrig = (params.originalTitle || '').trim().toLowerCase();
       const detailTitleNorm = detail.title.trim().toLowerCase();
       const detailOrigNorm = (detail.originalTitle || '').trim().toLowerCase();
 
@@ -852,9 +879,13 @@ export class PlexMultiServerConnector {
   } | null> {
     const configuredServerNames = this.servers.map((s) => s.name);
     if (params.isAdmin) {
+      const realOwnerUsername =
+        params.overseerrPlexUsername?.trim() ||
+        params.email?.split('@')[0]?.trim() ||
+        'Admin Propriétaire Plex';
       return {
         plexUserId: 1,
-        plexUsername: 'Admin Propriétaire Plex',
+        plexUsername: realOwnerUsername,
         allServerNames: configuredServerNames,
         askarrServerNames: configuredServerNames,
         configuredServerNames

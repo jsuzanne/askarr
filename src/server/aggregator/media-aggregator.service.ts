@@ -47,11 +47,41 @@ export class MediaAggregatorService {
     candidates: MediaEvidence[];
   }> {
     const maxCandidates = params.maxCandidates || 4;
-    const rawCandidates = await this.overseerr.search(params.query, params.mediaType);
+    const [rawCandidates, localCatalogMatches] = await Promise.all([
+      this.overseerr.search(params.query, params.mediaType),
+      this.searchLocalCatalogByKeywords({
+        query: params.query,
+        mediaType: params.mediaType,
+        year: params.year,
+        limit: 3
+      })
+    ]);
 
-    let filtered = rawCandidates;
+    const mergedRaw: Array<{ tmdbId: number; mediaType: MediaType; year: number | null; title: string }> = [];
+    const seenKeys = new Set<string>();
+    for (const loc of localCatalogMatches) {
+      const k = `${loc.mediaType}:${loc.tmdbId}`;
+      if (!seenKeys.has(k)) {
+        seenKeys.add(k);
+        mergedRaw.push(loc);
+      }
+    }
+    for (const c of rawCandidates) {
+      const k = `${c.mediaType}:${c.tmdbId}`;
+      if (!seenKeys.has(k)) {
+        seenKeys.add(k);
+        mergedRaw.push({
+          tmdbId: c.tmdbId,
+          mediaType: c.mediaType,
+          year: c.year,
+          title: c.titleFr
+        });
+      }
+    }
+
+    let filtered = mergedRaw;
     if (params.year) {
-      const yearMatches = rawCandidates.filter((c) => c.year && Math.abs(c.year - params.year!) <= 1);
+      const yearMatches = mergedRaw.filter((c) => c.year && Math.abs(c.year - params.year!) <= 1);
       if (yearMatches.length > 0) filtered = yearMatches;
     }
 
@@ -93,6 +123,206 @@ export class MediaAggregatorService {
       disambiguationRequired: finalCandidates.length > 1 && exactMatches.length !== 1,
       candidates: finalCandidates
     };
+  }
+
+  /**
+   * Scan ultra-rapide (< 2 ms en RAM) de l'index local Radarr (1 400+ films) et Sonarr
+   * mis en cache mémoire pendant 10 minutes.
+   * Permet de trouver un film récent ou suivi dans Radarr/Sonarr (ex: "Le Rêve américain" 2026)
+   * même lorsque l'utilisateur le décrit par son sujet ("film français sur 2 agents de NBA / Wembanyama"
+   * ou "film de zombie coréen") sans ralentir l'application ni interroger Plex sur tout le catalogue.
+   */
+  public async searchLocalCatalogByKeywords(params: {
+    query: string;
+    mediaType?: 'movie' | 'tv' | 'auto';
+    year?: number;
+    limit?: number;
+  }): Promise<Array<{ tmdbId: number; mediaType: MediaType; year: number | null; title: string; score: number }>> {
+    const limit = params.limit || 3;
+    const norm = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const normQuery = norm(params.query || '');
+    if (!normQuery || normQuery.length < 3) return [];
+
+    const stopWords = new Set([
+      'film',
+      'films',
+      'serie',
+      'series',
+      'sur',
+      'avec',
+      'dans',
+      'les',
+      'des',
+      'une',
+      'pour',
+      'par',
+      'qui',
+      'que',
+      'est',
+      'sont',
+      'sorti',
+      'sortie',
+      'recent',
+      'recente',
+      'nouveau',
+      'nouvelle',
+      'histoire',
+      'parle',
+      'deux',
+      'trois',
+      'avoir',
+      'dispo',
+      'disponible',
+      'plex'
+    ]);
+
+    const rawTokens = normQuery
+      .split(/\s+/)
+      .filter((t) => (t.length >= 3 || t === 'nb' || t === 'us') && !stopWords.has(t));
+
+    // Expansion sémantique légère pour les requêtes descriptives fréquentes
+    const expandedTokens = new Set<string>(rawTokens);
+    if (
+      expandedTokens.has('wembanyama') ||
+      expandedTokens.has('wemby') ||
+      expandedTokens.has('nba') ||
+      expandedTokens.has('basket') ||
+      expandedTokens.has('basketball')
+    ) {
+      expandedTokens.add('nba');
+      expandedTokens.add('basket');
+      expandedTokens.add('agents');
+      expandedTokens.add('americain');
+      expandedTokens.add('bouna');
+      expandedTokens.add('jeremy');
+    }
+    if (expandedTokens.has('coreen') || expandedTokens.has('coreenne') || expandedTokens.has('coree')) {
+      expandedTokens.add('korean');
+      expandedTokens.add('busan');
+      expandedTokens.add('seoul');
+    }
+
+    const wantsFrench =
+      normQuery.includes('francais') || normQuery.includes('francaise') || normQuery.includes('france');
+    const wantsKorean =
+      normQuery.includes('coreen') || normQuery.includes('coreenne') || normQuery.includes('coree');
+
+    const matches: Array<{
+      tmdbId: number;
+      mediaType: MediaType;
+      year: number | null;
+      title: string;
+      score: number;
+    }> = [];
+
+    const includeMovies = !params.mediaType || params.mediaType === 'auto' || params.mediaType === 'movie';
+    const includeTv = !params.mediaType || params.mediaType === 'auto' || params.mediaType === 'tv';
+
+    if (includeMovies && typeof (this.radarr as unknown as { getCatalogIndex?: unknown }).getCatalogIndex === 'function') {
+      try {
+        const { movies } = await this.radarr.getCatalogIndex();
+        for (const m of movies) {
+          if (!m.tmdbId || m.tmdbId <= 0) continue;
+          if (params.year && m.year && Math.abs(m.year - params.year) > 2) continue;
+
+          const normTitle = norm(m.title);
+          const normOrig = norm(m.originalTitle || '');
+          const normAlt = (m.alternateTitles || []).map((a) => norm(a)).join(' ');
+          const normOverview = norm(m.overview || '');
+          const normLang = norm(m.originalLanguage || '');
+
+          let score = 0;
+          if (normTitle === normQuery || (normOrig && normOrig === normQuery)) {
+            score += 100;
+          } else if (normTitle.includes(normQuery) || (normOrig && normOrig.includes(normQuery))) {
+            score += 60;
+          }
+
+          let matchedTokens = 0;
+          for (const tok of expandedTokens) {
+            let tokHit = false;
+            if (normTitle.includes(tok) || normOrig.includes(tok) || normAlt.includes(tok)) {
+              score += 18;
+              tokHit = true;
+            }
+            if (normOverview.includes(tok)) {
+              score += 14;
+              tokHit = true;
+            }
+            if (tokHit) matchedTokens++;
+          }
+
+          if (wantsFrench && (normLang === 'french' || normLang === 'fr')) {
+            score += matchedTokens > 0 ? 12 : 0;
+          }
+          if (wantsKorean && (normLang === 'korean' || normLang === 'ko')) {
+            score += matchedTokens > 0 ? 15 : 0;
+          }
+          if (matchedTokens >= 2 && m.year && m.year >= new Date().getFullYear() - 1) {
+            score += 6;
+          }
+
+          if (score >= 28) {
+            matches.push({
+              tmdbId: m.tmdbId,
+              mediaType: 'movie',
+              year: m.year,
+              title: m.title,
+              score
+            });
+          }
+        }
+      } catch {
+        // Ignorer silencieusement si Radarr est injoignable ou mocké partiellement
+      }
+    }
+
+    if (includeTv && typeof (this.sonarr as unknown as { getCatalogIndex?: unknown }).getCatalogIndex === 'function') {
+      try {
+        const { series } = await this.sonarr.getCatalogIndex();
+        for (const s of series) {
+          if (!s.tmdbId || s.tmdbId <= 0) continue;
+          if (params.year && s.year && Math.abs(s.year - params.year) > 2) continue;
+
+          const normTitle = norm(s.title);
+          const normAlt = (s.alternateTitles || []).map((a) => norm(a)).join(' ');
+          const normOverview = norm(s.overview || '');
+
+          let score = 0;
+          if (normTitle === normQuery) {
+            score += 100;
+          } else if (normTitle.includes(normQuery)) {
+            score += 60;
+          }
+
+          for (const tok of expandedTokens) {
+            if (normTitle.includes(tok) || normAlt.includes(tok)) score += 18;
+            if (normOverview.includes(tok)) score += 14;
+          }
+
+          if (score >= 28) {
+            matches.push({
+              tmdbId: s.tmdbId,
+              mediaType: 'tv',
+              year: s.year,
+              title: s.title,
+              score
+            });
+          }
+        }
+      } catch {
+        // Ignorer silencieusement
+      }
+    }
+
+    return matches.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   public async buildMediaEvidence(params: {

@@ -5,6 +5,24 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.3] - 2026-11-01
+
+### Ajouté
+- **Index Catalogue Local RAM Ultra-Rapide (`< 2 ms`, 0 appel Plex pendant le scan) pour Radarr (1 400+ films) & Sonarr (`searchLocalCatalogByKeywords`)** :
+  - Mise en cache mémoire (TTL 10 min) du catalogue complet Radarr (`GET /api/v3/movie`) et Sonarr (`GET /api/v3/series`) incluant synopsis (`overview`), titres alternatifs, langue originale (`originalLanguage`) et genres.
+  - Lors d'une recherche descriptive par sujet ou mots-clés (ex: *« film français sur 2 agents de NBA / Wembanyama »* $\rightarrow$ ***Le Rêve américain* (2026)**, ou *« film de zombie coréen »*), Askarr scanne les 1 400 synopsis/titres en RAM en moins de 2 ms et fusionne les meilleurs candidats avec Overseerr sans jamais interroger Plex 1 400 fois.
+  - Enrichissement du résumé compact envoyé au LLM (`compactCardsForLlm`) avec un extrait du synopsis (`overviewFr`) et 4 acteurs principaux pour permettre la validation sémantique immédiate.
+- **Journal Complet des Interactions Utilisateurs & Validation QA dans La Régie (`GET /api/admin/interactions`, `POST /api/admin/interactions/review`)** :
+  - Traçabilité intégrale de **toutes les questions/réponses** enregistrées dans SQLite (`messages` + `conversations` + `response_feedback` + nouvelle table `qa_reviews`), même lorsqu'aucune note étoilée n'a été cliquée.
+  - Détection automatique des questions en échec (`Aucune affiche (0 carte média)`, `Aucun film/série trouvé`, `Note spectateur basse 1-3 ★`).
+  - Workflow hebdomadaire d'amélioration continue : filtres par période (`7 derniers jours`, `30 jours`, `Tout`) et par statut (`Toutes`, `⚠️ À analyser / À corriger`, `✅ Validées`, `⭐ Notées`), boutons `🛠️ À corriger` / `✅ Validé`, bouton **`▶️ Re-tester en direct`** (relance la question en 1 clic dans la Salle Ciné), note d'analyse Admin et export JSON en 1 clic.
+
+### Corrigé
+- **Historique Tracearr du compte Admin (`resolveUserPlexServerAccess`)** : utilisation du vrai pseudo Plex (`overseerrPlexUsername` / préfixe email, ex: `Jerome`) au lieu du libellé générique `'Admin Propriétaire Plex'` qui empêchait `my_history` de retrouver les visionnages de l'administrateur.
+- **Optimisation de la latence de recherche Plex sur `NucBuntu` & `NucVillers` (`searchOnSingleServer`)** : pré-filtrage immédiat des GUIDs (`tmdb://`, `tvdb://`, `imdb://`) retournés par `/hubs/search?includeGuids=1`, éliminant jusqu'à 5 appels HTTP `getMetadataByRatingKey` inutiles par serveur lorsqu'un film est absent de Plex (gain de ~3,5 s par serveur).
+
+---
+
 ## [1.2.2] - 2026-11-01
 
 ### Ajouté

@@ -3,12 +3,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  AdminInteractionEntryDTO,
+  AdminInteractionsJournalDTO,
   ChatMessageDTO,
   FeedbackStatsDTO,
   LlmModelBenchmarkDTO,
   LlmUsageCallEntryDTO,
   MediaEvidence,
   ProvenanceEntry,
+  QaReviewStatus,
   ResponseFeedbackDTO,
   UserRole
 } from '../../shared/types.js';
@@ -167,6 +170,13 @@ export class AskarrDatabase {
         user_prompt TEXT NOT NULL,
         assistant_reply TEXT NOT NULL,
         media_cards_summary_json TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS qa_reviews (
+        message_id TEXT PRIMARY KEY,
+        review_status TEXT NOT NULL,
+        admin_note TEXT,
+        updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS app_settings (
@@ -1005,6 +1015,207 @@ export class AskarrDatabase {
   public deleteFeedback(id: number): boolean {
     const res = this.db.prepare('DELETE FROM response_feedback WHERE id = ?').run(id);
     return Number(res.changes) > 0;
+  }
+
+  public upsertInteractionReview(params: {
+    messageId: string;
+    reviewStatus: QaReviewStatus;
+    adminNote?: string | null;
+  }): { messageId: string; reviewStatus: QaReviewStatus; adminNote: string | null; updatedAt: string } {
+    const updatedAt = new Date().toISOString();
+    const note = params.adminNote !== undefined ? (params.adminNote?.trim() || null) : null;
+    if (params.adminNote !== undefined) {
+      this.db
+        .prepare(
+          `INSERT INTO qa_reviews (message_id, review_status, admin_note, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(message_id) DO UPDATE SET
+             review_status = excluded.review_status,
+             admin_note = excluded.admin_note,
+             updated_at = excluded.updated_at`
+        )
+        .run(params.messageId, params.reviewStatus, note, updatedAt);
+    } else {
+      this.db
+        .prepare(
+          `INSERT INTO qa_reviews (message_id, review_status, admin_note, updated_at)
+           VALUES (?, ?, NULL, ?)
+           ON CONFLICT(message_id) DO UPDATE SET
+             review_status = excluded.review_status,
+             updated_at = excluded.updated_at`
+        )
+        .run(params.messageId, params.reviewStatus, updatedAt);
+    }
+
+    const row = this.db
+      .prepare('SELECT admin_note FROM qa_reviews WHERE message_id = ?')
+      .get(params.messageId) as { admin_note: string | null } | undefined;
+
+    return {
+      messageId: params.messageId,
+      reviewStatus: params.reviewStatus,
+      adminNote: row?.admin_note || null,
+      updatedAt
+    };
+  }
+
+  public getInteractionsJournal(params?: {
+    daysBack?: number;
+    limit?: number;
+  }): AdminInteractionsJournalDTO {
+    const limit = params?.limit || 120;
+    const daysBack = params?.daysBack && params.daysBack > 0 ? params.daysBack : 0;
+    const cutoffIso =
+      daysBack > 0
+        ? new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString()
+        : '1970-01-01T00:00:00.000Z';
+    const sevenDaysIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+           m_ass.id AS message_id,
+           m_ass.conversation_id AS conversation_id,
+           c.user_email AS user_email,
+           m_ass.created_at AS created_at,
+           m_ass.content AS assistant_reply,
+           m_ass.media_cards_json AS media_cards_json,
+           (
+             SELECT m_usr.content
+             FROM messages m_usr
+             WHERE m_usr.conversation_id = m_ass.conversation_id
+               AND m_usr.role = 'user'
+               AND m_usr.rowid < m_ass.rowid
+             ORDER BY m_usr.rowid DESC
+             LIMIT 1
+           ) AS user_prompt,
+           rf.id AS fb_id,
+           rf.rating AS fb_rating,
+           rf.quick_tag AS fb_quick_tag,
+           rf.comment AS fb_comment,
+           qr.review_status AS qr_status,
+           qr.admin_note AS qr_note,
+           qr.updated_at AS qr_updated_at
+         FROM messages m_ass
+         JOIN conversations c ON c.id = m_ass.conversation_id
+         LEFT JOIN response_feedback rf ON rf.message_id = m_ass.id
+         LEFT JOIN qa_reviews qr ON qr.message_id = m_ass.id
+         WHERE m_ass.role = 'assistant'
+           AND m_ass.created_at >= ?
+         ORDER BY m_ass.rowid DESC
+         LIMIT ?`
+      )
+      .all(cutoffIso, limit) as Array<{
+      message_id: string;
+      conversation_id: string;
+      user_email: string;
+      created_at: string;
+      assistant_reply: string;
+      media_cards_json: string | null;
+      user_prompt: string | null;
+      fb_id: number | null;
+      fb_rating: number | null;
+      fb_quick_tag: string | null;
+      fb_comment: string | null;
+      qr_status: string | null;
+      qr_note: string | null;
+      qr_updated_at: string | null;
+    }>;
+
+    let last7DaysCount = 0;
+    let flaggedOrToFixCount = 0;
+    let validatedCount = 0;
+    let ratedCount = 0;
+    let ratingSum = 0;
+
+    const items: AdminInteractionEntryDTO[] = rows.map((r) => {
+      if (r.created_at >= sevenDaysIso) {
+        last7DaysCount++;
+      }
+
+      let mediaCardsSummary: AdminInteractionEntryDTO['mediaCardsSummary'] = [];
+      try {
+        const rawCards = r.media_cards_json ? (JSON.parse(r.media_cards_json) as MediaEvidence[]) : [];
+        if (Array.isArray(rawCards)) {
+          mediaCardsSummary = rawCards.map((c) => ({
+            tmdbId: c?.identity?.tmdbId || 0,
+            mediaType: c?.identity?.mediaType || 'movie',
+            titleFr: c?.identity?.titleFr || 'Inconnu',
+            year: c?.identity?.year ?? null,
+            plexState: c?.catalogPresence?.state || 'not_in_plex'
+          }));
+        }
+      } catch {
+        mediaCardsSummary = [];
+      }
+
+      const replyLower = (r.assistant_reply || '').toLowerCase();
+      let autoFlagReason: string | null = null;
+      if (typeof r.fb_rating === 'number' && r.fb_rating <= 3) {
+        autoFlagReason = `Note spectateur basse (${r.fb_rating}/5 ★)`;
+      } else if (
+        replyLower.includes("je n'ai trouvé aucun") ||
+        replyLower.includes("ne figure pas dans") ||
+        replyLower.includes("aucun résultat") ||
+        replyLower.includes("n'ai pas trouvé")
+      ) {
+        autoFlagReason = 'Aucun film/série trouvé dans la réponse';
+      } else if (mediaCardsSummary.length === 0) {
+        autoFlagReason = 'Aucune affiche (0 carte média)';
+      }
+
+      let reviewStatus: QaReviewStatus = 'unreviewed';
+      if (r.qr_status === 'validated' || r.qr_status === 'to_fix' || r.qr_status === 'unreviewed') {
+        reviewStatus = r.qr_status;
+      } else if (autoFlagReason) {
+        reviewStatus = 'to_fix';
+      }
+
+      if (reviewStatus === 'validated') {
+        validatedCount++;
+      } else if (reviewStatus === 'to_fix' || autoFlagReason) {
+        flaggedOrToFixCount++;
+      }
+
+      if (typeof r.fb_rating === 'number') {
+        ratedCount++;
+        ratingSum += r.fb_rating;
+      }
+
+      return {
+        messageId: r.message_id,
+        conversationId: r.conversation_id,
+        userEmail: r.user_email,
+        createdAt: r.created_at,
+        userPrompt: r.user_prompt || '(Question initiale)',
+        assistantReply: r.assistant_reply,
+        mediaCardsCount: mediaCardsSummary.length,
+        mediaCardsSummary,
+        autoFlagReason,
+        reviewStatus,
+        adminNote: r.qr_note || null,
+        reviewedAt: r.qr_updated_at || null,
+        feedback:
+          typeof r.fb_id === 'number' && typeof r.fb_rating === 'number'
+            ? {
+                id: r.fb_id,
+                rating: r.fb_rating,
+                quickTag: r.fb_quick_tag || null,
+                comment: r.fb_comment || null
+              }
+            : null
+      };
+    });
+
+    return {
+      totalInteractions: items.length,
+      last7DaysCount,
+      flaggedOrToFixCount,
+      validatedCount,
+      ratedCount,
+      averageRating: ratedCount > 0 ? Math.round((ratingSum / ratedCount) * 100) / 100 : 0,
+      items
+    };
   }
 
   public close(): void {

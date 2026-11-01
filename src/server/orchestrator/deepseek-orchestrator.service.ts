@@ -1269,7 +1269,10 @@ export class DeepSeekOrchestratorService {
         year: c.identity.year,
         genres: c.identity.genres.slice(0, 3),
         directorOrCreator: c.identity.directorOrCreator || undefined,
-        topCast: c.identity.topCast.slice(0, 3),
+        topCast: c.identity.topCast.slice(0, 4),
+        overviewFr: c.identity.overviewFr
+          ? c.identity.overviewFr.slice(0, 200)
+          : undefined,
         ratingSur10:
           c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage ?? undefined,
         plexState: c.catalogPresence.state,

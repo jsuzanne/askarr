@@ -1770,6 +1770,32 @@ export async function createApp(deps: AppDependencies): Promise<{
     return db.getFeedbackStats(100);
   });
 
+  app.get('/api/admin/interactions', async (req, reply: FastifyReply) => {
+    const { principal } = await resolveUserSession(req);
+    if (!requireAdmin(principal, reply)) return;
+    const q = (req.query || {}) as { daysBack?: string; limit?: string };
+    const daysBack = q.daysBack ? Number(q.daysBack) : 0;
+    const limit = q.limit ? Math.min(300, Math.max(10, Number(q.limit))) : 150;
+    return db.getInteractionsJournal({ daysBack, limit });
+  });
+
+  const reviewInteractionBodySchema = z.object({
+    messageId: z.string().min(1),
+    reviewStatus: z.enum(['unreviewed', 'to_fix', 'validated']),
+    adminNote: z.string().max(600).nullable().optional()
+  });
+
+  app.post('/api/admin/interactions/review', async (req, reply: FastifyReply) => {
+    const { principal } = await resolveUserSession(req);
+    if (!requireAdmin(principal, reply)) return;
+    const body = reviewInteractionBodySchema.parse(req.body);
+    return db.upsertInteractionReview({
+      messageId: body.messageId,
+      reviewStatus: body.reviewStatus,
+      adminNote: body.adminNote
+    });
+  });
+
   const deleteFeedbackParamsSchema = z.object({
     id: z.coerce.number().int().positive()
   });

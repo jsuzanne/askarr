@@ -36,6 +36,8 @@ import {
   VolumeX
 } from 'lucide-react';
 import type {
+  AdminInteractionEntryDTO,
+  AdminInteractionsJournalDTO,
   AdminSettingsDTO,
   ApiTraceEntryDTO,
   DeepSeekBalanceDTO,
@@ -48,6 +50,7 @@ import type {
   PlexSharedUserDTO,
   PreparedActionDTO,
   ProvenanceEntry,
+  QaReviewStatus,
   SmtpSettingsDTO,
   UserSessionInfo
 } from '../shared/types.js';
@@ -238,6 +241,10 @@ export function App() {
   const [adminSettings, setAdminSettings] = useState<AdminSettingsDTO | null>(null);
   const [apiTraces, setApiTraces] = useState<ApiTraceEntryDTO[]>([]);
   const [feedbackStats, setFeedbackStats] = useState<FeedbackStatsDTO | null>(null);
+  const [interactionsJournal, setInteractionsJournal] = useState<AdminInteractionsJournalDTO | null>(null);
+  const [journalDaysBack, setJournalDaysBack] = useState<number>(7);
+  const [journalFilter, setJournalFilter] = useState<'all' | 'to_fix' | 'validated' | 'rated'>('all');
+  const [adminNoteDrafts, setAdminNoteDrafts] = useState<Record<string, string>>({});
   const [copiedFeedbackJson, setCopiedFeedbackJson] = useState(false);
 
   // Per-message user rating state
@@ -876,16 +883,85 @@ export function App() {
     }
   }
 
-  async function fetchFeedbackStats() {
+  async function fetchFeedbackStats(daysOverride?: number) {
+    const days = daysOverride !== undefined ? daysOverride : journalDaysBack;
     try {
-      const res = await fetch('/api/admin/feedback');
-      if (res.ok) {
-        const data: FeedbackStatsDTO = await res.json();
+      const [fbRes, intRes] = await Promise.all([
+        fetch('/api/admin/feedback'),
+        fetch(`/api/admin/interactions?daysBack=${encodeURIComponent(String(days))}&limit=150`)
+      ]);
+      if (fbRes.ok) {
+        const data: FeedbackStatsDTO = await fbRes.json();
         setFeedbackStats(data);
       }
+      if (intRes.ok) {
+        const jData: AdminInteractionsJournalDTO = await intRes.json();
+        setInteractionsJournal(jData);
+      }
     } catch (err) {
-      console.error('Failed to load feedback stats:', err);
+      console.error('Failed to load feedback/interactions journal:', err);
     }
+  }
+
+  async function handleReviewInteraction(
+    messageId: string,
+    reviewStatus: QaReviewStatus,
+    adminNote?: string | null
+  ) {
+    try {
+      const res = await fetch('/api/admin/interactions/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messageId,
+          reviewStatus,
+          adminNote
+        })
+      });
+      if (res.ok) {
+        void fetchFeedbackStats();
+      }
+    } catch (err) {
+      console.error('Failed to update QA review:', err);
+    }
+  }
+
+  async function handleAdminRateInteraction(item: AdminInteractionEntryDTO, rating: number) {
+    try {
+      const res = await fetch('/api/chat/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: item.conversationId,
+          messageId: item.messageId,
+          userPrompt: item.userPrompt,
+          assistantReply: item.assistantReply,
+          rating,
+          quickTag: rating <= 3 ? 'À corriger' : 'Validé Admin',
+          mediaCardsSummary: item.mediaCardsSummary
+        })
+      });
+      if (res.ok) {
+        if (rating <= 3 && item.reviewStatus !== 'to_fix') {
+          await handleReviewInteraction(item.messageId, 'to_fix');
+        } else if (rating >= 4 && item.reviewStatus === 'to_fix') {
+          await handleReviewInteraction(item.messageId, 'validated');
+        } else {
+          void fetchFeedbackStats();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to rate interaction from admin:', err);
+    }
+  }
+
+  function handleRetestPromptInChat(promptText: string) {
+    if (!promptText || promptText === '(Question initiale)') return;
+    setWorkspaceMode('user');
+    setUserTab('chat');
+    setTimeout(() => {
+      void sendMessage(promptText);
+    }, 80);
   }
 
   async function handleDeleteFeedback(id: number) {
@@ -898,16 +974,29 @@ export function App() {
   }
 
   async function handleCopyFeedbackJson() {
-    if (!feedbackStats) return;
     try {
-      const exportPayload = feedbackStats.items.map((item) => ({
-        rating: item.rating,
-        quickTag: item.quickTag,
+      const sourceItems = interactionsJournal?.items || [];
+      const filteredForExport = sourceItems.filter((item) => {
+        if (journalFilter === 'to_fix') {
+          return item.reviewStatus === 'to_fix' || (Boolean(item.autoFlagReason) && item.reviewStatus !== 'validated');
+        }
+        if (journalFilter === 'validated') return item.reviewStatus === 'validated';
+        if (journalFilter === 'rated') return Boolean(item.feedback);
+        return true;
+      });
+      const exportPayload = filteredForExport.map((item) => ({
+        createdAt: item.createdAt,
+        userEmail: item.userEmail,
+        reviewStatus: item.reviewStatus,
+        autoFlagReason: item.autoFlagReason,
+        adminNote: item.adminNote,
+        rating: item.feedback?.rating ?? null,
+        quickTag: item.feedback?.quickTag ?? null,
+        userComment: item.feedback?.comment ?? null,
         userPrompt: item.userPrompt,
-        comment: item.comment,
-        assistantReplyExcerpt: item.assistantReply.slice(0, 280),
-        mediaCardsSummary: item.mediaCardsSummary,
-        createdAt: item.createdAt
+        assistantReplyExcerpt: item.assistantReply.slice(0, 350),
+        mediaCardsCount: item.mediaCardsCount,
+        mediaCardsSummary: item.mediaCardsSummary
       }));
       await navigator.clipboard.writeText(JSON.stringify(exportPayload, null, 2));
       setCopiedFeedbackJson(true);
@@ -1540,8 +1629,19 @@ export function App() {
                   }`}
                 >
                   <Star className="w-4 h-4 shrink-0" />
-                  <span>Notes Spectateurs</span>
-                  {feedbackStats && feedbackStats.totalCount > 0 && (
+                  <span>Journal Q&amp;A &amp; Notes</span>
+                  {interactionsJournal && interactionsJournal.flaggedOrToFixCount > 0 ? (
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono ${
+                        adminTab === 'feedback'
+                          ? 'bg-black/30 text-amber-100'
+                          : 'bg-rose-500/25 text-rose-300'
+                      }`}
+                      title="Interactions à analyser ou à corriger"
+                    >
+                      {interactionsJournal.flaggedOrToFixCount} à voir
+                    </span>
+                  ) : feedbackStats && feedbackStats.totalCount > 0 ? (
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[11px] font-mono ${
                         adminTab === 'feedback'
@@ -1551,7 +1651,7 @@ export function App() {
                     >
                       {feedbackStats.totalCount}
                     </span>
-                  )}
+                  ) : null}
                 </button>
 
                 <button
@@ -2172,7 +2272,7 @@ export function App() {
         )}
 
         {/* ========================================================= */}
-        {/* CONSOLE ADMIN : 1B. AVIS & NOTES IA (FEEDBACK SQLITE)     */}
+        {/* CONSOLE ADMIN : 1B. JOURNAL INTERACTIONS Q&A & VALIDATION */}
         {/* ========================================================= */}
         {workspaceMode === 'admin' && adminTab === 'feedback' && (
           <div className="space-y-5">
@@ -2181,14 +2281,14 @@ export function App() {
                 <div>
                   <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
                     <Star className="w-5 h-5 text-amber-400 fill-amber-400" />
-                    <span>Critiques & Notes Spectateurs sur les Réponses IA</span>
+                    <span>Journal Complet des Interactions Utilisateurs &amp; Validation QA</span>
                   </h2>
                   <p className="text-xs sm:text-sm text-stone-400 mt-1">
-                    Consulte toutes les notes (`1 à 5 ★`), tags de problème et commentaires laissés sur les réponses d’Askarr. Stocké dans SQLite (`response_feedback`) pour affiner le prompt et le code.
+                    Traçabilité intégrale de toutes les questions posées par les utilisateurs, détection automatique des réponses sans affiche ou mal notées, suivi de résolution (`À corriger` → `Validé ✅`) et re-test en 1 clic.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void handleCopyFeedbackJson()}
@@ -2202,7 +2302,7 @@ export function App() {
                     ) : (
                       <>
                         <Copy className="w-4 h-4" />
-                        <span>Copier JSON pour amélioration code</span>
+                        <span>Exporter JSON (Analyse &amp; Correctifs IA)</span>
                       </>
                     )}
                   </button>
@@ -2218,112 +2318,352 @@ export function App() {
                 </div>
               </div>
 
-              {!feedbackStats ? (
-                <p className="text-sm text-stone-400">Chargement des critiques utilisateurs...</p>
+              {!interactionsJournal ? (
+                <p className="text-sm text-stone-400">Chargement du journal des interactions...</p>
               ) : (
                 <div className="space-y-5">
                   {/* KPI Summary Cards */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 text-xs sm:text-sm">
                     <div className="p-4 rounded-xl bg-black/75 border border-stone-800">
-                      <div className="text-stone-400">Note Moyenne Globale</div>
-                      <div className="text-2xl font-bold text-amber-400 mt-1 flex items-center gap-1.5">
-                        <span>{feedbackStats.averageRating > 0 ? `${feedbackStats.averageRating} / 5` : '—'}</span>
-                        <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+                      <div className="text-stone-400">Questions posées (Période)</div>
+                      <div className="text-2xl font-bold text-white mt-1 flex items-baseline gap-2">
+                        <span>{interactionsJournal.totalInteractions}</span>
+                        <span className="text-xs font-normal text-stone-400">
+                          ({interactionsJournal.last7DaysCount} sur 7j)
+                        </span>
                       </div>
                     </div>
                     <div className="p-4 rounded-xl bg-black/75 border border-stone-800">
-                      <div className="text-stone-400">Total Séances Notées</div>
-                      <div className="text-2xl font-bold text-white mt-1">
-                        {feedbackStats.totalCount}
-                      </div>
-                    </div>
-                    <div className="p-4 rounded-xl bg-black/75 border border-stone-800">
-                      <div className="text-stone-400">Séances Excellentes (4-5 ★)</div>
-                      <div className="text-2xl font-bold text-emerald-400 mt-1">
-                        {Math.max(0, feedbackStats.totalCount - feedbackStats.lowRatingCount)}
-                      </div>
-                    </div>
-                    <div className="p-4 rounded-xl bg-black/75 border border-stone-800">
-                      <div className="text-stone-400">À retravailler (1-3 ★)</div>
+                      <div className="text-stone-400">À analyser / À corriger</div>
                       <div className="text-2xl font-bold text-rose-400 mt-1">
-                        {feedbackStats.lowRatingCount}
+                        {interactionsJournal.flaggedOrToFixCount}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-black/75 border border-stone-800">
+                      <div className="text-stone-400">Validées / Résolues ✅</div>
+                      <div className="text-2xl font-bold text-emerald-400 mt-1">
+                        {interactionsJournal.validatedCount}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-black/75 border border-stone-800">
+                      <div className="text-stone-400">Note Spectateurs ({interactionsJournal.ratedCount} avis)</div>
+                      <div className="text-2xl font-bold text-amber-400 mt-1 flex items-center gap-1.5">
+                        <span>
+                          {interactionsJournal.averageRating > 0
+                            ? `${interactionsJournal.averageRating} / 5`
+                            : '—'}
+                        </span>
+                        <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
                       </div>
                     </div>
                   </div>
 
-                  {feedbackStats.items.length === 0 ? (
-                    <div className="p-8 text-center rounded-xl bg-black/60 border border-stone-800 text-sm text-stone-400">
-                      Aucune note enregistrée pour l’instant. Clique sur les étoiles ★ sous une réponse dans la Salle Ciné pour noter une interaction !
-                    </div>
-                  ) : (
-                    <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-                      {feedbackStats.items.map((item) => (
-                        <div
-                          key={item.id}
-                          className="p-4 rounded-xl bg-black/75 border border-stone-800 space-y-2.5 text-xs sm:text-sm"
+                  {/* Barre de filtres : Période (Semaine / Mois / Tout) + Statut de revue */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black/60 border border-stone-800/90">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(
+                        [
+                          { id: 'all', label: `Toutes (${interactionsJournal.items.length})` },
+                          {
+                            id: 'to_fix',
+                            label: `⚠️ À analyser / À corriger (${interactionsJournal.flaggedOrToFixCount})`
+                          },
+                          {
+                            id: 'validated',
+                            label: `✅ Validées (${interactionsJournal.validatedCount})`
+                          },
+                          {
+                            id: 'rated',
+                            label: `⭐ Notées (${interactionsJournal.ratedCount})`
+                          }
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setJournalFilter(tab.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                            journalFilter === tab.id
+                              ? 'bg-amber-600 text-white shadow-sm'
+                              : 'bg-stone-900 text-stone-300 hover:text-white border border-stone-800'
+                          }`}
                         >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 ${
-                                  item.rating >= 4
-                                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                                    : item.rating === 3
-                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                      : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
-                                }`}
-                              >
-                                <span>{item.rating} / 5 ★</span>
-                              </span>
-                              {item.quickTag && (
-                                <span className="px-2.5 py-0.5 rounded-lg bg-red-900/40 text-amber-200 border border-amber-500/40 font-medium">
-                                  {item.quickTag}
-                                </span>
-                              )}
-                              <span className="text-stone-400">
-                                par <span className="text-stone-200 font-mono">{item.userEmail}</span>
-                              </span>
-                              <span className="text-stone-500">
-                                • {item.mediaCardsSummary.length} affiche(s) • {new Date(item.createdAt).toLocaleString('fr-FR')}
-                              </span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteFeedback(item.id)}
-                              className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
-                              title="Supprimer cet avis"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-
-                          {item.userPrompt && (
-                            <div className="p-3 rounded-lg bg-stone-900 border border-stone-800">
-                              <span className="text-amber-300 font-semibold">Question posée : </span>
-                              <span className="text-white">{item.userPrompt}</span>
-                            </div>
-                          )}
-
-                          {item.comment && (
-                            <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-200">
-                              <span className="font-semibold">Commentaire utilisateur : </span>
-                              <span>{item.comment}</span>
-                            </div>
-                          )}
-
-                          <details className="text-stone-400">
-                            <summary className="cursor-pointer hover:text-stone-200 font-medium">
-                              Voir la réponse de l’assistant
-                            </summary>
-                            <div className="mt-2 p-3 rounded-lg bg-stone-900/70 border border-stone-800 whitespace-pre-line text-stone-200">
-                              {item.assistantReply}
-                            </div>
-                          </details>
-                        </div>
+                          {tab.label}
+                        </button>
                       ))}
                     </div>
-                  )}
+
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-stone-400 mr-1">Période :</span>
+                      {(
+                        [
+                          { days: 7, label: '7 derniers jours (Semaine)' },
+                          { days: 30, label: '30 jours' },
+                          { days: 0, label: 'Tout' }
+                        ] as const
+                      ).map((p) => (
+                        <button
+                          key={p.days}
+                          type="button"
+                          onClick={() => {
+                            setJournalDaysBack(p.days);
+                            void fetchFeedbackStats(p.days);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg font-medium cursor-pointer ${
+                            journalDaysBack === p.days
+                              ? 'bg-stone-700 text-amber-300 border border-amber-500/40'
+                              : 'bg-stone-900/80 text-stone-400 hover:text-stone-200 border border-stone-800'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const visibleItems = interactionsJournal.items.filter((item) => {
+                      if (journalFilter === 'to_fix') {
+                        return (
+                          item.reviewStatus === 'to_fix' ||
+                          (Boolean(item.autoFlagReason) && item.reviewStatus !== 'validated')
+                        );
+                      }
+                      if (journalFilter === 'validated') return item.reviewStatus === 'validated';
+                      if (journalFilter === 'rated') return Boolean(item.feedback);
+                      return true;
+                    });
+
+                    if (visibleItems.length === 0) {
+                      return (
+                        <div className="p-8 text-center rounded-xl bg-black/60 border border-stone-800 text-sm text-stone-400">
+                          Aucune interaction ne correspond à ce filtre sur la période sélectionnée.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3.5 max-h-[68vh] overflow-y-auto pr-1">
+                        {visibleItems.map((item) => {
+                          const isValidated = item.reviewStatus === 'validated';
+                          const isToFix =
+                            item.reviewStatus === 'to_fix' ||
+                            (Boolean(item.autoFlagReason) && !isValidated);
+                          const draftNote =
+                            adminNoteDrafts[item.messageId] !== undefined
+                              ? adminNoteDrafts[item.messageId]
+                              : item.adminNote || '';
+
+                          return (
+                            <div
+                              key={item.messageId}
+                              className={`p-4 rounded-xl bg-black/80 border space-y-3 text-xs sm:text-sm transition-colors ${
+                                isValidated
+                                  ? 'border-emerald-500/35'
+                                  : isToFix
+                                    ? 'border-rose-500/40'
+                                    : 'border-stone-800'
+                              }`}
+                            >
+                              {/* Ligne 1 : Badges de statut QA, Note, Utilisateur, Date & Actions rapides */}
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {isValidated ? (
+                                    <span className="px-2.5 py-0.5 rounded-full font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>Validé / Résolu</span>
+                                    </span>
+                                  ) : isToFix ? (
+                                    <span className="px-2.5 py-0.5 rounded-full font-bold bg-rose-500/15 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                                      <XCircle className="w-3.5 h-3.5" />
+                                      <span>{item.autoFlagReason || 'À corriger'}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="px-2.5 py-0.5 rounded-full font-medium bg-stone-800 text-stone-300 border border-stone-700">
+                                      OK ({item.mediaCardsCount} affiche{item.mediaCardsCount > 1 ? 's' : ''})
+                                    </span>
+                                  )}
+
+                                  {item.feedback && (
+                                    <span
+                                      className={`px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 ${
+                                        item.feedback.rating >= 4
+                                          ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                          : item.feedback.rating === 3
+                                            ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                            : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                                      }`}
+                                    >
+                                      <span>{item.feedback.rating} / 5 ★</span>
+                                    </span>
+                                  )}
+
+                                  {item.feedback?.quickTag && (
+                                    <span className="px-2 py-0.5 rounded-lg bg-amber-900/30 text-amber-200 border border-amber-500/30 font-medium">
+                                      {item.feedback.quickTag}
+                                    </span>
+                                  )}
+
+                                  <span className="text-stone-400">
+                                    par <span className="text-stone-200 font-mono">{item.userEmail}</span>
+                                  </span>
+                                  <span className="text-stone-500">
+                                    • {new Date(item.createdAt).toLocaleString('fr-FR')}
+                                  </span>
+                                </div>
+
+                                {/* Boutons d'action QA : Re-tester, Marquer À corriger, Valider */}
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {/* Notation rapide 1-5 ★ directe depuis La Régie */}
+                                  <div
+                                    className="flex items-center gap-0.5 bg-stone-900/90 border border-stone-800 px-2 py-1 rounded-lg mr-1"
+                                    title="Noter cette réponse directement depuis La Régie"
+                                  >
+                                    {[1, 2, 3, 4, 5].map((star) => (
+                                      <button
+                                        key={star}
+                                        type="button"
+                                        onClick={() => void handleAdminRateInteraction(item, star)}
+                                        className="p-0.5 cursor-pointer hover:scale-110 transition-transform"
+                                      >
+                                        <Star
+                                          className={`w-3.5 h-3.5 ${
+                                            (item.feedback?.rating || 0) >= star
+                                              ? 'fill-amber-400 text-amber-400'
+                                              : 'text-stone-600 hover:text-amber-300'
+                                          }`}
+                                        />
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRetestPromptInChat(item.userPrompt)}
+                                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                                    title="Relancer exactement cette question en direct dans la Salle Ciné pour vérifier le résultat"
+                                  >
+                                    <Play className="w-3.5 h-3.5 fill-amber-300" />
+                                    <span>Re-tester en direct</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleReviewInteraction(
+                                        item.messageId,
+                                        item.reviewStatus === 'to_fix' ? 'unreviewed' : 'to_fix',
+                                        draftNote
+                                      )
+                                    }
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${
+                                      item.reviewStatus === 'to_fix'
+                                        ? 'bg-rose-600 text-white border-rose-500'
+                                        : 'bg-stone-900 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
+                                    }`}
+                                  >
+                                    🛠️ À corriger
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleReviewInteraction(
+                                        item.messageId,
+                                        item.reviewStatus === 'validated' ? 'unreviewed' : 'validated',
+                                        draftNote
+                                      )
+                                    }
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${
+                                      item.reviewStatus === 'validated'
+                                        ? 'bg-emerald-600 text-white border-emerald-500'
+                                        : 'bg-stone-900 hover:bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
+                                    }`}
+                                  >
+                                    ✅ Validé
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Question posée */}
+                              <div className="p-3 rounded-lg bg-stone-900/95 border border-stone-800 flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <span className="text-amber-300 font-semibold">Question posée : </span>
+                                  <span className="text-white font-medium">{item.userPrompt}</span>
+                                </div>
+                                {item.mediaCardsSummary.length > 0 && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {item.mediaCardsSummary.map((mc) => (
+                                      <span
+                                        key={`${mc.mediaType}-${mc.tmdbId}`}
+                                        className={`px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+                                          mc.plexState === 'available_now'
+                                            ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                                            : 'bg-stone-800 text-stone-300 border-stone-700'
+                                        }`}
+                                      >
+                                        🎬 {mc.titleFr} {mc.year ? `(${mc.year})` : ''}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Commentaire utilisateur s'il y en a un */}
+                              {item.feedback?.comment && (
+                                <div className="p-2.5 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs">
+                                  <span className="font-semibold">Commentaire spectateur : </span>
+                                  <span>{item.feedback.comment}</span>
+                                </div>
+                              )}
+
+                              {/* Réponse de l'assistant + Note d'analyse Admin */}
+                              <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-start">
+                                <details className="text-stone-400 lg:col-span-7 bg-stone-950/70 rounded-lg border border-stone-800/80 p-2.5">
+                                  <summary className="cursor-pointer hover:text-stone-200 font-medium text-xs">
+                                    Voir la réponse complète d’Askarr ({item.assistantReply.length} car.)
+                                  </summary>
+                                  <div className="mt-2 pt-2 border-t border-stone-800 whitespace-pre-line text-stone-200 text-xs">
+                                    {item.assistantReply}
+                                  </div>
+                                </details>
+
+                                <div className="lg:col-span-5 flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={draftNote}
+                                    onChange={(e) =>
+                                      setAdminNoteDrafts((prev) => ({
+                                        ...prev,
+                                        [item.messageId]: e.target.value
+                                      }))
+                                    }
+                                    placeholder="Note Admin (ex: devra trouver Le Rêve américain)..."
+                                    className="flex-1 bg-stone-900 border border-stone-800 focus:border-amber-500/50 rounded-lg px-2.5 py-1.5 text-xs text-stone-200 outline-none"
+                                  />
+                                  {draftNote !== (item.adminNote || '') && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleReviewInteraction(
+                                          item.messageId,
+                                          item.reviewStatus === 'unreviewed' ? 'to_fix' : item.reviewStatus,
+                                          draftNote
+                                        )
+                                      }
+                                      className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold cursor-pointer shrink-0"
+                                    >
+                                      Sauver note
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
