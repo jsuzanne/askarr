@@ -216,6 +216,8 @@ function serviceBadgeColor(service: ApiTraceEntryDTO['service']): string {
       return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40';
     case 'smtp':
       return 'bg-yellow-500/20 text-yellow-200 border-yellow-500/40';
+    case 'discord':
+      return 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40';
     default:
       return 'bg-stone-700 text-stone-300 border-stone-600';
   }
@@ -295,6 +297,24 @@ export function App() {
   const [smtpSaving, setSmtpSaving] = useState(false);
   const [smtpTesting, setSmtpTesting] = useState(false);
   const [smtpBanner, setSmtpBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const [discordForm, setDiscordForm] = useState({
+    enabled: true,
+    webhookUrl: '',
+    webhookUrlPreview: '',
+    botUsername: 'Askarr · Ciné-Conseiller Plex',
+    domains: {
+      prompts: true,
+      mediaRequests: true,
+      feedback: true,
+      aiAlerts: true,
+      plexCast: false,
+      userInvites: false
+    }
+  });
+  const [discordSaving, setDiscordSaving] = useState(false);
+  const [discordTesting, setDiscordTesting] = useState(false);
+  const [discordBanner, setDiscordBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [configForm, setConfigForm] = useState({
     plexServersRaw: '',
@@ -532,9 +552,105 @@ export function App() {
             aiMonthlyBudgetUsd: ev.aiMonthlyBudgetUsd || prev.aiMonthlyBudgetUsd
           }));
         }
+        if (data.discord) {
+          setDiscordForm((prev) => ({
+            enabled: data.discord!.enabled,
+            webhookUrl: '',
+            webhookUrlPreview: data.discord!.webhookUrlMasked || prev.webhookUrlPreview,
+            botUsername: data.discord!.botUsername || prev.botUsername,
+            domains: {
+              ...prev.domains,
+              ...data.discord!.domains
+            }
+          }));
+        }
       }
     } catch (err) {
       console.error('Failed to load settings:', err);
+    }
+  }
+
+  async function handleSaveDiscordSettings(
+    override?: Partial<{
+      enabled: boolean;
+      webhookUrl: string;
+      botUsername: string;
+      domains: typeof discordForm.domains;
+    }>
+  ) {
+    setDiscordSaving(true);
+    setDiscordBanner(null);
+    const payload = {
+      enabled: override?.enabled !== undefined ? override.enabled : discordForm.enabled,
+      webhookUrl: override?.webhookUrl !== undefined ? override.webhookUrl : discordForm.webhookUrl || undefined,
+      botUsername: override?.botUsername !== undefined ? override.botUsername : discordForm.botUsername,
+      domains: override?.domains || discordForm.domains
+    };
+    try {
+      const res = await fetch('/api/admin/settings/discord', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDiscordBanner({
+          type: 'error',
+          text: data.message || 'Erreur lors de la sauvegarde Discord.'
+        });
+      } else {
+        if (data.discord) {
+          setDiscordForm({
+            enabled: data.discord.enabled,
+            webhookUrl: '',
+            webhookUrlPreview: data.discord.webhookUrlMasked,
+            botUsername: data.discord.botUsername,
+            domains: data.discord.domains
+          });
+        }
+        setDiscordBanner({
+          type: 'success',
+          text: '✓ Préférences de notifications Discord sauvegardées !'
+        });
+      }
+    } catch {
+      setDiscordBanner({ type: 'error', text: 'Erreur réseau lors de la sauvegarde Discord.' });
+    } finally {
+      setDiscordSaving(false);
+    }
+  }
+
+  async function handleTestDiscordWebhook() {
+    setDiscordTesting(true);
+    setDiscordBanner(null);
+    try {
+      const res = await fetch('/api/admin/settings/discord/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDiscordBanner({
+          type: 'error',
+          text: data.message || 'Échec du test Webhook Discord.'
+        });
+      } else {
+        if (data.discord) {
+          setDiscordForm((prev) => ({
+            ...prev,
+            webhookUrlPreview: data.discord.webhookUrlMasked || prev.webhookUrlPreview
+          }));
+        }
+        setDiscordBanner({
+          type: 'success',
+          text: data.messageFr || '🔔 Notification de test envoyée sur Discord avec succès !'
+        });
+      }
+    } catch {
+      setDiscordBanner({ type: 'error', text: 'Erreur réseau lors du test Discord.' });
+    } finally {
+      setDiscordTesting(false);
     }
   }
 
@@ -2634,7 +2750,8 @@ export function App() {
                   { id: 'tracearr', label: 'Tracearr (Ajouts & Historique)' },
                   { id: 'prowlarr', label: 'Prowlarr' },
                   { id: 'deepseek', label: 'DeepSeek IA' },
-                  { id: 'cloudflare', label: 'Cloudflare Access' }
+                  { id: 'cloudflare', label: 'Cloudflare Access' },
+                  { id: 'discord', label: 'Discord Webhook' }
                 ].map((srv) => (
                   <button
                     key={srv.id}
@@ -4164,6 +4281,185 @@ export function App() {
                       </div>
                     </div>
                   </form>
+
+                  {/* Carte dédiée : Notifications Discord (Webhook & Domaines cochables) */}
+                  <div className="p-4 sm:p-5 rounded-2xl bg-indigo-950/20 border border-indigo-500/35 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-sm sm:text-base font-bold text-indigo-200 flex items-center gap-2">
+                            <span>🔔 Notifications Discord (Webhook & Domaines)</span>
+                          </h4>
+                          <span
+                            className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              discordForm.enabled
+                                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                                : 'bg-stone-900 text-stone-400 border-stone-700'
+                            }`}
+                          >
+                            {discordForm.enabled ? '● Webhook Actif' : '○ Désactivé'}
+                          </span>
+                          {adminSettings.discord?.webhookConfigured && (
+                            <span className="text-[11px] text-emerald-300/90 font-mono">
+                              Webhook pré-configuré ✓
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-stone-400">
+                          Reçois en temps réel sur ton salon Discord les événements sélectionnés ci-dessous. Le Webhook Discord est déjà pré-configuré et sécurisé.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="inline-flex items-center gap-2 rounded-xl bg-black/60 border border-indigo-500/30 px-3 py-2 text-xs font-semibold text-indigo-200 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={discordForm.enabled}
+                            onChange={(e) => {
+                              const nextEnabled = e.target.checked;
+                              setDiscordForm((p) => ({ ...p, enabled: nextEnabled }));
+                              void handleSaveDiscordSettings({ enabled: nextEnabled });
+                            }}
+                            className="rounded accent-indigo-500 w-4 h-4 cursor-pointer"
+                          />
+                          <span>Activer Discord</span>
+                        </label>
+
+                        <button
+                          type="button"
+                          disabled={discordTesting}
+                          onClick={() => void handleTestDiscordWebhook()}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900/80 border border-indigo-400/40 px-3.5 py-2 text-xs font-bold text-indigo-200 cursor-pointer disabled:opacity-50"
+                        >
+                          <Send className={`w-3.5 h-3.5 ${discordTesting ? 'animate-pulse' : ''}`} />
+                          <span>{discordTesting ? 'Envoi...' : 'Tester le Webhook'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={discordSaving}
+                          onClick={() => void handleSaveDiscordSettings()}
+                          className="inline-flex items-center gap-1.5 rounded-xl cinema-velvet-pill px-4 py-2 text-xs font-bold text-white cursor-pointer disabled:opacity-50"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
+                          <span>{discordSaving ? 'Sauvegarde...' : 'Enregistrer Discord'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {discordBanner && (
+                      <div
+                        className={`rounded-xl border px-3.5 py-2.5 text-xs font-medium ${
+                          discordBanner.type === 'success'
+                            ? 'bg-emerald-950/60 border-emerald-700/60 text-emerald-200'
+                            : 'bg-rose-950/60 border-rose-700/60 text-rose-200'
+                        }`}
+                      >
+                        {discordBanner.text}
+                      </div>
+                    )}
+
+                    {/* Coche des domaines notifiés */}
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-300 block">
+                        Domaines notifiés sur Discord (cocher / décocher en 1 clic)
+                      </span>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {([
+                          {
+                            key: 'prompts',
+                            title: '💬 Prompts & Réponses IA',
+                            desc: 'Question posée par un spectateur, résumé de la réponse IA, modèle utilisé, latence et jaquettes.'
+                          },
+                          {
+                            key: 'mediaRequests',
+                            title: '🎬 Demandes Overseerr / Sonarr',
+                            desc: 'Confirmation d’ajout de film, série ou saison manquante (avec miniature TMDB).'
+                          },
+                          {
+                            key: 'feedback',
+                            title: '⭐ Feedbacks & Notes (1–5 ★)',
+                            desc: 'Lorsqu’un spectateur note ou commente une réponse du Ciné-Conseiller.'
+                          },
+                          {
+                            key: 'aiAlerts',
+                            title: '⚠️ Alertes IA & Failover',
+                            desc: 'Bascule automatique vers un provider de secours (quota/erreur) ou mode dégradé.'
+                          },
+                          {
+                            key: 'plexCast',
+                            title: '📺 Diffusion directe TV (Cast Plex)',
+                            desc: 'Quand un utilisateur lance un film directement sur son téléviseur / lecteur Plex.'
+                          },
+                          {
+                            key: 'userInvites',
+                            title: '👥 Nouveaux membres & Invitations VIP',
+                            desc: 'Ajout d’un ami dans Cloudflare Access ou envoi d’un Billet VIP par email.'
+                          }
+                        ] as const).map((item) => {
+                          const checked = Boolean(discordForm.domains[item.key]);
+                          return (
+                            <label
+                              key={item.key}
+                              className={`flex items-start gap-3 p-3 rounded-xl border transition-colors cursor-pointer ${
+                                checked
+                                  ? 'bg-indigo-950/40 border-indigo-500/50 text-stone-100'
+                                  : 'bg-black/40 border-stone-800 text-stone-400 hover:border-stone-700'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  const nextDomains = {
+                                    ...discordForm.domains,
+                                    [item.key]: e.target.checked
+                                  };
+                                  setDiscordForm((p) => ({ ...p, domains: nextDomains }));
+                                  void handleSaveDiscordSettings({ domains: nextDomains });
+                                }}
+                                className="mt-0.5 rounded accent-indigo-500 w-4 h-4 cursor-pointer shrink-0"
+                              />
+                              <div className="space-y-0.5 text-xs">
+                                <div className="font-bold text-stone-100">{item.title}</div>
+                                <div className="text-[11px] text-stone-400 leading-snug">{item.desc}</div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* URL Webhook & Nom du Bot */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                      <div className="md:col-span-2 space-y-1">
+                        <label className="text-[11px] text-stone-400">
+                          URL du Webhook Discord (pré-configurée : <span className="text-indigo-300 font-mono">{discordForm.webhookUrlPreview || 'https://discord.com/api/webhooks/1566503759528337558/••••••'}</span>)
+                        </label>
+                        <input
+                          type="password"
+                          value={discordForm.webhookUrl}
+                          onChange={(e) => setDiscordForm((p) => ({ ...p, webhookUrl: e.target.value }))}
+                          placeholder={
+                            discordForm.webhookUrlPreview
+                              ? `Actuel : ${discordForm.webhookUrlPreview} (laisser vide pour conserver)`
+                              : 'https://discord.com/api/webhooks/...'
+                          }
+                          className="w-full rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-indigo-200 font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-stone-400">Nom d'affichage du Bot Discord</label>
+                        <input
+                          type="text"
+                          value={discordForm.botUsername}
+                          onChange={(e) => setDiscordForm((p) => ({ ...p, botUsername: e.target.value }))}
+                          placeholder="Askarr · Ciné-Conseiller Plex"
+                          className="w-full rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-stone-200 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

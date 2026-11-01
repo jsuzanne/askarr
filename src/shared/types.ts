@@ -170,6 +170,23 @@ export interface SmtpSettingsDTO {
   publicAppUrl: string;
 }
 
+export interface DiscordNotificationDomainsDTO {
+  prompts: boolean;
+  mediaRequests: boolean;
+  feedback: boolean;
+  aiAlerts: boolean;
+  plexCast: boolean;
+  userInvites: boolean;
+}
+
+export interface DiscordSettingsDTO {
+  enabled: boolean;
+  webhookConfigured: boolean;
+  webhookUrlMasked: string;
+  botUsername: string;
+  domains: DiscordNotificationDomainsDTO;
+}
+
 export interface UserSessionInfo {
   email: string;
   role: UserRole;
@@ -206,7 +223,7 @@ export interface PreparedActionDTO {
 export interface ApiTraceEntryDTO {
   id: string;
   timestamp: string;
-  service: 'plex' | 'overseerr' | 'radarr' | 'sonarr' | 'prowlarr' | 'tracearr' | 'deepseek' | 'cloudflare' | 'smtp' | 'other';
+  service: 'plex' | 'overseerr' | 'radarr' | 'sonarr' | 'prowlarr' | 'tracearr' | 'deepseek' | 'cloudflare' | 'smtp' | 'discord' | 'other';
   serverLabel?: string;
   method: string;
   url: string;
@@ -343,6 +360,7 @@ export interface AdminSettingsDTO {
     adminEmailsCount: number;
   };
   smtp?: SmtpSettingsDTO;
+  discord?: DiscordSettingsDTO;
   connectors: {
     plexServers: Array<{ name: string; baseUrl: string; configured: boolean }>;
     overseerr: { baseUrl: string; configured: boolean };

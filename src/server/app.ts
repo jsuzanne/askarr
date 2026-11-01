@@ -15,6 +15,7 @@ import { ProwlarrConnector } from './connectors/prowlarr.connector.js';
 import { CloudflareAccessConnector } from './connectors/cloudflare-access.connector.js';
 import { TracearrConnector } from './connectors/tracearr.js';
 import { SmtpInviteService } from './connectors/smtp-invite.service.js';
+import { DiscordNotifierService } from './connectors/discord-notifier.service.js';
 import { MediaAggregatorService } from './aggregator/media-aggregator.service.js';
 import { DeepSeekOrchestratorService, normalizeLlmModelSlug } from './orchestrator/deepseek-orchestrator.service.js';
 import { ApiTracer } from './utils/api-tracer.js';
@@ -59,6 +60,7 @@ export async function createApp(deps: AppDependencies): Promise<{
   const aggregator = new MediaAggregatorService(overseerr, plex, radarr, sonarr, prowlarr);
   const orchestrator = new DeepSeekOrchestratorService(config, db, aggregator, overseerr, fetchImpl, tracearr);
   const smtpInvite = new SmtpInviteService(db, config.adminEmails[0] || '', apiTracer);
+  const discord = new DiscordNotifierService(db, fetchImpl, config.nodeEnv);
 
   function maskSecret(val: string): string {
     if (!val) return '';
@@ -373,6 +375,16 @@ export async function createApp(deps: AppDependencies): Promise<{
       plexAccess: effectivePlexAccess,
       conversationId: body.conversationId,
       message: body.message
+    });
+    discord.notifyPromptInteraction({
+      userEmail: session.email,
+      plexUsername: effectivePlexAccess?.plexUsername ?? session.overseerr.plexUsername,
+      userAllowedServers: effectivePlexAccess?.askarrServerNames,
+      prompt: body.message,
+      reply: result.reply,
+      mediaCards: result.mediaCards,
+      aiMode: result.aiMode,
+      llmUsage: result.llmUsage
     });
     const apiTraces = session.role === 'admin' ? apiTracer.getEntriesSince(traceMarker) : undefined;
     return {
@@ -701,14 +713,29 @@ export async function createApp(deps: AppDependencies): Promise<{
         checkIndexers: false
       });
 
+      const responseMessageFr = sonarrSearchResult.ok
+        ? `La recherche automatique des épisodes manquants de "${record.payload.title}" (Saison(s) ${(seasonsToRequest || []).join(', ')}) a été lancée ! Ils arriveront sur Plex dès la fin du téléchargement.`
+        : reactivatedInArr
+          ? `La surveillance automatique de "${record.payload.title}" a été réactivée dans la liste d'attente !`
+          : `Ta demande pour "${record.payload.title}" a bien été envoyée ! Elle est maintenant dans la liste d'attente automatique.`;
+
+      void discord.notifyMediaRequest({
+        userEmail: session.email,
+        plexUsername: session.overseerr.plexUsername || null,
+        title: record.payload.title,
+        year: record.payload.year,
+        mediaType: record.payload.mediaType,
+        seasons: seasonsToRequest,
+        overseerrRequestId: createdReq.requestId,
+        targetService: sonarrSearchResult.ok ? 'sonarr+overseerr' : 'overseerr',
+        messageFr: responseMessageFr,
+        posterUrl: updatedEvidence.identity.posterUrl
+      });
+
       return {
         status: 'EXECUTED',
         overseerrRequestId: createdReq.requestId,
-        messageFr: sonarrSearchResult.ok
-          ? `La recherche automatique des épisodes manquants de "${record.payload.title}" (Saison(s) ${(seasonsToRequest || []).join(', ')}) a été lancée ! Ils arriveront sur Plex dès la fin du téléchargement.`
-          : reactivatedInArr
-            ? `La surveillance automatique de "${record.payload.title}" a été réactivée dans la liste d'attente !`
-            : `Ta demande pour "${record.payload.title}" a bien été envoyée ! Elle est maintenant dans la liste d'attente automatique.`,
+        messageFr: responseMessageFr,
         evidence: updatedEvidence
       };
     } catch (err) {
@@ -772,6 +799,15 @@ export async function createApp(deps: AppDependencies): Promise<{
       targetService: 'plex',
       summaryFr: `Cast Plex (${body.ratingKey} sur ${result.serverName}) -> ${result.playerName} [${result.deliveryMethod}]`,
       status: result.ok ? 'SUCCESS' : 'FAILED'
+    });
+
+    void discord.notifyPlexCast({
+      userEmail: session.email,
+      playerName: result.playerName,
+      serverName: result.serverName,
+      ratingKey: body.ratingKey,
+      deliveryMethod: result.deliveryMethod,
+      ok: result.ok
     });
 
     return result;
@@ -1191,6 +1227,15 @@ export async function createApp(deps: AppDependencies): Promise<{
       status: 'SUCCESS'
     });
 
+    void discord.notifyUserInvite({
+      actorEmail: principal.email,
+      recipientEmail: normalizedEmail,
+      plexServers: matchedCloudUser?.askarrServerNames,
+      actionLabel: inviteSent
+        ? `Ajouté dans Cloudflare Access (${res.targetName}) + Billet VIP envoyé par email`
+        : `Ajouté dans Cloudflare Access (${res.targetName})`
+    });
+
     const newState = await cfAccess.getStatusSummary();
     const updatedDir = await buildPlexDirectory(false, newState.emails);
 
@@ -1263,6 +1308,14 @@ export async function createApp(deps: AppDependencies): Promise<{
       status: 'SUCCESS'
     });
 
+    if (res.addedCount > 0) {
+      void discord.notifyUserInvite({
+        actorEmail: principal.email,
+        recipientEmail: res.addedEmails.join(', '),
+        actionLabel: `Import groupé Cloudflare Access (${res.targetName})${invitesSentCount > 0 ? ` + ${invitesSentCount} billet(s) VIP` : ''}`
+      });
+    }
+
     const newState = await cfAccess.getStatusSummary();
     const updatedDir = await buildPlexDirectory(false, newState.emails);
 
@@ -1312,6 +1365,13 @@ export async function createApp(deps: AppDependencies): Promise<{
         targetService: 'smtp',
         summaryFr: `Envoi du Billet d'Invitation VIP par email à ${normalizedEmail}`,
         status: 'SUCCESS'
+      });
+
+      void discord.notifyUserInvite({
+        actorEmail: principal.email,
+        recipientEmail: normalizedEmail,
+        plexServers: body.plexServers || matchedFriend?.askarrServerNames,
+        actionLabel: 'Billet d’invitation VIP envoyé par email'
       });
 
       return {
@@ -1391,6 +1451,60 @@ export async function createApp(deps: AppDependencies): Promise<{
         message: err instanceof Error ? err.message : 'Échec du test SMTP.'
       });
     }
+  });
+
+  const updateDiscordSchema = z.object({
+    enabled: z.boolean().optional(),
+    webhookUrl: z.string().max(400).optional(),
+    botUsername: z.string().max(80).optional(),
+    domains: z
+      .object({
+        prompts: z.boolean().optional(),
+        mediaRequests: z.boolean().optional(),
+        feedback: z.boolean().optional(),
+        aiAlerts: z.boolean().optional(),
+        plexCast: z.boolean().optional(),
+        userInvites: z.boolean().optional()
+      })
+      .optional()
+  });
+
+  app.post('/api/admin/settings/discord', async (req, reply: FastifyReply) => {
+    const { principal } = await resolveUserSession(req);
+    if (!requireAdmin(principal, reply)) return;
+    const body = updateDiscordSchema.parse(req.body);
+    const updated = discord.updateSettings(body);
+
+    db.recordAuditLog({
+      actorEmail: principal.email,
+      actorRole: 'admin',
+      actionType: 'DISCORD_SETTINGS_UPDATE',
+      targetService: 'sqlite',
+      summaryFr: `Mise à jour des notifications Discord (${updated.enabled ? 'Actif' : 'Désactivé'})`,
+      status: 'SUCCESS'
+    });
+
+    return {
+      ok: true,
+      discord: updated
+    };
+  });
+
+  app.post('/api/admin/settings/discord/test', async (req, reply: FastifyReply) => {
+    const { principal } = await resolveUserSession(req);
+    if (!requireAdmin(principal, reply)) return;
+    const result = await discord.sendTestNotification(principal.email);
+    if (!result.ok) {
+      return reply.code(400).send({
+        error: 'DISCORD_TEST_FAILED',
+        message: result.detail
+      });
+    }
+    return {
+      ok: true,
+      messageFr: result.detail,
+      discord: discord.getPublicSummary()
+    };
   });
 
   const removeCfEmailSchema = z.object({
@@ -1612,7 +1726,8 @@ export async function createApp(deps: AppDependencies): Promise<{
         aiDailyTokenCap: config.aiDailyTokenCap,
         aiMonthlyBudgetUsd: config.aiMonthlyBudgetUsd
       },
-      smtp: smtpInvite.getPublicSummary()
+      smtp: smtpInvite.getPublicSummary(),
+      discord: discord.getPublicSummary()
     };
 
     return settings;
@@ -1924,6 +2039,16 @@ export async function createApp(deps: AppDependencies): Promise<{
       assistantReply: body.assistantReply,
       mediaCardsSummary: body.mediaCardsSummary
     });
+
+    void discord.notifyFeedback({
+      userEmail: session.email,
+      rating: body.rating,
+      quickTag: body.quickTag,
+      comment: body.comment,
+      userPrompt: body.userPrompt,
+      assistantReply: body.assistantReply
+    });
+
     return { status: 'SAVED', feedback: saved };
   });
 

@@ -105,6 +105,13 @@ export class ApiTracer {
     if (lower.includes('api.cloudflare.com')) {
       return { service: 'cloudflare', serverLabel: 'Cloudflare Zero Trust', sanitizedUrl };
     }
+    if (lower.includes('discord.com/api/webhooks/')) {
+      const maskedDiscordUrl = sanitizedUrl.replace(
+        /(discord\.com\/api\/webhooks\/\d+\/)[^/?#]+/i,
+        '$1[REDACTED]'
+      );
+      return { service: 'discord', serverLabel: 'Discord Webhook', sanitizedUrl: maskedDiscordUrl };
+    }
     return { service: 'other', sanitizedUrl };
   }
 
