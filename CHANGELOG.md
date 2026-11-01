@@ -5,6 +5,17 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.10] - 2026-11-01
+
+### Modifié
+- **Mise en sommeil propre de la fonctionnalité Plex Cast / Plex Player (`ENABLE_PLEX_CAST_FEATURE = false`)** :
+  - Suite à la refonte de l'application cliente Plex pour tvOS & iOS (« New Plex Experience » 2025/2026), l'écoute locale sur le port `32500` (*Advertise as Player*) et le relais de contrôle direct ont été dépréciés/retirés par Plex sur les clients Apple TV récents.
+  - Masquage du sélecteur de lecteur dans l'en-tête et du bouton `Lancer sur TV` dans les fiches médias.
+  - Suspension du polling périodique `/api/plex/players` pour alléger les requêtes réseau et préserver les performances serveur.
+  - L'intégralité du code d'infrastructure (découverte, PlayQueue, commandes Plex Companion) est conservée et prête à être réactivée d'un simple flag lorsque Plex réintroduira le support du contrôle distant sur ces clients.
+
+---
+
 ## [1.2.9] - 2026-11-01
 
 ### Ajouté

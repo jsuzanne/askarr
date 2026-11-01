@@ -525,3 +525,12 @@ export interface PlexCastResponseDTO {
   plexWebUrl?: string;
 }
 
+/**
+ * Flag de fonctionnalité pour le contrôle / cast direct sur Plex Player (Plex Companion).
+ * Désactivé temporairement suite à la régression tvOS / iOS "New Plex Experience"
+ * (suppression de l'écoute locale port 32500 et non-support du pubsub-player).
+ * Le code complet est conservé et prêt à être réactivé lorsque Plex réintroduira le support.
+ */
+export const ENABLE_PLEX_CAST_FEATURE = false;
+
+

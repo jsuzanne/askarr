@@ -30,6 +30,7 @@ import type {
   PlexPlayerDeviceDTO,
   PreparedActionDTO
 } from '../../shared/types.js';
+import { ENABLE_PLEX_CAST_FEATURE } from '../../shared/types.js';
 import { cinemaAudio } from '../utils/cinema-audio.js';
 
 interface Props {
@@ -650,7 +651,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
             )}
 
             {/* Bouton Lancer directement sur TV / Plex Player (Apple TV, Smart TV...) */}
-            {primaryPlexMatch && (
+            {ENABLE_PLEX_CAST_FEATURE && primaryPlexMatch && (
               <div className="relative inline-flex items-center">
                 <div className="inline-flex items-center rounded-xl border border-emerald-500/50 bg-emerald-950/75 shadow-[0_0_15px_rgba(16,185,129,0.15)] overflow-hidden">
                   <button
@@ -807,7 +808,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
         </div>
 
         {/* Bandeau Retour Cast & Télécommande Directe Plex Player */}
-        {castResult && (
+        {ENABLE_PLEX_CAST_FEATURE && castResult && (
           <div
             className={`rounded-xl border px-3.5 py-2.5 text-xs sm:text-sm flex flex-wrap items-center justify-between gap-2.5 ${
               castResult.ok
