@@ -5,6 +5,17 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.5] - 2026-11-01
+
+### Corrigé
+- **Sauvegarde automatique à chaud lors du clic sur `Tester Gemini / Groq / Mistral / OpenRouter`** (`POST /api/admin/settings/test-service`) :
+  - Auparavant, saisir une nouvelle clé API dans un champ puis cliquer directement sur `Tester Gemini` ou `Tester Groq` sans avoir cliqué au préalable sur le bouton `Enregistrer dans SQLite` en haut de la page testait l'état précédent (`Clé API non configurée (0 ms)`).
+  - Désormais, tout clic sur un bouton `Tester ...` envoie et persiste automatiquement les clés saisies dans SQLite (`draftConfig`), recharge les connecteurs à chaud, exécute le test réel contre l'API LLM, et met à jour le compteur `X LLM actif(s)` en temps réel.
+  - Augmentation du plafond `max_tokens` de test (`10` $\rightarrow$ `80`) pour supporter les modèles à raisonnement interne comme `gemini-2.5-flash` sans troncature et affichage détaillé du message d'erreur HTTP éventuel.
+  - Ajout d'un bouton dédié **`Enregistrer les clés LLM`** directement dans l'en-tête du Routeur Multi-LLM.
+
+---
+
 ## [1.2.4] - 2026-11-01
 
 ### Corrigé

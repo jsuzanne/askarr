@@ -1520,7 +1520,7 @@ export class DeepSeekOrchestratorService {
         body: JSON.stringify({
           model: provider.model,
           messages: [{ role: 'user', content: 'Réponds uniquement par le mot OK.' }],
-          max_tokens: 10,
+          max_tokens: 80,
           temperature: 0
         }),
         signal: controller.signal
@@ -1528,10 +1528,24 @@ export class DeepSeekOrchestratorService {
 
       const latencyMs = Date.now() - t0;
       if (!res.ok) {
+        let errSnippet = '';
+        try {
+          const errRaw = await res.text();
+          const parsed = JSON.parse(errRaw) as {
+            error?: { message?: string } | Array<{ error?: { message?: string } }>;
+            message?: string;
+          };
+          const msg = Array.isArray(parsed.error)
+            ? parsed.error[0]?.error?.message
+            : parsed.error?.message || parsed.message;
+          errSnippet = msg ? ` — ${String(msg).slice(0, 110)}` : '';
+        } catch {
+          // ignore
+        }
         return {
           ok: false,
           latencyMs,
-          detail: `HTTP ${res.status} sur ${provider.label} (${provider.model})`,
+          detail: `HTTP ${res.status} sur ${provider.label} (${provider.model})${errSnippet}`,
           model: provider.model
         };
       }

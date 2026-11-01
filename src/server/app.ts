@@ -1496,15 +1496,11 @@ export async function createApp(deps: AppDependencies): Promise<{
     mistralApiKey: z.string().optional(),
     openrouterModel: z.string().optional(),
     openrouterApiKey: z.string().optional(),
-    aiDailyTokenCap: z.coerce.number().int().positive().optional(),
-    aiMonthlyBudgetUsd: z.coerce.number().positive().optional()
+    aiDailyTokenCap: z.coerce.number().int().positive().optional().catch(undefined),
+    aiMonthlyBudgetUsd: z.coerce.number().positive().optional().catch(undefined)
   });
 
-  app.post('/api/admin/settings/save', async (req, reply: FastifyReply) => {
-    const { principal } = await resolveUserSession(req);
-    if (!requireAdmin(principal, reply)) return;
-    const body = saveRuntimeSettingsSchema.parse(req.body);
-
+  function persistRuntimeSettingsBody(body: z.infer<typeof saveRuntimeSettingsSchema>): void {
     const saveIfPresent = (key: string, val?: string) => {
       if (val !== undefined && val.trim().length > 0 && !val.startsWith('••••')) {
         db.setAppSetting(key, val.trim());
@@ -1526,7 +1522,7 @@ export async function createApp(deps: AppDependencies): Promise<{
     saveIfPresent('cfg_tracearr_url', body.tracearrBaseUrl);
     saveIfPresent('cfg_tracearr_key', body.tracearrApiKey);
 
-    if (body.cloudflareAccountId !== undefined) {
+    if (body.cloudflareAccountId !== undefined && body.cloudflareAccountId.trim().length > 0) {
       db.setAppSetting('cfg_cf_account_id', body.cloudflareAccountId.trim());
     }
     saveIfPresent('cfg_cf_api_token', body.cloudflareApiToken);
@@ -1536,10 +1532,10 @@ export async function createApp(deps: AppDependencies): Promise<{
     if (body.cfAccessTargetId !== undefined) {
       db.setAppSetting('cfg_cf_target_id', body.cfAccessTargetId.trim());
     }
-    if (body.cfAccessTeamDomain !== undefined) {
+    if (body.cfAccessTeamDomain !== undefined && body.cfAccessTeamDomain.trim().length > 0) {
       db.setAppSetting('cfg_cf_team_domain', body.cfAccessTeamDomain.trim());
     }
-    if (body.cfAccessAud !== undefined) {
+    if (body.cfAccessAud !== undefined && body.cfAccessAud.trim().length > 0) {
       db.setAppSetting('cfg_cf_aud', body.cfAccessAud.trim());
     }
     if (body.adminEmailsRaw !== undefined && body.adminEmailsRaw.trim().length > 0) {
@@ -1571,6 +1567,14 @@ export async function createApp(deps: AppDependencies): Promise<{
     }
 
     applySavedSettingsToRuntime();
+  }
+
+  app.post('/api/admin/settings/save', async (req, reply: FastifyReply) => {
+    const { principal } = await resolveUserSession(req);
+    if (!requireAdmin(principal, reply)) return;
+    const body = saveRuntimeSettingsSchema.parse(req.body);
+
+    persistRuntimeSettingsBody(body);
 
     db.recordAuditLog({
       actorEmail: principal.email,
@@ -1629,13 +1633,17 @@ export async function createApp(deps: AppDependencies): Promise<{
   });
 
   const testServiceSchema = z.object({
-    service: z.string().min(1)
+    service: z.string().min(1),
+    draftConfig: saveRuntimeSettingsSchema.optional()
   });
 
   app.post('/api/admin/settings/test-service', async (req, reply: FastifyReply) => {
     const { principal } = await resolveUserSession(req);
     if (!requireAdmin(principal, reply)) return;
     const body = testServiceSchema.parse(req.body);
+    if (body.draftConfig) {
+      persistRuntimeSettingsBody(body.draftConfig);
+    }
     const marker = apiTracer.markPosition();
 
     let ok = false;

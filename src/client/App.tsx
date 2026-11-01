@@ -534,12 +534,17 @@ export function App() {
       const res = await fetch('/api/admin/settings/test-service', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service: serviceKey })
+        body: JSON.stringify({
+          service: serviceKey,
+          draftConfig: configForm
+        })
       });
       if (res.ok) {
         const data: { ok: boolean; latencyMs: number; detail: string } = await res.json();
         setServiceTestResults((prev) => ({ ...prev, [serviceKey]: data }));
         void fetchTraces();
+        void fetchSettings();
+        void fetchAdminStatus();
       }
     } catch {
       setServiceTestResults((prev) => ({
@@ -3273,12 +3278,22 @@ export function App() {
                             </span>
                           </h4>
                           <p className="text-xs text-stone-400 mt-0.5">
-                            Ajoute tes clés gratuites (sans carte bancaire) et choisis comment Askarr sélectionne ou alterne les modèles. En cas de quota atteint (HTTP 429) ou d'erreur, Askarr bascule automatiquement sur le LLM suivant en &lt; 100 ms.
+                            Ajoute tes clés gratuites (sans carte bancaire) et clique sur <strong>Tester</strong> (ou <strong>Enregistrer</strong>) : la clé saisie est automatiquement sauvegardée dans SQLite et activée à chaud.
                           </p>
                         </div>
-                        <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-xs font-mono font-bold">
-                          {adminSettings.connectors.llmRouter?.activeProvidersCount ?? 1} LLM actif(s)
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-xs font-mono font-bold">
+                            {adminSettings.connectors.llmRouter?.activeProvidersCount ?? 1} LLM actif(s)
+                          </span>
+                          <button
+                            type="submit"
+                            disabled={configSaving}
+                            className="inline-flex items-center gap-1.5 rounded-xl cinema-velvet-pill disabled:opacity-50 px-3.5 py-1.5 text-xs font-bold text-white cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
+                            <span>{configSaving ? 'Enregistrement...' : 'Enregistrer les clés LLM'}</span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* Sélecteur des 3 modes de routage */}
@@ -3391,9 +3406,19 @@ export function App() {
                             />
                           </div>
                           <div className="flex items-center justify-between gap-2 text-[11px]">
-                            <span className="text-stone-400">
+                            <span
+                              className={
+                                serviceTestResults['llm:gemini']
+                                  ? serviceTestResults['llm:gemini'].ok
+                                    ? 'text-emerald-300 font-semibold'
+                                  : 'text-rose-300 font-semibold'
+                                  : adminSettings.editableValues?.geminiApiKeyConfigured
+                                    ? 'text-emerald-300'
+                                    : 'text-stone-400'
+                              }
+                            >
                               {serviceTestResults['llm:gemini']
-                                ? `${serviceTestResults['llm:gemini'].detail} (${serviceTestResults['llm:gemini'].latencyMs} ms)`
+                                ? `${serviceTestResults['llm:gemini'].ok ? '✓ ' : '✗ '}${serviceTestResults['llm:gemini'].detail} (${serviceTestResults['llm:gemini'].latencyMs} ms)`
                                 : adminSettings.editableValues?.geminiApiKeyConfigured
                                   ? '✓ Clé configurée dans SQLite'
                                   : '15 req/min • 1 500 req/jour gratuites'}
@@ -3402,9 +3427,9 @@ export function App() {
                               type="button"
                               disabled={testingServiceKey === 'llm:gemini'}
                               onClick={() => void handleTestService('llm:gemini')}
-                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer shrink-0"
                             >
-                              {testingServiceKey === 'llm:gemini' ? 'Test...' : 'Tester Gemini'}
+                              {testingServiceKey === 'llm:gemini' ? 'Sauvegarde & Test...' : 'Tester Gemini'}
                             </button>
                           </div>
                         </div>
@@ -3448,9 +3473,19 @@ export function App() {
                             />
                           </div>
                           <div className="flex items-center justify-between gap-2 text-[11px]">
-                            <span className="text-stone-400">
+                            <span
+                              className={
+                                serviceTestResults['llm:groq']
+                                  ? serviceTestResults['llm:groq'].ok
+                                    ? 'text-emerald-300 font-semibold'
+                                    : 'text-rose-300 font-semibold'
+                                  : adminSettings.editableValues?.groqApiKeyConfigured
+                                    ? 'text-emerald-300'
+                                    : 'text-stone-400'
+                              }
+                            >
                               {serviceTestResults['llm:groq']
-                                ? `${serviceTestResults['llm:groq'].detail} (${serviceTestResults['llm:groq'].latencyMs} ms)`
+                                ? `${serviceTestResults['llm:groq'].ok ? '✓ ' : '✗ '}${serviceTestResults['llm:groq'].detail} (${serviceTestResults['llm:groq'].latencyMs} ms)`
                                 : adminSettings.editableValues?.groqApiKeyConfigured
                                   ? '✓ Clé configurée dans SQLite'
                                   : '~300 tokens/s • 14 400 req/jour gratuites'}
@@ -3459,9 +3494,9 @@ export function App() {
                               type="button"
                               disabled={testingServiceKey === 'llm:groq'}
                               onClick={() => void handleTestService('llm:groq')}
-                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer shrink-0"
                             >
-                              {testingServiceKey === 'llm:groq' ? 'Test...' : 'Tester Groq'}
+                              {testingServiceKey === 'llm:groq' ? 'Sauvegarde & Test...' : 'Tester Groq'}
                             </button>
                           </div>
                         </div>
@@ -3505,9 +3540,19 @@ export function App() {
                             />
                           </div>
                           <div className="flex items-center justify-between gap-2 text-[11px]">
-                            <span className="text-stone-400">
+                            <span
+                              className={
+                                serviceTestResults['llm:mistral']
+                                  ? serviceTestResults['llm:mistral'].ok
+                                    ? 'text-emerald-300 font-semibold'
+                                    : 'text-rose-300 font-semibold'
+                                  : adminSettings.editableValues?.mistralApiKeyConfigured
+                                    ? 'text-emerald-300'
+                                    : 'text-stone-400'
+                              }
+                            >
                               {serviceTestResults['llm:mistral']
-                                ? `${serviceTestResults['llm:mistral'].detail} (${serviceTestResults['llm:mistral'].latencyMs} ms)`
+                                ? `${serviceTestResults['llm:mistral'].ok ? '✓ ' : '✗ '}${serviceTestResults['llm:mistral'].detail} (${serviceTestResults['llm:mistral'].latencyMs} ms)`
                                 : adminSettings.editableValues?.mistralApiKeyConfigured
                                   ? '✓ Clé configurée dans SQLite'
                                   : 'Excellent en français • Plan Experiment gratuit'}
@@ -3516,9 +3561,9 @@ export function App() {
                               type="button"
                               disabled={testingServiceKey === 'llm:mistral'}
                               onClick={() => void handleTestService('llm:mistral')}
-                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer shrink-0"
                             >
-                              {testingServiceKey === 'llm:mistral' ? 'Test...' : 'Tester Mistral'}
+                              {testingServiceKey === 'llm:mistral' ? 'Sauvegarde & Test...' : 'Tester Mistral'}
                             </button>
                           </div>
                         </div>
@@ -3562,9 +3607,19 @@ export function App() {
                             />
                           </div>
                           <div className="flex items-center justify-between gap-2 text-[11px]">
-                            <span className="text-stone-400">
+                            <span
+                              className={
+                                serviceTestResults['llm:openrouter']
+                                  ? serviceTestResults['llm:openrouter'].ok
+                                    ? 'text-emerald-300 font-semibold'
+                                    : 'text-rose-300 font-semibold'
+                                  : adminSettings.editableValues?.openrouterApiKeyConfigured
+                                    ? 'text-emerald-300'
+                                    : 'text-stone-400'
+                              }
+                            >
                               {serviceTestResults['llm:openrouter']
-                                ? `${serviceTestResults['llm:openrouter'].detail} (${serviceTestResults['llm:openrouter'].latencyMs} ms)`
+                                ? `${serviceTestResults['llm:openrouter'].ok ? '✓ ' : '✗ '}${serviceTestResults['llm:openrouter'].detail} (${serviceTestResults['llm:openrouter'].latencyMs} ms)`
                                 : adminSettings.editableValues?.openrouterApiKeyConfigured
                                   ? '✓ Clé configurée dans SQLite'
                                   : 'DeepSeek V3 / Gemini / Llama gratuits (:free)'}
@@ -3573,9 +3628,9 @@ export function App() {
                               type="button"
                               disabled={testingServiceKey === 'llm:openrouter'}
                               onClick={() => void handleTestService('llm:openrouter')}
-                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-amber-500/30 text-white font-semibold cursor-pointer shrink-0"
                             >
-                              {testingServiceKey === 'llm:openrouter' ? 'Test...' : 'Tester OpenRouter'}
+                              {testingServiceKey === 'llm:openrouter' ? 'Sauvegarde & Test...' : 'Tester OpenRouter'}
                             </button>
                           </div>
                         </div>
