@@ -22,6 +22,7 @@ import {
   Smartphone
 } from 'lucide-react';
 import type { MediaEvidence, PreparedActionDTO } from '../../shared/types.js';
+import { cinemaAudio } from '../utils/cinema-audio.js';
 
 interface Props {
   evidence: MediaEvidence;
@@ -111,6 +112,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
         return;
       }
       setPreparedAction(null);
+      cinemaAudio.playTicketPunchSfx();
       setFeedbackMessage({
         type: 'success',
         text: data.messageFr || 'Demande confirmée et envoyée !'

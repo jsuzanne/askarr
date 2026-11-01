@@ -5,6 +5,16 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.1] - 2026-11-01
+
+### Ajouté
+- **Ambiance Sonore de Salle de Cinéma & Micro-Bruitages (`src/client/utils/cinema-audio.ts`)** :
+  - Moteur de synthèse procédurale **Web Audio API 100 % natif** (0 octet de fichier audio externe téléchargé, 0 % d'impact CPU/React grâce à une boucle matérielle de 4 secondes et mise en veille automatique `AudioContext.suspend()` dès que l'onglet passe en arrière-plan ou est muet).
+  - Sélecteur **`🔊 Ambiance`** dans le fronton supérieur avec 4 modes mémorisés dans `localStorage` (`Muet`, `Bruitages Cinéma seuls (SFX)`, `Cabine 35mm + SFX`, `Prélude Grand Cinéma + 35mm`), curseur de volume et boutons de test.
+  - **3 micro-bruitages synchronisés aux actions** : cliquetis mécanique de bobine 35mm à l'envoi d'un message, accord cristallin d'ouverture de rideau à l'affichage des affiches, et poinçon de billet de cinéma à la confirmation d'une demande Overseerr.
+
+---
+
 ## [1.2.0] - 2026-10-31
 
 ### Ajouté

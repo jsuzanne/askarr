@@ -31,7 +31,9 @@ import {
   Check,
   Clapperboard,
   Ticket,
-  Mail
+  Mail,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import type {
   AdminSettingsDTO,
@@ -52,6 +54,7 @@ import type {
 import { MediaCandidateCard } from './components/MediaCandidateCard.js';
 import { RichMarkdownText } from './components/RichMarkdownText.js';
 import { APP_VERSION, APP_RELEASE_DATE } from '../shared/version.js';
+import { cinemaAudio, type CinemaAudioMode } from './utils/cinema-audio.js';
 
 interface UiMessage {
   id: string;
@@ -219,6 +222,11 @@ export function App() {
   const [adminTab, setAdminTab] = useState<'cloudflare' | 'health' | 'traces' | 'feedback' | 'settings'>('cloudflare');
   // Toggle for Admin to see inline technical traces inside the User Chat & Media Cards
   const [debugOverlay, setDebugOverlay] = useState<boolean>(true);
+  // Cinema Web Audio Ambiance & Micro-SFX state (0-byte procedural synth, 0% React re-render overhead)
+  const [audioMode, setAudioMode] = useState<CinemaAudioMode>(() => cinemaAudio.getMode());
+  const [audioVolume, setAudioVolume] = useState<number>(() => cinemaAudio.getVolume());
+  const [showAudioMenu, setShowAudioMenu] = useState<boolean>(false);
+  const audioMenuRef = useRef<HTMLDivElement | null>(null);
   const [expandedMsgTraceId, setExpandedMsgTraceId] = useState<string | null>(null);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
   const [traceServiceFilter, setTraceServiceFilter] = useState<string>('all');
@@ -1016,6 +1024,7 @@ export function App() {
 
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
+    cinemaAudio.playSearchReelSfx();
 
     try {
       const res = await fetch('/api/chat/messages', {
@@ -1058,6 +1067,9 @@ export function App() {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      if (data.mediaCards && data.mediaCards.length > 0) {
+        cinemaAudio.playCurtainChimeSfx();
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -1095,6 +1107,36 @@ export function App() {
 
   const isAdmin = session?.role === 'admin';
   const showInlineDebug = isAdmin && debugOverlay;
+
+  useEffect(() => {
+    const handleFirstGesture = () => {
+      cinemaAudio.unlockOnUserGesture();
+    };
+    const handleClickOutside = (ev: MouseEvent) => {
+      if (audioMenuRef.current && !audioMenuRef.current.contains(ev.target as Node)) {
+        setShowAudioMenu(false);
+      }
+    };
+    window.addEventListener('pointerdown', handleFirstGesture, { once: true, passive: true });
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstGesture);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const handleSelectAudioMode = (nextMode: CinemaAudioMode) => {
+    cinemaAudio.setMode(nextMode);
+    setAudioMode(nextMode);
+    if (nextMode === 'sfx_only') {
+      cinemaAudio.playCurtainChimeSfx();
+    }
+  };
+
+  const handleAudioVolumeChange = (nextVol: number) => {
+    cinemaAudio.setVolume(nextVol);
+    setAudioVolume(nextVol);
+  };
 
   return (
     <div className="min-h-screen flex flex-col cinema-auditorium-bg text-stone-100">
@@ -1159,8 +1201,156 @@ export function App() {
             </div>
           )}
 
-          {/* Droite : Bouton Traces (en Salle Ciné) + Profil Utilisateur & Serveurs Plex */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Droite : Ambiance Sonore + Bouton Traces (en Salle Ciné) + Profil Utilisateur & Serveurs Plex */}
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            {/* Sélecteur Ambiance Sonore Cinéma (Web Audio 0 Mo / 0% ralentissement) */}
+            <div className="relative" ref={audioMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowAudioMenu((v) => !v)}
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
+                  audioMode !== 'off'
+                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/50 shadow-[0_0_15px_rgba(245,158,11,0.18)]'
+                    : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200 hover:border-stone-700'
+                }`}
+                title="Ambiance sonore de salle de cinéma & bruitages (Web Audio natif sans impact performance)"
+              >
+                {audioMode !== 'off' ? (
+                  <Volume2 className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
+                ) : (
+                  <VolumeX className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                )}
+                <span className="hidden md:inline">Ambiance :</span>
+                <span className="font-bold">
+                  {audioMode === 'off'
+                    ? 'Muet'
+                    : audioMode === 'sfx_only'
+                      ? 'SFX'
+                      : audioMode === 'projector'
+                        ? '35mm'
+                        : 'Grand Ciné'}
+                </span>
+              </button>
+
+              {showAudioMenu && (
+                <div className="absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl bg-[#140a0e]/98 border border-amber-500/40 shadow-[0_20px_50px_rgba(0,0,0,0.95)] backdrop-blur-xl p-3.5 z-50 text-left">
+                  <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-amber-500/20">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>Ambiance Sonore Cinéma</span>
+                      </div>
+                      <p className="text-[10px] text-stone-400 mt-0.5">
+                        Synthèse Web Audio 100% native • 0 Mo • 0 ralentissement
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      0% CPU
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {(
+                      [
+                        {
+                          id: 'off',
+                          title: '🔇 Muet (Désactivé)',
+                          desc: 'Aucun son ni bruitage, moteur audio en veille totale'
+                        },
+                        {
+                          id: 'sfx_only',
+                          title: '🎟️ Bruitages Cinéma seuls (SFX)',
+                          desc: 'Cliquetis bobine à l’envoi, accord rideau & poinçon de billet'
+                        },
+                        {
+                          id: 'projector',
+                          title: '📽️ Cabine 35mm + SFX',
+                          desc: 'Doux ronronnement feutré de projecteur 35mm + bruitages'
+                        },
+                        {
+                          id: 'grand_cinema',
+                          title: '🍿 Prélude Grand Cinéma + 35mm',
+                          desc: 'Nappe harmonique chaude avant-séance + projecteur 35mm + SFX'
+                        }
+                      ] as Array<{ id: CinemaAudioMode; title: string; desc: string }>
+                    ).map((opt) => {
+                      const active = audioMode === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => handleSelectAudioMode(opt.id)}
+                          className={`w-full text-left p-2 rounded-xl border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-amber-500/20 border-amber-400/60 text-amber-100 shadow-sm'
+                              : 'bg-stone-900/70 border-stone-800/80 text-stone-300 hover:bg-stone-900 hover:border-stone-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            <span>{opt.title}</span>
+                            {active && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-200 border border-amber-400/40">
+                                Actif
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-stone-400 mt-0.5 leading-snug">{opt.desc}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-amber-500/20">
+                    <div className="flex items-center justify-between text-[11px] text-stone-300 mb-1">
+                      <span>Volume de la salle</span>
+                      <span className="font-mono text-amber-300">{Math.round(audioVolume * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      value={audioVolume}
+                      onChange={(e) => handleAudioVolumeChange(Number(e.target.value))}
+                      className="w-full accent-amber-400 cursor-pointer h-1.5 bg-stone-800 rounded-lg"
+                    />
+                    <div className="mt-2 flex items-center justify-between gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (audioMode === 'off') handleSelectAudioMode('sfx_only');
+                          cinemaAudio.playSearchReelSfx();
+                        }}
+                        className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
+                      >
+                        🎞️ Tester Bobine
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (audioMode === 'off') handleSelectAudioMode('sfx_only');
+                          cinemaAudio.playCurtainChimeSfx();
+                        }}
+                        className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
+                      >
+                        ✨ Tester Rideau
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (audioMode === 'off') handleSelectAudioMode('sfx_only');
+                          cinemaAudio.playTicketPunchSfx();
+                        }}
+                        className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
+                      >
+                        🎟️ Tester Billet
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {isAdmin && workspaceMode === 'user' && (
               <button
                 type="button"
