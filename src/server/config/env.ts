@@ -162,9 +162,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     deepseekPriceInputCacheHitPer1M: Number(env.DEEPSEEK_PRICE_INPUT_CACHE_HIT_PER_1M_USD || 0.07),
     deepseekPriceOutputPer1M: Number(env.DEEPSEEK_PRICE_OUTPUT_PER_1M_USD || 1.10),
     llmRoutingMode:
-      env.LLM_ROUTING_MODE === 'manual' || env.LLM_ROUTING_MODE === 'load_balance'
+      env.LLM_ROUTING_MODE === 'priority_cascade' || env.LLM_ROUTING_MODE === 'load_balance'
         ? env.LLM_ROUTING_MODE
-        : 'priority_cascade',
+        : 'manual',
     llmManualProvider:
       env.LLM_MANUAL_PROVIDER === 'gemini' ||
       env.LLM_MANUAL_PROVIDER === 'groq' ||

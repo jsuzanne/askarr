@@ -84,10 +84,27 @@ export class MediaAggregatorService {
       }
     }
 
+    const normTitle = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const normQuery = normTitle(params.query);
+    const currentYear = new Date().getFullYear();
+
     let filtered = mergedRaw;
     if (params.year) {
       const yearMatches = mergedRaw.filter((c) => c.year && Math.abs(c.year - params.year!) <= 1);
       if (yearMatches.length > 0) filtered = yearMatches;
+    } else {
+      // Si aucune année n'est forcée, promouvoir en tête tout homonyme exact récent (sortie cinéma/VOD de l'année en cours ou précédente)
+      filtered = [...mergedRaw].sort((a, b) => {
+        const aExactRecent = normTitle(a.title) === normQuery && (a.year ?? 0) >= currentYear - 1 ? 1 : 0;
+        const bExactRecent = normTitle(b.title) === normQuery && (b.year ?? 0) >= currentYear - 1 ? 1 : 0;
+        return bExactRecent - aExactRecent;
+      });
     }
 
     const topCandidates = filtered.slice(0, maxCandidates);
@@ -104,11 +121,10 @@ export class MediaAggregatorService {
       )
     );
 
-    const normQuery = params.query.trim().toLowerCase();
     const exactMatches = enriched.filter(
       (e) =>
-        e.identity.titleFr.trim().toLowerCase() === normQuery ||
-        e.identity.originalTitle.trim().toLowerCase() === normQuery
+        normTitle(e.identity.titleFr) === normQuery ||
+        normTitle(e.identity.originalTitle) === normQuery
     );
 
     const finalCandidates =
@@ -117,8 +133,8 @@ export class MediaAggregatorService {
             (e) =>
               e.identity.tmdbId === exactMatches[0].identity.tmdbId ||
               e.catalogPresence.state === 'available_now' ||
-              e.identity.titleFr.trim().toLowerCase().startsWith(`${normQuery} :`) ||
-              e.identity.titleFr.trim().toLowerCase().startsWith(`${normQuery}:`)
+              (e.identity.year ?? 0) >= currentYear - 1 ||
+              normTitle(e.identity.titleFr).startsWith(`${normQuery} `)
           )
         : enriched;
 
@@ -1121,7 +1137,9 @@ export class MediaAggregatorService {
           })
         : Promise.resolve([]);
 
-    const [localMatches, results] = await Promise.all([
+    const currentYear = new Date().getFullYear();
+
+    const [localMatches, nestedResults] = await Promise.all([
       localContextPromise,
       Promise.all(
         cleanItems.map(async (item) => {
@@ -1130,7 +1148,15 @@ export class MediaAggregatorService {
             const searchRes = await this.overseerr.search(item.title.trim(), item.mediaType || 'auto', {
               includePersonFallback: false
             });
-            if (searchRes.length === 0) return null;
+            if (searchRes.length === 0) return [];
+
+            // Vérifier si l'utilisateur a explicitement tapé une ancienne année dans son message
+            const userExplicitlyAskedOldYear = Boolean(
+              item.year &&
+                item.year < currentYear - 1 &&
+                params.userQueryContext &&
+                params.userQueryContext.includes(String(item.year))
+            );
 
             // Score each candidate by exact title match + year match so a movie like "Goliath" (2022)
             // or "Titane" (2021) is selected accurately
@@ -1158,21 +1184,43 @@ export class MediaAggregatorService {
             scored.sort((a, b) => b.score - a.score);
             const best = scored[0].c;
 
-            return await this.buildMediaEvidence({
-              tmdbId: best.tmdbId,
-              mediaType: best.mediaType,
-              currentUserEmail: params.currentUserEmail,
-              currentUserOverseerrId: params.currentUserOverseerrId,
-              includeSeasons: best.mediaType === 'tv',
-              checkIndexers: false,
-              knownPlexHint: item.knownPlexHint
-            });
+            // Si l'utilisateur cherche 1 ou 2 titres sans préciser une vieille année et qu'une sortie cinéma/VOD récente
+            // (année en cours ou précédente, ex: "Le Fantôme de l'Opéra" 2026) porte exactement ce titre sur TMDB,
+            // on l'inclut en tête pour ne jamais rater un film actuellement à l'affiche malgré le cutoff du LLM.
+            const candidatesToEnrich = [best];
+            if (cleanItems.length <= 2 && !userExplicitlyAskedOldYear) {
+              const recentHomonym = searchRes.find(
+                (c) =>
+                  c.tmdbId !== best.tmdbId &&
+                  (c.year ?? 0) >= currentYear - 1 &&
+                  (norm(c.titleFr) === targetTitle || norm(c.originalTitle) === targetTitle)
+              );
+              if (recentHomonym) {
+                candidatesToEnrich.unshift(recentHomonym);
+              }
+            }
+
+            const built = await Promise.all(
+              candidatesToEnrich.map((cand) =>
+                this.buildMediaEvidence({
+                  tmdbId: cand.tmdbId,
+                  mediaType: cand.mediaType,
+                  currentUserEmail: params.currentUserEmail,
+                  currentUserOverseerrId: params.currentUserOverseerrId,
+                  includeSeasons: cand.mediaType === 'tv',
+                  checkIndexers: false,
+                  knownPlexHint: cand.tmdbId === best.tmdbId ? item.knownPlexHint : undefined
+                })
+              )
+            );
+            return built;
           } catch {
-            return null;
+            return [];
           }
         })
       )
     ]);
+    const results = nestedResults.flat();
 
     const highConfidenceLocal = localMatches.filter((m) => m.score >= 35);
     const localEvidences = await Promise.all(
@@ -1361,7 +1409,11 @@ export class MediaAggregatorService {
             params.similarToTmdbId,
             params.mediaType === 'tv' ? 'tv' : 'movie'
           )
-        : await this.overseerr.discoverByGenreOrTrending(params.mediaType, params.genre);
+        : await this.overseerr.discoverByGenreOrTrending(
+            params.mediaType,
+            params.genre,
+            params.yearFilter
+          );
 
     if (params.minRating) {
       const aboveRating = candidates.filter((c) => (c.voteAverage ?? 0) >= params.minRating!);

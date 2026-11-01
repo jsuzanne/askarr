@@ -292,12 +292,13 @@ export class TracearrConnector {
   async getWatchHistory(options?: {
     plexUsername?: string;
     allowedServers?: string[];
+    mediaType?: 'movie' | 'tv';
     limit?: number;
   }): Promise<TracearrWatchHistoryItem[]> {
     if (!this.isConfigured()) return [];
 
     try {
-      const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=100`, {
+      const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=250`, {
         headers: this.getHeaders(),
         signal: AbortSignal.timeout(6000)
       });
@@ -339,6 +340,12 @@ export class TracearrConnector {
           continue;
         }
 
+        const itemMediaType: 'movie' | 'tv' =
+          raw.show_title || raw.media_type === 'episode' || raw.media_type === 'show' ? 'tv' : 'movie';
+        if (options?.mediaType && itemMediaType !== options.mediaType) {
+          continue;
+        }
+
         const displayTitle = raw.show_title
           ? `${raw.show_title}${
               raw.season_number != null && raw.episode_number != null
@@ -354,7 +361,7 @@ export class TracearrConnector {
           seasonNumber: raw.season_number ?? null,
           episodeNumber: raw.episode_number ?? null,
           year: raw.year ?? null,
-          mediaType: raw.show_title || raw.media_type === 'episode' || raw.media_type === 'show' ? 'tv' : 'movie',
+          mediaType: itemMediaType,
           tmdbId: raw.tmdb_id ?? null,
           serverName,
           username,

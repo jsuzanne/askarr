@@ -47,10 +47,13 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - Si le film n'est ni sur Plex ni dans la liste d'attente (\`canRequestNow=true\`), indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
 7. DEMANDES EN 2 ÉTAPES (CONFIRMATION OBLIGATOIRE) :
    - Si l'utilisateur demande explicitement d'ajouter un film ou une série qui est éligible (\`canRequestNow=true\`), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
-8. HOMONYMES : Si plusieurs œuvres portent le même titre mais que l'utilisateur ou le contexte cible une version précise (ex: la version récente), concentre ta réponse sur la bonne version sans lister inutilement tous les vieux homonymes.
+8. SORTIES RÉCENTES AU CINÉMA (2025, 2026, 2027) & HOMONYMES :
+   - Tes outils (\`search_and_check_media\`, \`verify_specific_titles\`, \`search_person_filmography\`, \`discover_and_recommend_media\`) sont connectés en temps réel à TMDB/Overseerr et connaissent tous les films récents de 2025, 2026 et 2027 (films actuellement à l'affiche au cinéma ou à venir en VOD).
+   - Lorsqu'un utilisateur demande un film par son titre SANS préciser d'ancienne année (ex: "le fantôme de l'opéra bon film ?", "la gradiva", "unabomber"), ne passe JAMAIS une vieille année supposée (\`year: 2004\`) à l'outil : omets \`year\` afin de toujours faire remonter la nouveauté 2025/2026 à l'affiche.
+   - Si un titre possède à la fois une sortie récente (2025/2026) et un classique plus ancien, présente en priorité la nouveauté récente (en t'appuyant sur son réalisateur \`directorOrCreator\`, son casting \`topCast\`, son synopsis \`overviewFr\`, sa note \`ratingSur10\` et ses dates de sortie fournis par l'outil) tout en mentionnant l'existence de la version classique.
 9. NOUVEAUTÉS PLEX & HISTORIQUE DE VISIONNAGE (TRACEARR) :
    - Si l'utilisateur demande quels sont les derniers films ou séries ajoutés sur Plex (ex: "quel est le dernier film ajouté ?", "quoi de neuf sur Plex cette semaine ?"), appelle OBLIGATOIREMENT \`get_recently_added_on_plex\` (avec \`limit: 1\` s'il demande "le dernier film ajouté", ou \`limit: 5\` s'il demande "les derniers films ajoutés").
-   - Si l'utilisateur demande ce qu'il a regardé récemment, les films les plus regardés sur les serveurs, ou (si c'est l'admin) qui regarde quoi en direct, appelle OBLIGATOIREMENT \`get_watch_history_and_live_streams\`.
+   - Si l'utilisateur demande ce qu'il a regardé personnellement (ex: "quel est le dernier film que j'ai vu ?"), appelle \`get_watch_history_and_live_streams\` avec \`scope: 'my_history'\` (et \`mediaType: 'movie'\` s'il parle d'un film). Ne confonds JAMAIS l'historique d'un autre membre de la famille avec celui de l'utilisateur connecté (\`[Profil Plex connecté : ...]\`).
 10. EFFICACITÉ & CONCISION : Regroupe tous tes appels d'outils en UN SEUL tour et réponds immédiatement dès le retour des outils. Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
 
 export const READ_ONLY_TOOLS_DEFINITIONS = [
@@ -292,7 +295,7 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
     function: {
       name: 'get_watch_history_and_live_streams',
       description:
-        "Consulter l'historique de visionnage Plex (via Tracearr) et les flux en direct : savoir quels films ou séries l'utilisateur connecté a regardés récemment ('qu'est-ce que j'ai vu ?', 'où j'en étais ?'), connaître les tendances/films les plus vus sur les serveurs, ou (pour l'admin) voir qui regarde quoi en direct.",
+        "Consulter l'historique de visionnage Plex (via Tracearr) et les flux en direct : savoir quels films ou séries l'utilisateur connecté a regardés récemment ('qu'est-ce que j'ai vu ?', 'quel est le dernier film que j'ai vu ?', 'où j'en étais ?'), connaître les tendances/films les plus vus sur les serveurs, ou (pour l'admin) voir qui regarde quoi en direct.",
       parameters: {
         type: 'object',
         properties: {
@@ -301,6 +304,12 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
             enum: ['my_history', 'global_recent_and_trends', 'live_streams'],
             description:
               "'my_history' pour l'historique personnel du spectateur connecté, 'global_recent_and_trends' pour les lectures récentes et tendances sur les serveurs, 'live_streams' pour les lectures en cours"
+          },
+          mediaType: {
+            type: 'string',
+            enum: ['movie', 'tv', 'auto'],
+            description:
+              "'movie' si l'utilisateur demande spécifiquement le(s) dernier(s) film(s) vu(s), 'tv' pour les séries, 'auto' pour tout"
           },
           enrichTopCards: {
             type: 'boolean',
@@ -530,7 +539,7 @@ export class DeepSeekOrchestratorService {
     );
     if (configured.length === 0) return [];
 
-    const mode: LlmRoutingMode = this.config.llmRoutingMode || 'priority_cascade';
+    const mode: LlmRoutingMode = this.config.llmRoutingMode || 'manual';
     if (mode === 'manual') {
       const targetId: LlmProviderId = this.config.llmManualProvider || 'deepseek';
       const primary = configured.find((p) => p.id === targetId);
@@ -621,7 +630,7 @@ export class DeepSeekOrchestratorService {
     // Le message system reste 100% statique et immuable pour garantir un Cache Hit maximal sur le préfixe KV de DeepSeek ($0.028/1M au lieu de $0.28/1M)
     const messages: DeepSeekChatMessage[] = [
       { role: 'system', content: STATIC_FRENCH_SYSTEM_PROMPT },
-      ...history.slice(-2).map((m) => {
+      ...history.slice(-4).map((m) => {
         let content = m.content;
         if (m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0) {
           const cardsSummary = m.mediaCards
@@ -1198,41 +1207,62 @@ export class DeepSeekOrchestratorService {
         args.scope === 'my_history' || args.scope === 'live_streams'
           ? args.scope
           : 'global_recent_and_trends';
+      const mediaTypeFilter =
+        args.mediaType === 'movie' || args.mediaType === 'tv' ? args.mediaType : undefined;
       const enrichTopCards = Boolean(args.enrichTopCards ?? true);
 
       if (!this.tracearr || !this.tracearr.isConfigured()) {
         return { error: 'TRACEARR_NOT_CONFIGURED' };
       }
 
+      const connectedPlexUsername = params.plexAccess?.plexUsername || undefined;
       const [myOrGlobalHistory, liveStreams] = await Promise.all([
         this.tracearr.getWatchHistory({
-          plexUsername:
-            scope === 'my_history' ? params.plexAccess?.plexUsername || undefined : undefined,
+          plexUsername: scope === 'my_history' ? connectedPlexUsername : undefined,
+          mediaType: mediaTypeFilter,
           limit: 20
         }),
         this.tracearr.getActiveStreams()
       ]);
 
       if (enrichTopCards && myOrGlobalHistory.length > 0) {
-        const seenTmdb = new Set<number>();
+        const seenKeys = new Set<string>();
         const toEnrich = myOrGlobalHistory.filter((h) => {
-          if (!h.tmdbId || h.tmdbId <= 0 || seenTmdb.has(h.tmdbId) || seenTmdb.size >= 4) {
+          const cleanTitle = (h.showTitle || h.title.replace(/\s*\(S\d+E\d+\)$/i, '')).trim();
+          const key = h.tmdbId && h.tmdbId > 0 ? `tmdb:${h.tmdbId}` : `title:${cleanTitle.toLowerCase()}`;
+          if (seenKeys.has(key) || seenKeys.size >= 4) {
             return false;
           }
-          seenTmdb.add(h.tmdbId);
+          seenKeys.add(key);
           return true;
         });
 
         const enriched = await Promise.all(
           toEnrich.map(async (h) => {
             try {
-              return await this.aggregator.buildMediaEvidence({
-                tmdbId: h.tmdbId!,
-                mediaType: h.mediaType,
+              if (h.tmdbId && h.tmdbId > 0) {
+                return await this.aggregator.buildMediaEvidence({
+                  tmdbId: h.tmdbId,
+                  mediaType: h.mediaType,
+                  currentUserEmail: params.userEmail,
+                  currentUserOverseerrId: params.overseerrUserId,
+                  knownPlexHint: h.serverName ? { serverNames: [h.serverName] } : undefined
+                });
+              }
+              const cleanTitle = (h.showTitle || h.title.replace(/\s*\(S\d+E\d+\)$/i, '')).trim();
+              if (!cleanTitle) return null;
+              const verified = await this.aggregator.verifySpecificTitles({
+                items: [
+                  {
+                    title: cleanTitle,
+                    year: h.year ?? undefined,
+                    mediaType: h.mediaType
+                  }
+                ],
                 currentUserEmail: params.userEmail,
-                currentUserOverseerrId: params.overseerrUserId,
-                knownPlexHint: h.serverName ? { serverNames: [h.serverName] } : undefined
+                currentUserOverseerrId: params.overseerrUserId
               });
+              return verified[0] ?? null;
             } catch {
               return null;
             }
@@ -1247,6 +1277,10 @@ export class DeepSeekOrchestratorService {
       const isAdmin = this.config.adminEmails.includes(params.userEmail.toLowerCase());
       return {
         scope,
+        connectedUser: {
+          email: params.userEmail,
+          plexUsername: connectedPlexUsername ?? null
+        },
         activeStreams: isAdmin
           ? liveStreams
           : {

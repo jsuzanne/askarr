@@ -5,6 +5,23 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.8] - 2026-11-01
+
+### Modifié
+- **DeepSeek V3 (`deepseek-chat`) défini comme LLM principal par défaut (`llmRoutingMode: 'manual'`, `llmManualProvider: 'deepseek'`)** :
+  - Positionne `deepseek-chat` en tête du routeur multi-LLM pour bénéficier de sa précision de suivi d'instructions et de sa culture cinéma francophone, tout en conservant le basculement automatique (`failover`) vers les fournisseurs gratuits (Gemini, Groq, Mistral, OpenRouter) en cas d'indisponibilité.
+
+### Corrigé
+- **Fenêtre glissante de l'historique de conversation SQLite (`getConversationMessages`)** :
+  - Correction de la requête SQL (`ORDER BY created_at DESC, rowid DESC LIMIT ?` puis `.reverse()`) qui retournait auparavant les 6 premiers messages de la conversation au lieu des plus récents dès qu'une discussion dépassait 3 échanges, ce qui polluait le contexte du LLM avec d'anciens sujets résolus.
+- **Priorisation automatique des sorties cinéma récentes (2025/2026/2027) et homonymes (`verifySpecificTitles`, `searchAndCheckMedia`, `discoverByGenreOrTrending`)** :
+  - Lorsqu'un utilisateur demande un film actuellement à l'affiche sans préciser d'ancienne année (ex: *« Le Fantôme de l'Opéra »* 2026 vs 2004), Askarr interroge TMDB/Overseerr en temps réel et remonte systématiquement la sortie récente ($\ge N-1$) en priorité, même si le LLM a transmis une année antérieure issue de sa coupure d'entraînement.
+  - Prise en charge de `yearFilter` (`primaryReleaseDateGte` / `primaryReleaseDateLte`) sur la découverte TMDB/Overseerr.
+- **Historique de visionnage personnel Tracearr (`get_watch_history_and_live_streams`)** :
+  - Augmentation de la profondeur de récupération Tracearr (`limit=250`), ajout du filtre `mediaType` (`'movie' | 'tv'`) et enrichissement automatique par titre (`verifySpecificTitles`) lorsque `tmdbId` est absent dans Tracearr, évitant toute confusion avec les visionnages d'autres membres du foyer et garantissant l'affichage de l'affiche.
+
+---
+
 ## [1.2.7] - 2026-11-01
 
 ### Ajouté

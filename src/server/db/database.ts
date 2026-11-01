@@ -603,22 +603,24 @@ export class AskarrDatabase {
       .get(conversationId, userEmail) as { id: string } | undefined;
     if (!conv) return [];
 
-    const rows = this.db
-      .prepare(
-        `SELECT id, role, content, media_cards_json, provenance_json, created_at
-         FROM messages
-         WHERE conversation_id = ?
-         ORDER BY created_at ASC
-         LIMIT ?`
-      )
-      .all(conversationId, limit) as Array<{
-      id: string;
-      role: 'user' | 'assistant';
-      content: string;
-      media_cards_json: string | null;
-      provenance_json: string | null;
-      created_at: string;
-    }>;
+    const rows = (
+      this.db
+        .prepare(
+          `SELECT id, role, content, media_cards_json, provenance_json, created_at
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY created_at DESC, rowid DESC
+           LIMIT ?`
+        )
+        .all(conversationId, limit) as Array<{
+        id: string;
+        role: 'user' | 'assistant';
+        content: string;
+        media_cards_json: string | null;
+        provenance_json: string | null;
+        created_at: string;
+      }>
+    ).reverse();
 
     return rows.map((r) => ({
       id: r.id,

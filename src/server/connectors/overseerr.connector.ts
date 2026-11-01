@@ -541,17 +541,27 @@ export class OverseerrConnector {
     });
   }
 
-  public async discoverByGenreOrTrending(mediaType: 'movie' | 'tv' | 'auto', genre?: string): Promise<OverseerrSearchCandidate[]> {
+  public async discoverByGenreOrTrending(
+    mediaType: 'movie' | 'tv' | 'auto',
+    genre?: string,
+    yearFilter?: number
+  ): Promise<OverseerrSearchCandidate[]> {
     const targetType: MediaType = mediaType === 'tv' ? 'tv' : 'movie';
-    let endpoint = `/api/v1/discover/${targetType === 'movie' ? 'movies' : 'tv'}?page=1&language=fr`;
+    const yearParams =
+      yearFilter && yearFilter >= 1900 && yearFilter <= 2030
+        ? targetType === 'movie'
+          ? `&primaryReleaseDateGte=${yearFilter}-01-01&primaryReleaseDateLte=${yearFilter}-12-31`
+          : `&firstAirDateGte=${yearFilter}-01-01&firstAirDateLte=${yearFilter}-12-31`
+        : '';
+    let endpoint = `/api/v1/discover/${targetType === 'movie' ? 'movies' : 'tv'}?page=1&language=fr${yearParams}`;
     if (genre) {
       const gId = TMDB_GENRE_MAP_FR[genre.trim().toLowerCase()];
       if (gId) {
-        endpoint = `/api/v1/discover/${targetType === 'movie' ? 'movies' : 'tv'}/genre/${gId}?page=1&language=fr`;
+        endpoint = `/api/v1/discover/${targetType === 'movie' ? 'movies' : 'tv'}/genre/${gId}?page=1&language=fr${yearParams}`;
       }
     }
     const data = await this.getJson<{ results?: Array<Record<string, unknown>> }>(endpoint);
-    return (data.results || []).slice(0, 6).map((r) => {
+    const mapped = (data.results || []).map((r) => {
       const dateStr = String(r.releaseDate || r.firstAirDate || '');
       const year = dateStr.length >= 4 ? Number(dateStr.slice(0, 4)) || null : null;
       const posterPath = typeof r.posterPath === 'string' && r.posterPath.startsWith('/')
@@ -570,6 +580,11 @@ export class OverseerrConnector {
         mediaInfoStatus: typeof mediaInfo?.status === 'number' ? mediaInfo.status : null
       };
     });
+    if (yearFilter) {
+      const exactYear = mapped.filter((m) => m.year && Math.abs(m.year - yearFilter) <= 1);
+      if (exactYear.length > 0) return exactYear.slice(0, 6);
+    }
+    return mapped.slice(0, 6);
   }
 
   public async getUsers(forceRefresh = false): Promise<OverseerrUserSummary[]> {

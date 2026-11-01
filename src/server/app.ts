@@ -1495,7 +1495,7 @@ export async function createApp(deps: AppDependencies): Promise<{
           usageStats
         },
         llmRouter: {
-          routingMode: config.llmRoutingMode || 'priority_cascade',
+          routingMode: config.llmRoutingMode || 'manual',
           manualProvider: config.llmManualProvider || 'deepseek',
           activeProvidersCount: orchestrator.getProviderStatuses().filter((p) => p.configured).length,
           providers: orchestrator.getProviderStatuses()
@@ -1532,7 +1532,7 @@ export async function createApp(deps: AppDependencies): Promise<{
         deepseekModel: config.deepseekModel,
         deepseekApiKeyMasked: maskSecret(config.deepseekApiKey),
         deepseekApiKeyConfigured: Boolean(config.deepseekApiKey),
-        llmRoutingMode: config.llmRoutingMode || 'priority_cascade',
+        llmRoutingMode: config.llmRoutingMode || 'manual',
         llmManualProvider: config.llmManualProvider || 'deepseek',
         geminiModel: normalizeLlmModelSlug('gemini', config.geminiModel),
         geminiApiKeyMasked: maskSecret(config.geminiApiKey || ''),
