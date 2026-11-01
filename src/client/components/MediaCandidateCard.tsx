@@ -477,19 +477,6 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 </span>
               )}
 
-              {primaryPlexMatch && (
-                <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
-                  <Server className="h-3 w-3 text-emerald-400 shrink-0" />
-                  <span>
-                    Salle <strong className="text-stone-100">{primaryPlexMatch.libraryTitle}</strong> (
-                    {catalogPresence.availableServers && catalogPresence.availableServers.length > 0
-                      ? catalogPresence.availableServers.join(', ')
-                      : primaryPlexMatch.serverName}
-                    )
-                  </span>
-                </span>
-              )}
-
               {requesterName ? (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-amber-500/25 px-2 py-1 text-[11px] text-amber-200/90">
                   <Clock className="h-3 w-3 text-amber-400 shrink-0" />
@@ -510,7 +497,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
               {catalogPresence.state !== 'available_now' && cinemaDateFr && (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
                   <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
-                  <span>Salle : {cinemaDateFr}</span>
+                  <span>Sortie ciné : {cinemaDateFr}</span>
                 </span>
               )}
 

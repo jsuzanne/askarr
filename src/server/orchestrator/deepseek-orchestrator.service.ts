@@ -22,7 +22,7 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
 1. ZÉRO JARGON TECHNIQUE : Ne prononce jamais les mots "Radarr", "Sonarr", "Prowlarr", "Overseerr", "indexeur", "tracker", "torrent", "usenet", "passkey" ou "TMDB". Parle uniquement de "Plex", de "la liste d'attente automatique", de "sortie VOD / numérique" ou de "sortie DVD / Blu-Ray".
 2. ZÉRO LISTE DE FILMS SYSTÉMATIQUE — RÉPONSE PROPORTIONNÉE À LA DEMANDE :
    - Tu n'es PAS obligé de répondre avec une liste de films ! Adapte toujours la forme de ta réponse à l'intention réelle de l'utilisateur :
-   - Questions sur le compte, les accès aux serveurs/salles Plex, le fonctionnement ou salutations (ex: "à quels serveurs j'ai accès ?", "comment ça marche ?", "merci") : réponds directement en prose à partir du \`[Profil Plex connecté : ...]\` SANS appeler d'outil de découverte de films au hasard et SANS lister de films.
+   - Questions sur le compte, les accès aux serveurs Plex, le fonctionnement ou salutations (ex: "à quels serveurs j'ai accès ?", "comment ça marche ?", "merci") : réponds directement en prose à partir du \`[Profil Plex connecté : ...]\` SANS appeler d'outil de découverte de films au hasard et SANS lister de films.
    - Questions de suivi conversationnel (ex: "pourquoi ces films ?", "lequel est le plus court ?", "tu me conseilles lequel pour ce soir ?") : réponds directement en quelques phrases naturelles en t'appuyant sur les œuvres déjà affichées au tour précédent (\`[Fiches affichées : ...]\`), SANS réciter à nouveau toute la liste à puces ni relancer d'outil.
    - Demande au SINGULIER ("conseille-moi un super film", "quel est le dernier film ajouté ?", "as-tu Le Comte de Monte-Cristo ?") : réponds sur **UN SEUL film** (passe \`limit: 1\` à l'outil ou ne présente que l'œuvre précise demandée), jamais une liste de 5 films !
    - Demande au PLURIEL ("conseille-moi des films", "quoi de neuf cette semaine ?", "les films de Klapisch", "les films en liste d'attente") : présente de façon fluide 3 à 5 œuvres pertinentes. Évite les longues listes à puces répétitives puisque les fiches visuelles détaillées s'affichent déjà sous ton message.
@@ -36,9 +36,12 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - ZÉRO MÉLANGE HORS-SUJET : N'appelle jamais \`discover_and_recommend_media(scope='on_plex_now')\` au hasard quand l'utilisateur pose une question sur ses serveurs ou cherche un réalisateur, un acteur ou un film précis.
 4. ZÉRO INVENTION DE DISPONIBILITÉ :
    - Tu ne dois JAMAIS deviner si un film ou une série est sur Plex ou dans la liste d'attente : appelle un outil (\`verify_specific_titles\`, \`search_person_filmography\`, \`search_and_check_media\`, \`get_series_seasons_detail\`, \`discover_and_recommend_media\`) et base-toi exclusivement sur les preuves retournées.
-5. MULTI-SERVEURS PLEX, BIBLIOTHÈQUES SPÉCIALISÉES & ACCÈS PERSONNEL DE L'UTILISATEUR :
-   - Chaque fiche comporte \`availableServers\` (serveurs Plex où le film/série est présent : ex. \`["NucVillers", "NucBuntu"]\` ou \`["NucBuntu"]\`), \`userAllowedServers\` (serveurs auxquels le compte Plex de l'utilisateur a accès) et \`accessibleToCurrentUser\` (true/false).
-   - Précise toujours sur quel(s) serveur(s) Plex l'œuvre est disponible. Si \`accessibleToCurrentUser === false\`, préviens-le avec bienveillance ("Ce film est présent sur NucBuntu, mais ton compte Plex est rattaché à NucVillers").
+5. MULTI-SERVEURS PLEX & ACCÈS PERSONNEL DE L'UTILISATEUR (JAMAIS LE MOT "SALLE") :
+   - N'utilise JAMAIS le mot "salle" pour désigner un serveur ou une bibliothèque Plex : parle toujours de **"serveur(s) Plex"** (et éventuellement de "bibliothèque").
+   - Ce que l'utilisateur veut savoir avant tout, c'est **s'il peut le regarder et sur quel(s) serveur(s) Plex auxquels IL a accès** (\`userAccessibleServers\`).
+   - Chaque fiche comporte \`userAccessibleServers\` (les serveurs Plex auxquels l'utilisateur connecté a personnellement accès et où le titre est présent), \`userAllowedServers\` (tous les serveurs Plex autorisés pour ce compte) et \`accessibleToCurrentUser\` (true/false).
+   - Quand un titre est disponible pour l'utilisateur (\`accessibleToCurrentUser !== false\`), cite UNIQUEMENT ses serveurs accessibles \`userAccessibleServers\` (ex: "Oui, il est disponible sur ton serveur Plex **NucBuntu**" s'il n'a accès qu'à NucBuntu, ou "Oui, il est disponible sur tous tes serveurs Plex (**NucVillers, NucBuntu, EQ12buntu, MacMini et Macmini4**)" s'il a accès aux 5). Ne cite JAMAIS un serveur Plex auquel l'utilisateur n'a pas accès comme s'il pouvait le regarder dessus !
+   - Si \`accessibleToCurrentUser === false\`, préviens-le avec bienveillance ("Ce film est présent sur le serveur Plex ..., mais ton compte Plex a uniquement accès à ...").
 6. ORIGINE DES DEMANDES (QUI A DEMANDÉ vs LISTE AUTOMATIQUE), LISTE D'ATTENTE & SORTIES VOD / DVD :
    - Savoir **qui a demandé** un film et **d'où il vient** est fondamental : chaque fiche indique \`requestedBy\` (le nom de l'utilisateur qui a fait la demande) et \`sourceOrigin\` (\`'overseerr_user'\` s'il a été demandé par un utilisateur précis, ou \`'auto_list'\` s'il a été programmé automatiquement via une liste).
    - Si un film figure dans la liste d'attente (\`monitored_waiting_release\` / \`monitored_searching\` / \`canRequestNow=false\`) ou si l'utilisateur demande qui l'a demandé :
@@ -620,12 +623,12 @@ export class DeepSeekOrchestratorService {
     let failoverFromLabel: string | undefined;
     const tStart = Date.now();
 
+    const allowedSrvList =
+      params.plexAccess && params.plexAccess.askarrServerNames.length > 0
+        ? params.plexAccess.askarrServerNames.join(', ')
+        : 'Aucun';
     const userAccessContext = params.plexAccess
-      ? `\n[Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Salles autorisées : ${
-          params.plexAccess.askarrServerNames.length > 0
-            ? params.plexAccess.askarrServerNames.join(', ')
-            : 'Aucune'
-        } | NucVillers & NucBuntu : Films, Séries TV, Enfants, Films Legacy | NucBuntu exclusif : Cinephile, Films 4K, Horror, Musical]`
+      ? `\n[Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Serveurs Plex auxquels cet utilisateur a accès : ${allowedSrvList} — IMPORTANT : dans ta réponse, indique la disponibilité UNIQUEMENT par rapport aux serveurs Plex de cet utilisateur (${allowedSrvList}) et n'utilise jamais le mot "salle".]`
       : '';
 
     // Le message system reste 100% statique et immuable pour garantir un Cache Hit maximal sur le préfixe KV de DeepSeek ($0.028/1M au lieu de $0.28/1M)
@@ -635,10 +638,18 @@ export class DeepSeekOrchestratorService {
         let content = m.content;
         if (m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0) {
           const cardsSummary = m.mediaCards
-            .map(
-              (c) =>
-                `${c.identity.titleFr}${c.identity.year ? ` (${c.identity.year})` : ''} [tmdbId=${c.identity.tmdbId}, état=${c.catalogPresence.state}]`
-            )
+            .map((c) => {
+              const availSrvs = c.catalogPresence.availableServers || [];
+              const userSrvs =
+                params.plexAccess?.askarrServerNames && availSrvs.length > 0
+                  ? availSrvs.filter((s) =>
+                      params.plexAccess!.askarrServerNames.some((u) => u.toLowerCase() === s.toLowerCase())
+                    )
+                  : c.catalogPresence.userAccessibleServers || availSrvs;
+              const srvNote =
+                userSrvs.length > 0 ? `, serveurs_accessibles_user=${userSrvs.join(',')}` : '';
+              return `${c.identity.titleFr}${c.identity.year ? ` (${c.identity.year})` : ''} [tmdbId=${c.identity.tmdbId}, état=${c.catalogPresence.state}${srvNote}]`;
+            })
             .join(' | ');
           content += `\n[Fiches affichées : ${cardsSummary}]`;
         }
@@ -683,10 +694,39 @@ export class DeepSeekOrchestratorService {
         }
 
         if (!choice.tool_calls || choice.tool_calls.length === 0) {
-          const allCards = collectedCards.size > 0 ? Array.from(collectedCards.values()) : [];
+          let allCards = collectedCards.size > 0 ? Array.from(collectedCards.values()) : [];
           const replyText = (choice.content || '').trim() || this.buildDeterministicSummary(allCards);
+
+          // Si le LLM a répondu sans appeler d'outil (car l'œuvre était déjà dans l'historique de la conversation),
+          // récupérer les fiches de l'historique mentionnées dans sa réponse et les adapter aux serveurs Plex de l'utilisateur courant
+          if (allCards.length === 0 && history.length > 0) {
+            const historyCardsMap = new Map<string, MediaEvidence>();
+            for (const m of history.slice(-6)) {
+              for (const c of m.mediaCards || []) {
+                historyCardsMap.set(
+                  `${c.identity.mediaType}:${c.identity.tmdbId}`,
+                  this.adaptCardToUserAccess(c, params.plexAccess?.askarrServerNames)
+                );
+              }
+            }
+            const historyCards = Array.from(historyCardsMap.values());
+            if (historyCards.length > 0) {
+              const matchedFromHistory = this.filterRelevantCardsForReply(
+                replyText,
+                historyCards,
+                1,
+                true
+              );
+              allCards = matchedFromHistory;
+            }
+          }
+
           const mediaCards =
-            allCards.length > 0 ? this.filterRelevantCardsForReply(replyText, allCards, toolRounds) : [];
+            allCards.length > 0
+              ? this.filterRelevantCardsForReply(replyText, allCards, toolRounds).map((c) =>
+                  this.adaptCardToUserAccess(c, params.plexAccess?.askarrServerNames)
+                )
+              : [];
           const costUsd = usedProvider.isFree
             ? 0
             : this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
@@ -970,6 +1010,11 @@ export class DeepSeekOrchestratorService {
   }): Promise<unknown> {
     const { fnName, args } = params;
 
+    const userAllowedServers =
+      params.plexAccess?.askarrServerNames && params.plexAccess.askarrServerNames.length > 0
+        ? params.plexAccess.askarrServerNames
+        : undefined;
+
     if (fnName === 'search_and_check_media') {
       const query = String(args.query || '').trim();
       const mediaType =
@@ -982,6 +1027,7 @@ export class DeepSeekOrchestratorService {
         year,
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId,
+        userAllowedServers,
         userQueryContext: params.userMessage
       });
       params.onCardsCollected(res.candidates);
@@ -1003,6 +1049,7 @@ export class DeepSeekOrchestratorService {
         mediaType,
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId,
+        userAllowedServers,
         maxCandidates: 5
       });
       params.onCardsCollected(res.candidates);
@@ -1027,6 +1074,7 @@ export class DeepSeekOrchestratorService {
         items,
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId,
+        userAllowedServers,
         userQueryContext: params.userMessage
       });
       params.onCardsCollected(cards);
@@ -1040,6 +1088,7 @@ export class DeepSeekOrchestratorService {
         mediaType: 'tv',
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId,
+        userAllowedServers,
         includeSeasons: true,
         checkIndexers: false
       });
@@ -1059,6 +1108,7 @@ export class DeepSeekOrchestratorService {
         mediaType,
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId,
+        userAllowedServers,
         includeSeasons: mediaType === 'tv',
         checkIndexers: wantIndexers
       });
@@ -1088,7 +1138,8 @@ export class DeepSeekOrchestratorService {
         plexLibraryFilter,
         limit,
         currentUserEmail: params.userEmail,
-        currentUserOverseerrId: params.overseerrUserId
+        currentUserOverseerrId: params.overseerrUserId,
+        userAllowedServers
       });
       params.onCardsCollected(cards);
       return this.compactCardsForLlm(cards);
@@ -1102,6 +1153,7 @@ export class DeepSeekOrchestratorService {
           ? await this.aggregator.getWaitingListAndRequests({
               currentUserEmail: params.userEmail,
               currentUserOverseerrId: params.overseerrUserId,
+              userAllowedServers,
               onlyCurrentUser,
               limit
             })
@@ -1111,7 +1163,8 @@ export class DeepSeekOrchestratorService {
                   tmdbId: r.tmdbId,
                   mediaType: r.mediaType,
                   currentUserEmail: params.userEmail,
-                  currentUserOverseerrId: params.overseerrUserId
+                  currentUserOverseerrId: params.overseerrUserId,
+                  userAllowedServers
                 })
               )
             );
@@ -1124,10 +1177,7 @@ export class DeepSeekOrchestratorService {
         args.mediaType === 'movie' || args.mediaType === 'tv' ? args.mediaType : undefined;
       const daysBack = typeof args.daysBack === 'number' && args.daysBack > 0 ? args.daysBack : 21;
       const cardLimit = Math.min(8, Math.max(1, typeof args.limit === 'number' ? args.limit : 5));
-      const allowedServers =
-        params.plexAccess?.askarrServerNames && params.plexAccess.askarrServerNames.length > 0
-          ? params.plexAccess.askarrServerNames
-          : undefined;
+      const allowedServers = userAllowedServers;
 
       const recentItems = this.tracearr
         ? await this.tracearr.getRecentlyAdded({
@@ -1155,6 +1205,7 @@ export class DeepSeekOrchestratorService {
                 mediaType: item.mediaType,
                 currentUserEmail: params.userEmail,
                 currentUserOverseerrId: params.overseerrUserId,
+                userAllowedServers,
                 knownPlexHint
               });
             }
@@ -1168,7 +1219,8 @@ export class DeepSeekOrchestratorService {
                 }
               ],
               currentUserEmail: params.userEmail,
-              currentUserOverseerrId: params.overseerrUserId
+              currentUserOverseerrId: params.overseerrUserId,
+              userAllowedServers
             });
             return verified[0] ?? null;
           } catch {
@@ -1258,6 +1310,7 @@ export class DeepSeekOrchestratorService {
                   mediaType: h.mediaType,
                   currentUserEmail: params.userEmail,
                   currentUserOverseerrId: params.overseerrUserId,
+                  userAllowedServers,
                   knownPlexHint: h.serverName ? { serverNames: [h.serverName] } : undefined
                 });
               }
@@ -1272,7 +1325,8 @@ export class DeepSeekOrchestratorService {
                   }
                 ],
                 currentUserEmail: params.userEmail,
-                currentUserOverseerrId: params.overseerrUserId
+                currentUserOverseerrId: params.overseerrUserId,
+                userAllowedServers
               });
               return verified[0] ?? null;
             } catch {
@@ -1372,6 +1426,8 @@ export class DeepSeekOrchestratorService {
         ratingSur10:
           c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage ?? undefined,
         plexState: c.catalogPresence.state,
+        userAccessibleServers: c.catalogPresence.userAccessibleServers,
+        userAllowedServers: c.catalogPresence.userAllowedServers,
         availableServers: c.catalogPresence.availableServers,
         plexLibraries: libs.length > 0 ? libs : undefined,
         accessibleToCurrentUser: c.catalogPresence.accessibleToCurrentUser,
@@ -1836,13 +1892,70 @@ export class DeepSeekOrchestratorService {
   /**
    * Évite le mélange de cartes hors-sujet (ex: Star Wars ou Raiders of the Lost Ark
    * issus d'un appel d'exploration Plex intermédiaire alors que la réponse porte sur Klapisch).
+  /**
+   * Adapte dynamiquement les libellés d'une carte média (ex: récupérée de l'historique)
+   * aux serveurs Plex réellement accessibles par l'utilisateur courant.
    */
+  public adaptCardToUserAccess(card: MediaEvidence, userAllowedServers?: string[]): MediaEvidence {
+    if (card.catalogPresence.state !== 'available_now') {
+      return card;
+    }
+    const allAvailable: string[] =
+      card.catalogPresence.availableServers && card.catalogPresence.availableServers.length > 0
+        ? card.catalogPresence.availableServers
+        : Array.from(new Set(card.catalogPresence.matchedItems.map((m) => m.serverName)));
+
+    const allowedNorm = new Set((userAllowedServers || []).map((s) => s.toLowerCase()));
+    const userServers =
+      allowedNorm.size > 0
+        ? allAvailable.filter((s) => allowedNorm.has(s.toLowerCase()))
+        : allAvailable;
+
+    let statusLabel: string;
+    let explanationFr: string;
+
+    if (userServers.length > 0) {
+      statusLabel =
+        userServers.length === 1
+          ? `Disponible sur ton serveur Plex (${userServers[0]})`
+          : `Disponible sur tes serveurs Plex (${userServers.join(', ')})`;
+      explanationFr = `Ce titre est déjà disponible sur ${
+        userServers.length === 1
+          ? `ton serveur Plex (${userServers[0]})`
+          : `tes serveurs Plex (${userServers.join(', ')})`
+      }. Tu peux le regarder tout de suite !`;
+    } else if (allAvailable.length > 0) {
+      statusLabel = `Disponible sur Plex (${allAvailable.join(', ')})`;
+      explanationFr = `Ce titre est présent sur le serveur Plex ${allAvailable.join(', ')}.`;
+    } else {
+      statusLabel = 'Disponible sur Plex';
+      explanationFr = 'Ce titre est déjà disponible sur Plex. Tu peux le regarder tout de suite !';
+    }
+
+    return {
+      ...card,
+      catalogPresence: {
+        ...card.catalogPresence,
+        availableServers: allAvailable,
+        userAccessibleServers: userServers,
+        userAllowedServers: userAllowedServers || [],
+        accessibleToCurrentUser: userServers.length > 0
+      },
+      actionability: {
+        ...card.actionability,
+        userFriendlyStatusLabel: statusLabel,
+        userFriendlyExplanationFr: explanationFr
+      }
+    };
+  }
+
   public filterRelevantCardsForReply(
     replyText: string,
     allCards: MediaEvidence[],
-    toolRounds: number
+    toolRounds: number,
+    requireMention = false
   ): MediaEvidence[] {
-    if (allCards.length <= 1) return allCards;
+    if (!requireMention && allCards.length <= 1) return allCards;
 
     const norm = (s: string) =>
       s
@@ -1921,6 +2034,9 @@ export class DeepSeekOrchestratorService {
 
     // Si des cartes TMDB réelles ont été trouvées ET des cartes synthétiques Plex non mentionnées sont présentes,
     // on élimine les cartes synthétiques non mentionnées.
+    if (requireMention) {
+      return [];
+    }
     const hasSyntheticPlexCards = allCards.some((c) => c.identity.tmdbId < 0);
     const realCards = allCards.filter((c) => c.identity.tmdbId > 0);
     if (realCards.length > 0 && hasSyntheticPlexCards) {

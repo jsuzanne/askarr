@@ -1436,6 +1436,7 @@ export function App() {
                 onClick={() => {
                   setWorkspaceMode('user');
                   setViewerUserMode(false);
+                  setConversationId(undefined);
                 }}
                 className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'user' && !viewerUserMode
@@ -1453,6 +1454,7 @@ export function App() {
                   setWorkspaceMode('user');
                   setViewerUserMode(true);
                   setViewerImmersiveHeader(false);
+                  setConversationId(undefined);
                 }}
                 className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'user' && viewerUserMode
@@ -1682,7 +1684,7 @@ export function App() {
                           ? activeViewerSim.askarrServerNames
                           : session.plexAccess?.askarrServerNames || [];
                       return visibleServers.length > 0
-                        ? ` • ${visibleServers.length} salle${visibleServers.length > 1 ? 's' : ''} Plex`
+                        ? ` • ${visibleServers.length} serveur${visibleServers.length > 1 ? 's' : ''} Plex`
                         : '';
                     })()}
                   </div>
@@ -1743,7 +1745,7 @@ export function App() {
 
                 <div className="flex items-center gap-2 text-xs text-stone-400 shrink-0">
                   <div className="hidden lg:flex items-center gap-1.5">
-                    <span className="text-stone-500">Salles Plex :</span>
+                    <span className="text-stone-500">Serveurs Plex :</span>
                     {(isViewerPreview && activeViewerSim
                       ? activeViewerSim.askarrServerNames
                       : session?.plexAccess && session.plexAccess.askarrServerNames.length > 0
@@ -2030,14 +2032,17 @@ export function App() {
               </label>
               <select
                 value={viewerProfilePreset}
-                onChange={(e) => setViewerProfilePreset(e.target.value)}
+                onChange={(e) => {
+                  setViewerProfilePreset(e.target.value);
+                  setConversationId(undefined);
+                }}
                 className="rounded-lg bg-black/80 border border-emerald-500/50 px-2.5 py-1 text-emerald-100 font-medium text-xs focus:outline-none focus:border-emerald-300"
               >
                 <option value="cinephile_2salles">
-                  🎬 Membre Cinéphile (NucVillers + NucBuntu — 2 salles Plex)
+                  🎬 Membre Cinéphile (NucVillers + NucBuntu — 2 serveurs Plex)
                 </option>
                 <option value="standard_nucvillers">
-                  🍿 Spectateur Standard (NucVillers uniquement — 1 salle Plex)
+                  🍿 Spectateur Standard (NucVillers uniquement — 1 serveur Plex)
                 </option>
                 <option value="all_servers">
                   👑 Tous les serveurs (Mon profil complet sans traces)
@@ -2186,7 +2191,7 @@ export function App() {
                               </span>
                             </div>
                             <span className="text-[11px] sm:text-xs text-stone-400 font-mono">
-                              Salle Plex HD/4K
+                              Serveurs Plex HD/4K
                             </span>
                           </div>
                         </>

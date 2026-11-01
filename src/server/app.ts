@@ -266,9 +266,16 @@ export async function createApp(deps: AppDependencies): Promise<{
 
     let plexAccess: UserSessionInfo['plexAccess'];
     try {
+      const isLinkedToOwner = Boolean(
+        overseerrUser?.id === 1 ||
+          alias?.overseerrUserId === 1 ||
+          (alias?.overseerrEmail &&
+            config.adminEmails.some((a) => a.toLowerCase() === alias.overseerrEmail.toLowerCase()))
+      );
       const resolvedAccess = await plex.resolveUserPlexServerAccess({
         email: principal.email,
         isAdmin: principal.role === 'admin',
+        isOwnerAccount: isLinkedToOwner,
         overseerrPlexUsername: overseerrUser?.plexUsername ?? alias?.plexUsername,
         aliasPlexEmail: alias?.overseerrEmail
       });
@@ -389,7 +396,8 @@ export async function createApp(deps: AppDependencies): Promise<{
       mediaType: query.type,
       year: query.year,
       currentUserEmail: session.email,
-      currentUserOverseerrId: session.overseerr.overseerrUserId
+      currentUserOverseerrId: session.overseerr.overseerrUserId,
+      userAllowedServers: session.plexAccess?.askarrServerNames
     });
   });
 
@@ -407,6 +415,7 @@ export async function createApp(deps: AppDependencies): Promise<{
       mediaType: params.mediaType,
       currentUserEmail: session.email,
       currentUserOverseerrId: session.overseerr.overseerrUserId,
+      userAllowedServers: session.plexAccess?.askarrServerNames,
       includeSeasons: params.mediaType === 'tv',
       checkIndexers: false
     });
@@ -428,7 +437,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     const cards = await aggregator.discoverAndRecommend({
       ...query,
       currentUserEmail: session.email,
-      currentUserOverseerrId: session.overseerr.overseerrUserId
+      currentUserOverseerrId: session.overseerr.overseerrUserId,
+      userAllowedServers: session.plexAccess?.askarrServerNames
     });
     return { items: cards };
   });
@@ -439,6 +449,7 @@ export async function createApp(deps: AppDependencies): Promise<{
     const items = await aggregator.getWaitingListAndRequests({
       currentUserEmail: session.email,
       currentUserOverseerrId: session.overseerr.overseerrUserId,
+      userAllowedServers: session.plexAccess?.askarrServerNames,
       onlyCurrentUser: false,
       limit: 8
     });

@@ -39,6 +39,7 @@ export class MediaAggregatorService {
     year?: number;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
     maxCandidates?: number;
     userQueryContext?: string;
   }): Promise<{
@@ -108,24 +109,59 @@ export class MediaAggregatorService {
     }
 
     const topCandidates = filtered.slice(0, maxCandidates);
-    const enriched = await Promise.all(
+    const enrichedRaw = await Promise.all(
       topCandidates.map((c) =>
         this.buildMediaEvidence({
           tmdbId: c.tmdbId,
           mediaType: c.mediaType,
           currentUserEmail: params.currentUserEmail,
           currentUserOverseerrId: params.currentUserOverseerrId,
+          userAllowedServers: params.userAllowedServers,
           includeSeasons: c.mediaType === 'tv',
           checkIndexers: false
         })
       )
     );
 
-    const exactMatches = enriched.filter(
+    const isExactTitle = (e: MediaEvidence) =>
+      normTitle(e.identity.titleFr) === normQuery ||
+      normTitle(e.identity.originalTitle) === normQuery;
+
+    const hasMainFeatureOrPlexMatch = enrichedRaw.some(
       (e) =>
-        normTitle(e.identity.titleFr) === normQuery ||
-        normTitle(e.identity.originalTitle) === normQuery
+        e.catalogPresence.state === 'available_now' ||
+        e.catalogPresence.state === 'partially_available' ||
+        (isExactTitle(e) && (e.identity.runtimeMinutes === null || e.identity.runtimeMinutes >= 45))
     );
+
+    // Filtrer les courts-métrages obscurs non présents sur Plex (< 45 min, ex: "Better Man" 2025 6 min)
+    // lorsqu'un long-métrage ou un titre déjà présent sur Plex correspond à la recherche
+    const enriched = hasMainFeatureOrPlexMatch
+      ? enrichedRaw.filter(
+          (e) =>
+            e.catalogPresence.state !== 'not_in_catalog' ||
+            e.identity.runtimeMinutes === null ||
+            e.identity.runtimeMinutes === 0 ||
+            e.identity.runtimeMinutes >= 45
+        )
+      : enrichedRaw;
+
+    // Toujours classer en premier les titres déjà disponibles sur Plex ou en cours d'acquisition
+    enriched.sort((a, b) => {
+      const rankState = (ev: MediaEvidence) => {
+        if (ev.catalogPresence.state === 'available_now') return 3;
+        if (ev.catalogPresence.state === 'partially_available') return 2;
+        if (ev.acquisitionPipeline.state !== 'not_in_arr' && ev.acquisitionPipeline.state !== 'unknown') return 1;
+        return 0;
+      };
+      const rDiff = rankState(b) - rankState(a);
+      if (rDiff !== 0) return rDiff;
+      const aExact = isExactTitle(a) ? 1 : 0;
+      const bExact = isExactTitle(b) ? 1 : 0;
+      return bExact - aExact;
+    });
+
+    const exactMatches = enriched.filter(isExactTitle);
 
     const finalCandidates =
       exactMatches.length === 1
@@ -351,6 +387,7 @@ export class MediaAggregatorService {
     mediaType: MediaType;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
     includeSeasons?: boolean;
     checkIndexers?: boolean;
     knownPlexHint?: { serverNames: string[]; libraryTitle?: string };
@@ -760,23 +797,27 @@ export class MediaAggregatorService {
       availableServers = Array.from(serversSet);
     }
 
-    let userAllowedServers: string[] | undefined;
+    let userAllowedServers: string[] | undefined =
+      params.userAllowedServers && params.userAllowedServers.length > 0
+        ? params.userAllowedServers
+        : undefined;
     let userAccessibleServers: string[] | undefined;
     let accessibleToCurrentUser: boolean | undefined;
 
-    if (params.currentUserEmail && typeof this.plex.resolveUserPlexServerAccess === 'function') {
+    if (!userAllowedServers && params.currentUserEmail && typeof this.plex.resolveUserPlexServerAccess === 'function') {
       const access = await this.plex.resolveUserPlexServerAccess({
         email: params.currentUserEmail
       });
       if (access && access.askarrServerNames.length > 0) {
         userAllowedServers = access.askarrServerNames;
-        if (availableServers.length > 0) {
-          userAccessibleServers = availableServers.filter((srv) =>
-            userAllowedServers!.some((u) => u.toLowerCase() === srv.toLowerCase())
-          );
-          accessibleToCurrentUser = userAccessibleServers.length > 0;
-        }
       }
+    }
+
+    if (userAllowedServers && userAllowedServers.length > 0 && availableServers.length > 0) {
+      userAccessibleServers = availableServers.filter((srv) =>
+        userAllowedServers!.some((u) => u.toLowerCase() === srv.toLowerCase())
+      );
+      accessibleToCurrentUser = userAccessibleServers.length > 0;
     }
 
     // Une saison est demandable / complétable si elle n'est pas encore demandée ('not_requested')
@@ -913,36 +954,48 @@ export class MediaAggregatorService {
     if (params.catalogState === 'available_now' && firstMatch) {
       const serversList =
         params.availableServers && params.availableServers.length > 0
-          ? params.availableServers.join(' & ')
+          ? params.availableServers.join(', ')
           : firstMatch.serverName;
 
       if (params.accessibleToCurrentUser === false && params.userAllowedServers?.length) {
+        const allowedList = params.userAllowedServers.join(', ');
         return {
           canRequestNow: false,
           requestableSeasons: [],
           blockReason: 'ALREADY_AVAILABLE_ON_PLEX',
-          userFriendlyStatusLabel: `Sur Plex (${firstMatch.libraryTitle} • ${serversList})`,
-          userFriendlyExplanationFr: `Disponible sur le serveur Plex ${serversList} (bibliothèque « ${firstMatch.libraryTitle} »). Attention : ton compte Plex est rattaché à ${params.userAllowedServers.join(' & ')}.`,
+          userFriendlyStatusLabel: `Non dispo sur ton serveur Plex (${allowedList}) — présent sur ${serversList}`,
+          userFriendlyExplanationFr: `Ce titre est présent sur le serveur Plex ${serversList} (bibliothèque « ${firstMatch.libraryTitle} »), mais ton compte Plex a uniquement accès à ${allowedList}.`,
           statusTone: 'amber'
         };
       }
-
-      const locationText = firstMatch.isSharedAcrossAllServers
-        ? `Bibliothèque « ${firstMatch.libraryTitle} » (serveurs Plex : ${serversList})`
-        : `Bibliothèque « ${firstMatch.libraryTitle} » (serveur Plex : ${firstMatch.serverName})`;
 
       const requesterNote = params.requestedByDisplayName
         ? ` (Demandé par ${params.requestedByDisplayName})`
         : '';
 
+      if (params.userAccessibleServers && params.userAccessibleServers.length > 0) {
+        const userSrvList = params.userAccessibleServers.join(', ');
+        const isSingle = params.userAccessibleServers.length === 1;
+        return {
+          canRequestNow: false,
+          requestableSeasons: [],
+          blockReason: 'ALREADY_AVAILABLE_ON_PLEX',
+          userFriendlyStatusLabel: isSingle
+            ? `Disponible sur ton serveur Plex (${userSrvList})`
+            : `Disponible sur tes serveurs Plex (${userSrvList})`,
+          userFriendlyExplanationFr: `Disponible immédiatement sur ${
+            isSingle ? `ton serveur Plex ${userSrvList}` : `tes serveurs Plex (${userSrvList})`
+          } dans la bibliothèque « ${firstMatch.libraryTitle} ».${requesterNote}`,
+          statusTone: 'emerald'
+        };
+      }
+
       return {
         canRequestNow: false,
         requestableSeasons: [],
         blockReason: 'ALREADY_AVAILABLE_ON_PLEX',
-        userFriendlyStatusLabel: firstMatch.isSharedAcrossAllServers
-          ? `Disponible sur Plex (${firstMatch.libraryTitle} • ${serversList})`
-          : `Disponible sur Plex (${firstMatch.libraryTitle} • ${firstMatch.serverName})`,
-        userFriendlyExplanationFr: `Ce titre est déjà disponible sur Plex dans la ${locationText}.${requesterNote}`,
+        userFriendlyStatusLabel: `Disponible sur Plex (${serversList})`,
+        userFriendlyExplanationFr: `Ce titre est déjà disponible sur Plex (serveur(s) : ${serversList}, bibliothèque « ${firstMatch.libraryTitle} »).${requesterNote}`,
         statusTone: 'emerald'
       };
     }
@@ -1084,6 +1137,7 @@ export class MediaAggregatorService {
     mediaType?: 'movie' | 'tv' | 'auto';
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
     maxCandidates?: number;
   }): Promise<{
     personName: string | null;
@@ -1108,6 +1162,7 @@ export class MediaAggregatorService {
           mediaType: c.mediaType,
           currentUserEmail: params.currentUserEmail,
           currentUserOverseerrId: params.currentUserOverseerrId,
+          userAllowedServers: params.userAllowedServers,
           includeSeasons: c.mediaType === 'tv',
           checkIndexers: false
         })
@@ -1137,6 +1192,7 @@ export class MediaAggregatorService {
     }>;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
     userQueryContext?: string;
   }): Promise<MediaEvidence[]> {
     const cleanItems = params.items
@@ -1222,19 +1278,39 @@ export class MediaAggregatorService {
               }
             }
 
-            const built = await Promise.all(
+            const builtRaw = await Promise.all(
               candidatesToEnrich.map((cand) =>
                 this.buildMediaEvidence({
                   tmdbId: cand.tmdbId,
                   mediaType: cand.mediaType,
                   currentUserEmail: params.currentUserEmail,
                   currentUserOverseerrId: params.currentUserOverseerrId,
+                  userAllowedServers: params.userAllowedServers,
                   includeSeasons: cand.mediaType === 'tv',
                   checkIndexers: false,
                   knownPlexHint: cand.tmdbId === best.tmdbId ? item.knownPlexHint : undefined
                 })
               )
             );
+            const hasFeatureOrPlex = builtRaw.some(
+              (e) =>
+                e.catalogPresence.state === 'available_now' ||
+                (e.identity.runtimeMinutes === null || e.identity.runtimeMinutes >= 45)
+            );
+            const built = hasFeatureOrPlex
+              ? builtRaw.filter(
+                  (e) =>
+                    e.catalogPresence.state !== 'not_in_catalog' ||
+                    e.identity.runtimeMinutes === null ||
+                    e.identity.runtimeMinutes === 0 ||
+                    e.identity.runtimeMinutes >= 45
+                )
+              : builtRaw;
+            built.sort((a, b) => {
+              const aAvail = a.catalogPresence.state === 'available_now' ? 1 : 0;
+              const bAvail = b.catalogPresence.state === 'available_now' ? 1 : 0;
+              return bAvail - aAvail;
+            });
             return built;
           } catch {
             return [];
@@ -1253,6 +1329,7 @@ export class MediaAggregatorService {
             mediaType: loc.mediaType,
             currentUserEmail: params.currentUserEmail,
             currentUserOverseerrId: params.currentUserOverseerrId,
+            userAllowedServers: params.userAllowedServers,
             includeSeasons: loc.mediaType === 'tv',
             checkIndexers: false
           });
@@ -1287,6 +1364,7 @@ export class MediaAggregatorService {
     limit?: number;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
   }): Promise<MediaEvidence[]> {
     const requestedLimit = params.limit && params.limit > 0 ? Math.min(8, params.limit) : undefined;
     if (params.scope === 'on_plex_now' || params.plexLibraryFilter) {
@@ -1305,8 +1383,11 @@ export class MediaAggregatorService {
           ? this.plex.getConfiguredServers().map((s) => s.name)
           : ['NucVillers', 'NucBuntu'];
 
-      let userAllowedServers: string[] | undefined;
-      if (params.currentUserEmail && typeof this.plex.resolveUserPlexServerAccess === 'function') {
+      let userAllowedServers: string[] | undefined =
+        params.userAllowedServers && params.userAllowedServers.length > 0
+          ? params.userAllowedServers
+          : undefined;
+      if (!userAllowedServers && params.currentUserEmail && typeof this.plex.resolveUserPlexServerAccess === 'function') {
         const access = await this.plex.resolveUserPlexServerAccess({
           email: params.currentUserEmail
         });
@@ -1330,7 +1411,8 @@ export class MediaAggregatorService {
         const accessibleToCurrentUser = userAccessibleServers
           ? userAccessibleServers.length > 0
           : undefined;
-        const serversList = availableServers.join(' & ');
+        const serversList = availableServers.join(', ');
+        const userSrvList = userAccessibleServers?.length ? userAccessibleServers.join(', ') : serversList;
 
         return {
           identity: {
@@ -1411,13 +1493,21 @@ export class MediaAggregatorService {
             requestableSeasons: [],
             blockReason: 'ALREADY_AVAILABLE_ON_PLEX',
             userFriendlyStatusLabel:
-              accessibleToCurrentUser === false
-                ? `Sur Plex (${item.librarySectionTitle} • ${serversList})`
-                : `Disponible sur Plex (${item.librarySectionTitle} • ${serversList})`,
+              accessibleToCurrentUser === false && userAllowedServers?.length
+                ? `Non dispo sur ton serveur Plex (${userAllowedServers.join(', ')}) — présent sur ${serversList}`
+                : userAccessibleServers?.length === 1
+                  ? `Disponible sur ton serveur Plex (${userSrvList})`
+                  : userAccessibleServers && userAccessibleServers.length > 1
+                    ? `Disponible sur tes serveurs Plex (${userSrvList})`
+                    : `Disponible sur Plex (${serversList})`,
             userFriendlyExplanationFr:
               accessibleToCurrentUser === false && userAllowedServers?.length
-                ? `Disponible sur le serveur Plex ${serversList} (bibliothèque « ${item.librarySectionTitle} »). Attention : ton compte Plex est rattaché à ${userAllowedServers.join(' & ')}.`
-                : `Disponible immédiatement dans la bibliothèque « ${item.librarySectionTitle} » (serveurs Plex : ${serversList}).`,
+                ? `Ce titre est présent sur le serveur Plex ${serversList} (bibliothèque « ${item.librarySectionTitle} »), mais ton compte Plex a uniquement accès à ${userAllowedServers.join(', ')}.`
+                : `Disponible immédiatement sur ${
+                    userAccessibleServers?.length === 1
+                      ? `ton serveur Plex ${userSrvList}`
+                      : `tes serveurs Plex (${userSrvList})`
+                  } dans la bibliothèque « ${item.librarySectionTitle} ».`,
             statusTone: accessibleToCurrentUser === false ? 'amber' : 'emerald'
           },
           provenance: idx === 0 ? plexDisc.provenance : []
@@ -1450,6 +1540,7 @@ export class MediaAggregatorService {
           mediaType: c.mediaType,
           currentUserEmail: params.currentUserEmail,
           currentUserOverseerrId: params.currentUserOverseerrId,
+          userAllowedServers: params.userAllowedServers,
           includeSeasons: false,
           checkIndexers: false
         })
@@ -1460,6 +1551,7 @@ export class MediaAggregatorService {
   public async getWaitingListAndRequests(params: {
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
     onlyCurrentUser?: boolean;
     limit?: number;
   }): Promise<MediaEvidence[]> {
@@ -1543,6 +1635,7 @@ export class MediaAggregatorService {
             mediaType: item.mediaType,
             currentUserEmail: params.currentUserEmail,
             currentUserOverseerrId: params.currentUserOverseerrId,
+            userAllowedServers: params.userAllowedServers,
             includeSeasons: item.mediaType === 'tv',
             checkIndexers: false,
             knownRequestHint: item.knownRequestHint

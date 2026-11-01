@@ -878,6 +878,7 @@ export class PlexMultiServerConnector {
   public async resolveUserPlexServerAccess(params: {
     email?: string | null;
     isAdmin?: boolean;
+    isOwnerAccount?: boolean;
     overseerrPlexUsername?: string | null;
     aliasPlexEmail?: string | null;
   }): Promise<{
@@ -888,11 +889,12 @@ export class PlexMultiServerConnector {
     configuredServerNames: string[];
   } | null> {
     const configuredServerNames = this.servers.map((s) => s.name);
-    if (params.isAdmin) {
+    if (params.isAdmin || params.isOwnerAccount) {
       const realOwnerUsername =
         params.overseerrPlexUsername?.trim() ||
+        params.aliasPlexEmail?.split('@')[0]?.trim() ||
         params.email?.split('@')[0]?.trim() ||
-        'Admin Propriétaire Plex';
+        'Propriétaire Plex';
       return {
         plexUserId: 1,
         plexUsername: realOwnerUsername,
