@@ -457,9 +457,35 @@ export async function createApp(deps: AppDependencies): Promise<{
     return { items: cards };
   });
 
-  // 6. Mes demandes & liste d'attente en direct (0 token IA)
+  // 6. Mes demandes & liste d'attente en direct (0 token IA, cache TTL 60s)
+  const waitingListCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      data: {
+        items: Array<{
+          requestId: number;
+          createdAt: string;
+          requestedByDisplayName: string;
+          requestedSeasons: number[];
+          evidence: unknown;
+        }>;
+      };
+    }
+  >();
+
   app.get('/api/requests/mine', async (req) => {
     const { session } = await resolveUserSession(req);
+    const forceRefresh = (req.query as { refresh?: string })?.refresh === 'true';
+    const cacheKey = `${session.email}:${(session.plexAccess?.askarrServerNames || []).join(',')}`;
+
+    if (!forceRefresh) {
+      const cached = waitingListCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.data;
+      }
+    }
+
     const items = await aggregator.getWaitingListAndRequests({
       currentUserEmail: session.email,
       currentUserOverseerrId: session.overseerr.overseerrUserId,
@@ -467,7 +493,8 @@ export async function createApp(deps: AppDependencies): Promise<{
       onlyCurrentUser: false,
       limit: 8
     });
-    return {
+
+    const result = {
       items: items.map((evidence, idx) => ({
         requestId: evidence.requestState.requestId || -(idx + 1),
         createdAt: evidence.requestState.requestedAt || evidence.acquisitionPipeline.addedAt || new Date().toISOString(),
@@ -476,13 +503,28 @@ export async function createApp(deps: AppDependencies): Promise<{
         evidence
       }))
     };
+
+    waitingListCache.set(cacheKey, {
+      expiresAt: Date.now() + 60_000,
+      data: result
+    });
+
+    return result;
   });
 
-  // 7. Préparation et Confirmation en 2 étapes d'une demande Overseerr (ADR-005 / G4)
+  // 7. Préparation et Confirmation en 2 étapes d'une demande Overseerr ou Sonarr (ADR-005 / G4)
   const prepareRequestBodySchema = z.object({
     tmdbId: z.number().int().positive(),
     mediaType: z.enum(['movie', 'tv']),
-    seasons: z.array(z.number().int().positive()).optional()
+    seasons: z.array(z.number().int().positive()).optional(),
+    episodes: z
+      .array(
+        z.object({
+          seasonNumber: z.number().int().positive(),
+          episodeNumber: z.number().int().positive()
+        })
+      )
+      .optional()
   });
 
   app.post('/api/requests/prepare', async (req, reply: FastifyReply) => {
@@ -502,7 +544,8 @@ export async function createApp(deps: AppDependencies): Promise<{
         overseerrUserId: session.overseerr.overseerrUserId,
         tmdbId: body.tmdbId,
         mediaType: body.mediaType,
-        seasons: body.seasons
+        seasons: body.seasons,
+        episodes: body.episodes
       });
       return {
         preparedAction,
@@ -590,6 +633,65 @@ export async function createApp(deps: AppDependencies): Promise<{
       return {
         status: 'SUPERSEDED',
         messageFr: freshEvidence.actionability.userFriendlyExplanationFr,
+        evidence: freshEvidence
+      };
+    }
+
+    // Gestion directe Sonarr pour épisodes spécifiques manquants (G4 / ADR-005)
+    if (record.actionType === 'SONARR_EPISODE_SEARCH') {
+      const targetEpisodes = record.payload.episodes || [];
+      const extId = freshEvidence.acquisitionPipeline.externalServiceId;
+      const tvdbId = freshEvidence.identity.tvdbId;
+
+      const sonarrResult = await sonarr.monitorAndSearchEpisodes({
+        sonarrSeriesId: extId,
+        tvdbId,
+        episodes: targetEpisodes
+      });
+
+      if (!sonarrResult.ok && sonarrResult.searchedEpisodes.length === 0) {
+        return reply.code(409).send({
+          error: 'SONARR_EPISODE_SEARCH_FAILED',
+          message: sonarrResult.messageFr
+        });
+      }
+
+      db.completePreparedAction({
+        token: record.token,
+        status: 'EXECUTED',
+        externalResult: {
+          sonarrSeriesId: sonarrResult.seriesId,
+          searchedEpisodes: sonarrResult.searchedEpisodes
+        }
+      });
+      waitingListCache.clear();
+
+      const epLabels = sonarrResult.searchedEpisodes
+        .map((e) => `S${e.seasonNumber}E${e.episodeNumber}`)
+        .join(', ');
+
+      db.recordAuditLog({
+        actorEmail: session.email,
+        actorRole: session.role,
+        actionType: 'SONARR_EPISODE_SEARCH',
+        targetService: 'sonarr',
+        actionToken: record.token,
+        summaryFr: `Recherche Sonarr directe confirmée (${epLabels}) : ${record.payload.summaryFr}`,
+        diffRedacted: {
+          tmdbId: record.payload.tmdbId,
+          mediaType: 'tv',
+          episodes: targetEpisodes,
+          sonarrSeriesId: sonarrResult.seriesId
+        },
+        status: 'SUCCESS'
+      });
+
+      const responseMessageFr = `La recherche directe dans Sonarr pour ${epLabels} de "${record.payload.title}" a bien été lancée ! L'épisode sera disponible sur Plex dès la fin du téléchargement.`;
+
+      return {
+        actionId: record.token,
+        status: 'EXECUTED',
+        messageFr: responseMessageFr,
         evidence: freshEvidence
       };
     }
@@ -687,6 +789,7 @@ export async function createApp(deps: AppDependencies): Promise<{
           sonarrMonitoredEpisodes: sonarrSearchResult.monitoredEpisodesCount
         }
       });
+      waitingListCache.clear();
 
       db.recordAuditLog({
         actorEmail: session.email,

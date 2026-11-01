@@ -287,13 +287,14 @@ export class AskarrDatabase {
   public createPreparedAction(params: {
     userEmail: string;
     overseerrUserId: number | null;
-    actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV';
+    actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV' | 'SONARR_EPISODE_SEARCH';
     payload: {
       mediaType: 'movie' | 'tv';
       tmdbId: number;
       title: string;
       year: number | null;
       seasons?: number[];
+      episodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
       summaryFr: string;
     };
     ttlMinutes?: number;
@@ -341,6 +342,7 @@ export class AskarrDatabase {
       title: string;
       year: number | null;
       seasons?: number[];
+      episodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
       summaryFr: string;
     };
     payloadHash: string;

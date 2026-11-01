@@ -1,6 +1,7 @@
 import type {
   MediaEvidence,
   MediaType,
+  PlexMatchedItem,
   ProvenanceEntry,
   SeasonCoverageItem
 } from '../../shared/types.js';
@@ -390,6 +391,7 @@ export class MediaAggregatorService {
     userAllowedServers?: string[];
     includeSeasons?: boolean;
     checkIndexers?: boolean;
+    skipPlexSearch?: boolean;
     knownPlexHint?: { serverNames: string[]; libraryTitle?: string };
     knownRequestHint?: {
       requestId: number;
@@ -428,8 +430,23 @@ export class MediaAggregatorService {
       params.knownPlexHint.serverNames.length > 0;
 
     // 2. En parallèle : Fédération Multi-Serveurs Plex + Radarr (si film) ou Sonarr (si série)
-    // Si Tracearr nous a déjà fourni les serveurs Plex exacts (knownPlexHint), on évite les 5 requêtes Plex + Radarr redondantes !
-    const plexPromise = hasKnownPlexHint
+    // Si le média est certifié en attente de sortie ou de téléchargement (hasFile=false / processing), on évite le scan lourd multi-serveurs
+    const plexPromise = params.skipPlexSearch
+      ? Promise.resolve({
+          state: 'not_in_catalog' as const,
+          serversQueried: [] as string[],
+          matchedDetails: [] as PlexMetadataDetail[],
+          matchedItems: [] as PlexMatchedItem[],
+          provenance: [
+            {
+              source: 'plex',
+              status: 'ok' as const,
+              latencyMs: 0,
+              detail: 'Non recherché (média en attente de sortie ou de téléchargement)'
+            }
+          ]
+        })
+      : hasKnownPlexHint
       ? Promise.resolve({
           state: 'available_now' as const,
           serversQueried: params.knownPlexHint!.serverNames,
@@ -1361,6 +1378,8 @@ export class MediaAggregatorService {
     plexLibraryFilter?: string;
     personFilter?: string;
     yearFilter?: number;
+    minYear?: number;
+    maxYear?: number;
     limit?: number;
     currentUserEmail?: string;
     currentUserOverseerrId?: number | null;
@@ -1375,6 +1394,8 @@ export class MediaAggregatorService {
         libraryFilter: params.plexLibraryFilter,
         personFilter: params.personFilter,
         yearFilter: params.yearFilter,
+        minYear: params.minYear,
+        maxYear: params.maxYear,
         limit: requestedLimit ?? 5
       });
 
@@ -1661,7 +1682,8 @@ export class MediaAggregatorService {
             userAllowedServers: params.userAllowedServers,
             includeSeasons: item.mediaType === 'tv',
             checkIndexers: false,
-            knownRequestHint: item.knownRequestHint
+            knownRequestHint: item.knownRequestHint,
+            skipPlexSearch: item.isWaitingHint
           });
         } catch {
           return null;

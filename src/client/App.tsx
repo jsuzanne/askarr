@@ -505,9 +505,9 @@ export function App() {
     }
   }
 
-  async function fetchMyRequests() {
+  async function fetchMyRequests(forceRefresh = false) {
     try {
-      const res = await fetch('/api/requests/mine');
+      const res = await fetch(`/api/requests/mine${forceRefresh ? '?refresh=true' : ''}`);
       if (res.ok) {
         const data: { items?: MyRequestItem[] } = await res.json();
         setMyRequests(Array.isArray(data.items) ? data.items : []);
@@ -2415,6 +2415,11 @@ export function App() {
                             <MediaCandidateCard
                               key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
                               evidence={cand}
+                              initialPreparedAction={
+                                msg.preparedAction && msg.preparedAction.tmdbId === cand.identity.tmdbId
+                                  ? msg.preparedAction
+                                  : null
+                              }
                               onAskSimilar={handleAskSimilar}
                               showTechnicalTrace={showInlineDebug}
                               plexPlayers={plexPlayers}
@@ -2747,7 +2752,7 @@ export function App() {
                   </p>
                 </div>
                 <button
-                  onClick={() => void fetchMyRequests()}
+                  onClick={() => void fetchMyRequests(true)}
                   className="text-xs sm:text-sm bg-stone-900 hover:bg-stone-800 border border-amber-500/30 text-amber-200 px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer font-semibold"
                 >
                   <RefreshCw className="w-4 h-4" />

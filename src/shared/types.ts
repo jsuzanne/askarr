@@ -209,12 +209,13 @@ export interface UserSessionInfo {
 
 export interface PreparedActionDTO {
   actionId: string;
-  actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV';
+  actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV' | 'SONARR_EPISODE_SEARCH';
   mediaType: MediaType;
   tmdbId: number;
   title: string;
   year: number | null;
   seasons?: number[];
+  episodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
   summaryFr: string;
   expiresAt: string;
   status: 'PENDING' | 'EXECUTED' | 'EXPIRED' | 'SUPERSEDED' | 'FAILED';

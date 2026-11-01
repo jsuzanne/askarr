@@ -350,4 +350,143 @@ export class SonarrConnector {
       return { ok: false, seriesId: null, monitoredEpisodesCount: 0, searchedSeasons: [] };
     }
   }
+
+  /**
+   * Active la surveillance et lance la recherche directe (EpisodeSearch) d'épisodes spécifiques manquants
+   * dans une série déjà présente dans Sonarr (ex: S01E01, épisode raté par l'automatisation).
+   */
+  public async monitorAndSearchEpisodes(params: {
+    sonarrSeriesId?: number | null;
+    tvdbId?: number | null;
+    episodes: Array<{ seasonNumber: number; episodeNumber: number }>;
+  }): Promise<{
+    ok: boolean;
+    seriesId: number | null;
+    searchedEpisodes: Array<{ id: number; seasonNumber: number; episodeNumber: number; title: string }>;
+    messageFr: string;
+  }> {
+    if (!Array.isArray(params.episodes) || params.episodes.length === 0) {
+      return { ok: false, seriesId: null, searchedEpisodes: [], messageFr: 'Aucun épisode spécifié.' };
+    }
+
+    try {
+      let rawSeries: Record<string, unknown> | null = null;
+      if (params.sonarrSeriesId && params.sonarrSeriesId > 0) {
+        rawSeries = await this.getJson<Record<string, unknown>>(
+          `/api/v3/series/${encodeURIComponent(String(params.sonarrSeriesId))}`
+        ).catch(() => null);
+      }
+      if (!rawSeries && params.tvdbId && params.tvdbId > 0) {
+        const list = await this.getJson<Array<Record<string, unknown>>>(
+          `/api/v3/series?tvdbId=${encodeURIComponent(String(params.tvdbId))}`
+        ).catch(() => []);
+        rawSeries = list[0] || null;
+      }
+
+      if (!rawSeries || !rawSeries.id) {
+        return {
+          ok: false,
+          seriesId: null,
+          searchedEpisodes: [],
+          messageFr: 'Cette série est introuvable dans Sonarr.'
+        };
+      }
+
+      const seriesId = Number(rawSeries.id);
+
+      // S'assurer que la série est surveillée
+      if (!rawSeries.monitored) {
+        await this.fetchImpl(`${this.baseUrl}/api/v3/series/${seriesId}`, {
+          method: 'PUT',
+          headers: {
+            'X-Api-Key': this.apiKey,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({ ...rawSeries, monitored: true })
+        }).catch(() => null);
+      }
+
+      // Récupérer tous les épisodes de la série
+      const allEpisodes = await this.getJson<Array<Record<string, unknown>>>(
+        `/api/v3/episode?seriesId=${seriesId}`,
+        6000
+      ).catch(() => []);
+
+      const targetMatches: Array<{ id: number; seasonNumber: number; episodeNumber: number; title: string }> = [];
+      const episodeIdsToMonitor: number[] = [];
+
+      for (const target of params.episodes) {
+        const match = allEpisodes.find(
+          (ep) =>
+            Number(ep.seasonNumber) === Number(target.seasonNumber) &&
+            Number(ep.episodeNumber) === Number(target.episodeNumber)
+        );
+        if (match && match.id) {
+          const epId = Number(match.id);
+          targetMatches.push({
+            id: epId,
+            seasonNumber: Number(match.seasonNumber),
+            episodeNumber: Number(match.episodeNumber),
+            title: String(match.title || `Épisode ${match.episodeNumber}`)
+          });
+          episodeIdsToMonitor.push(epId);
+        }
+      }
+
+      if (targetMatches.length === 0) {
+        return {
+          ok: false,
+          seriesId,
+          searchedEpisodes: [],
+          messageFr: 'Aucun des épisodes demandés n’a été trouvé dans le catalogue de la série.'
+        };
+      }
+
+      // Activer monitored=true sur ces épisodes précis
+      await this.fetchImpl(`${this.baseUrl}/api/v3/episode/monitor`, {
+        method: 'PUT',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          episodeIds: episodeIdsToMonitor,
+          monitored: true
+        })
+      }).catch(() => null);
+
+      // Déclencher EpisodeSearch dans Sonarr pour ces épisodes
+      const cmdRes = await this.fetchImpl(`${this.baseUrl}/api/v3/command`, {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          name: 'EpisodeSearch',
+          episodeIds: episodeIdsToMonitor
+        })
+      }).catch(() => null);
+
+      this.catalogCache = null;
+
+      const labels = targetMatches.map((m) => `S${m.seasonNumber}E${m.episodeNumber}`).join(', ');
+      return {
+        ok: cmdRes?.ok ?? true,
+        seriesId,
+        searchedEpisodes: targetMatches,
+        messageFr: `Recherche Sonarr lancée pour ${labels} !`
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        seriesId: null,
+        searchedEpisodes: [],
+        messageFr: err instanceof Error ? err.message : 'Erreur lors de la recherche Sonarr.'
+      };
+    }
+  }
 }

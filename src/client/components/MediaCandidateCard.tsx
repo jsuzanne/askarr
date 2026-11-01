@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Film,
   Tv,
@@ -46,6 +46,7 @@ interface Props {
   scanningPlayers?: boolean;
   embeddedInChat?: boolean;
   compactSynopsis?: boolean;
+  initialPreparedAction?: PreparedActionDTO | null;
 }
 
 function formatDuration(minutes: number | null): string | null {
@@ -102,14 +103,21 @@ export const MediaCandidateCard: React.FC<Props> = ({
   onRefreshPlayers,
   scanningPlayers = false,
   embeddedInChat = false,
-  compactSynopsis = false
+  compactSynopsis = false,
+  initialPreparedAction = null
 }) => {
   const { lang, t } = useI18n();
   const [localEvidence, setLocalEvidence] = useState<MediaEvidence>(evidence);
   const [showAllSeasons, setShowAllSeasons] = useState(false);
   const [synopsisExpanded, setSynopsisExpanded] = useState(!compactSynopsis);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>(evidence.actionability.requestableSeasons);
-  const [preparedAction, setPreparedAction] = useState<PreparedActionDTO | null>(null);
+  const [preparedAction, setPreparedAction] = useState<PreparedActionDTO | null>(initialPreparedAction);
+
+  useEffect(() => {
+    if (initialPreparedAction) {
+      setPreparedAction(initialPreparedAction);
+    }
+  }, [initialPreparedAction]);
   const [loadingAction, setLoadingAction] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 

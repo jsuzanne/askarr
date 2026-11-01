@@ -50,7 +50,10 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - Si le film n'est ni sur Plex ni dans la liste d'attente (\`canRequestNow=true\`), indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
 7. DEMANDES EN 2 ÉTAPES & SÉRIES INCOMPLÈTES (ÉPISODES MANQUANTS) :
    - Si une série est incomplète sur Plex (\`plexState: 'partially_available'\`, ex: Saison 1 avec \`1/8\` épisodes présents et 7 manquants), indique clairement combien d'épisodes sont présents et combien il en manque, et **propose proactivement** à l'utilisateur de lancer la recherche et le téléchargement des épisodes manquants grâce au bouton **« Compléter la Saison »** situé directement dans la fiche ci-dessous (ou en te disant oui).
-   - Si l'utilisateur demande explicitement d'ajouter un film, une série ou les épisodes manquants d'une saison (\`canRequestNow=true\`), appelle \`prepare_media_request\` pour préparer le bouton de confirmation à usage unique, et invite l'utilisateur à cliquer sur "Confirmer la demande". N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur ce bouton.
+   - Si l'utilisateur demande explicitement d'ajouter un film, une série ou les épisodes manquants d'une saison (\`canRequestNow=true\`) :
+     -> Si l'utilisateur cible un ou des **épisodes précis manquants** (ex: "ajoute l'épisode 1 de Ghosts", "cherche l'épisode 3 manquant"), et que la série est déjà présente ou suivie dans Sonarr/Plex (\`imported_on_disk\` / \`externalServiceId\`), appelle \`prepare_media_request\` avec \`episodes: [{ seasonNumber: ..., episodeNumber: ... }]\`. Askarr prépare alors une recherche directe dans Sonarr pour ces épisodes ciblés (sans passer par Overseerr, sans attendre d'approbation manuelle et sans télécharger toute la saison).
+     -> Pour une saison complète ou un film, renseigne \`seasons\` ou omets-le pour un film.
+   - N'affirme jamais que la demande est déjà envoyée avant qu'il ait cliqué sur le bouton de confirmation préparé.
 8. SORTIES RÉCENTES AU CINÉMA (2025, 2026, 2027) & HOMONYMES :
    - Tes outils (\`search_and_check_media\`, \`verify_specific_titles\`, \`search_person_filmography\`, \`discover_and_recommend_media\`) sont connectés en temps réel à TMDB/Overseerr et connaissent tous les films récents de 2025, 2026 et 2027 (films actuellement à l'affiche au cinéma ou à venir en VOD).
    - Lorsqu'un utilisateur demande un film par son titre SANS préciser d'ancienne année (ex: "le fantôme de l'opéra bon film ?", "la gradiva", "unabomber"), ne passe JAMAIS une vieille année supposée (\`year: 2004\`) à l'outil : omets \`year\` afin de toujours faire remonter la nouveauté 2025/2026 à l'affiche.
@@ -95,9 +98,12 @@ ABSOLUTE RULES OF TRUTH, RELEVANCE, AND CINEMA EXPERTISE:
    - If a title is in the waiting list ('monitored_waiting_release' / 'monitored_searching' / 'canRequestNow=false'):
      -> Always specify who requested it or if it was added automatically via a list, along with the estimated digital/VOD release date.
    - If not on Plex and not in the queue ('canRequestNow=true'), indicate whether it is already released or when it will be released, and mention it can be requested via the button on its card.
-7. TWO-STEP REQUESTS & INCOMPLETE TV SEASONS:
+7. TWO-STEP REQUESTS, INCOMPLETE TV SEASONS & MISSING EPISODES:
    - If a TV show is partially available on Plex (e.g. Season 1 with 1/8 episodes), clearly state missing episodes and invite the user to complete the season via the card button.
-   - If requesting a title, call 'prepare_media_request' to generate the confirmation button. Never claim it is requested before they click confirm.
+   - If the user specifically asks for missing or failed episodes (e.g. "add episode 1 of Ghosts", "download missing S02E05") and the show is already tracked in Sonarr/Plex:
+     -> Call 'prepare_media_request' with 'episodes: [{ seasonNumber: ..., episodeNumber: ... }]'. Askarr will trigger a direct Sonarr search (bypassing Overseerr full-season approval).
+     -> For full seasons or new series, provide 'seasons: [...]'.
+   - Never claim it is requested before they click the prepared confirmation button.
 8. RECENT THEATRICAL RELEASES & HOMONYMS:
    - When an unspecific title is requested without an old year, prioritize recent 2025/2026/2027 theatrical releases while noting the classic version if applicable.
 9. RECENT PLEX ADDITIONS, WATCH HISTORY & RECOMMENDATIONS (TRACEARR):
@@ -275,7 +281,15 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
           },
           minRating: {
             type: 'number',
-            description: 'Note minimale sur 10 (par défaut 7.0)'
+            description: 'Note minimale sur 10 (par défaut 7.0, ou ex: 8.0 / 9.0 si demandé)'
+          },
+          minYear: {
+            type: 'integer',
+            description: "Année minimale de sortie si l'utilisateur cible une période (ex: 2010 pour 'entre 2010 et 2020' ou 2020 pour 'depuis 2020')"
+          },
+          maxYear: {
+            type: 'integer',
+            description: "Année maximale de sortie si l'utilisateur cible une période (ex: 2020 pour 'entre 2010 et 2020')"
           },
           plexLibraryFilter: {
             type: 'string',
@@ -376,7 +390,7 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
     function: {
       name: 'prepare_media_request',
       description:
-        "Préparer une proposition de demande d'ajout sur Plex soumise à confirmation explicite (2 étapes) par l'utilisateur. N'exécute jamais l'ajout directement.",
+        "Préparer une proposition de demande d'ajout sur Plex soumise à confirmation explicite (2 étapes) par l'utilisateur. Si l'utilisateur demande un ou plusieurs épisodes spécifiques manquants (ex: S01E01, épisode raté) d'une série déjà suivie dans Sonarr/Plex, renseigne 'episodes' pour lancer une recherche directe Sonarr sans passer par Overseerr.",
       parameters: {
         type: 'object',
         properties: {
@@ -391,7 +405,19 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
           seasons: {
             type: 'array',
             items: { type: 'integer' },
-            description: 'Numéros des saisons demandées (obligatoire si mediaType=tv)'
+            description: 'Numéros des saisons demandées (obligatoire si mediaType=tv et qu’aucun épisode précis n’est ciblé)'
+          },
+          episodes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                seasonNumber: { type: 'integer', description: 'Numéro de la saison' },
+                episodeNumber: { type: 'integer', description: 'Numéro de l’épisode' }
+              },
+              required: ['seasonNumber', 'episodeNumber']
+            },
+            description: 'Épisodes spécifiques manquants à rechercher directement dans Sonarr (ex: [{seasonNumber: 1, episodeNumber: 1}])'
           }
         },
         required: ['tmdbId', 'mediaType'],
@@ -961,6 +987,7 @@ export class DeepSeekOrchestratorService {
     tmdbId: number;
     mediaType: 'movie' | 'tv';
     seasons?: number[];
+    episodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
   }): Promise<{
     evidence: MediaEvidence;
     preparedAction: PreparedActionDTO;
@@ -980,8 +1007,13 @@ export class DeepSeekOrchestratorService {
       );
     }
 
+    const hasSpecificEpisodes =
+      params.mediaType === 'tv' &&
+      Array.isArray(params.episodes) &&
+      params.episodes.length > 0;
+
     let selectedSeasons: number[] | undefined;
-    if (params.mediaType === 'tv') {
+    if (params.mediaType === 'tv' && !hasSpecificEpisodes) {
       const requested = Array.isArray(params.seasons) && params.seasons.length > 0
         ? params.seasons
         : evidence.actionability.requestableSeasons;
@@ -993,7 +1025,17 @@ export class DeepSeekOrchestratorService {
       }
     }
 
-    const actionType = params.mediaType === 'tv' ? 'OVERSEERR_REQUEST_TV' : 'OVERSEERR_REQUEST_MOVIE';
+    const isKnownInSonarr = Boolean(
+      evidence.acquisitionPipeline.externalServiceId || evidence.identity.tvdbId
+    );
+
+    const actionType: PreparedActionDTO['actionType'] =
+      hasSpecificEpisodes && isKnownInSonarr
+        ? 'SONARR_EPISODE_SEARCH'
+        : params.mediaType === 'tv'
+          ? 'OVERSEERR_REQUEST_TV'
+          : 'OVERSEERR_REQUEST_MOVIE';
+
     const yearTxt = evidence.identity.year ? ` (${evidence.identity.year})` : '';
     const isCompletingPartialSeason =
       params.mediaType === 'tv' &&
@@ -1004,13 +1046,22 @@ export class DeepSeekOrchestratorService {
           )
         )
       );
+
+    const episodesTxt = hasSpecificEpisodes
+      ? ` — ${params.episodes!.map((e) => `S${e.seasonNumber}E${e.episodeNumber}`).join(', ')}`
+      : '';
+
     const seasonsTxt =
       params.mediaType === 'tv' && selectedSeasons
         ? ` — Saison(s) ${selectedSeasons.join(', ')}`
         : '';
-    const summaryFr = isCompletingPartialSeason
-      ? `Compléter les épisodes manquants de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`
-      : `Demander l'ajout de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`;
+
+    const summaryFr =
+      actionType === 'SONARR_EPISODE_SEARCH'
+        ? `Recherche directe dans Sonarr pour "${evidence.identity.titleFr}"${yearTxt}${episodesTxt}`
+        : isCompletingPartialSeason
+          ? `Compléter les épisodes manquants de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`
+          : `Demander l'ajout de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`;
 
     const created = this.db.createPreparedAction({
       userEmail: params.userEmail,
@@ -1022,6 +1073,7 @@ export class DeepSeekOrchestratorService {
         title: evidence.identity.titleFr,
         year: evidence.identity.year,
         seasons: selectedSeasons,
+        episodes: hasSpecificEpisodes ? params.episodes : undefined,
         summaryFr
       },
       ttlMinutes: 10
@@ -1035,6 +1087,7 @@ export class DeepSeekOrchestratorService {
       title: evidence.identity.titleFr,
       year: evidence.identity.year,
       seasons: selectedSeasons,
+      episodes: hasSpecificEpisodes ? params.episodes : undefined,
       summaryFr,
       expiresAt: created.expiresAt,
       status: 'PENDING'
@@ -1178,8 +1231,11 @@ export class DeepSeekOrchestratorService {
       const genre = typeof args.genre === 'string' ? args.genre : undefined;
       const similarToTmdbId = typeof args.similarToTmdbId === 'number' ? args.similarToTmdbId : undefined;
       const minRating = typeof args.minRating === 'number' ? args.minRating : 7.0;
+      const minYear = typeof args.minYear === 'number' ? args.minYear : undefined;
+      const maxYear = typeof args.maxYear === 'number' ? args.maxYear : undefined;
       const plexLibraryFilter = typeof args.plexLibraryFilter === 'string' ? args.plexLibraryFilter : undefined;
       const targetLimit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : 4;
+      const isStrictRatingOrYearQuery = Boolean(minRating >= 7.8 || minYear || maxYear);
 
       const normTitleFn = (s: string) =>
         s
@@ -1196,6 +1252,8 @@ export class DeepSeekOrchestratorService {
           genre,
           similarToTmdbId,
           minRating,
+          minYear,
+          maxYear,
           plexLibraryFilter,
           limit: Math.min(8, targetLimit + 3),
           currentUserEmail: params.userEmail,
@@ -1308,11 +1366,14 @@ export class DeepSeekOrchestratorService {
           if (!cc) continue;
           if (isAlreadyWatchedByUser(cc)) continue;
           if (cc.catalogPresence.accessibleToCurrentUser === false) continue;
+          if (minYear && (!cc.identity.year || cc.identity.year < minYear)) continue;
+          if (maxYear && (!cc.identity.year || cc.identity.year > maxYear)) continue;
           const cardRating =
             cc.identity.ratings.imdbOrAudienceRating ??
             cc.identity.ratings.tmdbVoteAverage ??
             7.0;
-          if (cardRating < Math.min(minRating, 6.2)) continue;
+          const requiredRating = isStrictRatingOrYearQuery ? minRating : Math.min(minRating, 6.2);
+          if (cardRating < requiredRating) continue;
           if (
             targetGenreTerms.length > 0 &&
             cc.identity.genres.length > 0 &&
@@ -1327,8 +1388,13 @@ export class DeepSeekOrchestratorService {
         }
       }
 
-      // Tri des cartes catalogue de secours pour privilégier les films récents (2020+) avant les vieux classiques
+      // Tri des cartes catalogue de secours : par note décroissante si critère IMDb/décennie strict, sinon films récents (2020+) d'abord
       const sortedBaseCards = [...baseCards].sort((a, b) => {
+        if (isStrictRatingOrYearQuery) {
+          const ra = a.identity.ratings.imdbOrAudienceRating ?? a.identity.ratings.tmdbVoteAverage ?? 0;
+          const rb = b.identity.ratings.imdbOrAudienceRating ?? b.identity.ratings.tmdbVoteAverage ?? 0;
+          return rb - ra;
+        }
         const aRecent = (a.identity.year ?? 0) >= 2020 ? 1 : 0;
         const bRecent = (b.identity.year ?? 0) >= 2020 ? 1 : 0;
         if (bRecent !== aRecent) return bRecent - aRecent;
@@ -1644,6 +1710,20 @@ export class DeepSeekOrchestratorService {
       const seasons = Array.isArray(args.seasons)
         ? args.seasons.map((s) => Number(s)).filter((n) => Number.isInteger(n) && n > 0)
         : undefined;
+      const episodes = Array.isArray(args.episodes)
+        ? (args.episodes as Array<{ seasonNumber?: number; episodeNumber?: number }>)
+            .map((e) => ({
+              seasonNumber: Number(e.seasonNumber),
+              episodeNumber: Number(e.episodeNumber)
+            }))
+            .filter(
+              (e) =>
+                Number.isInteger(e.seasonNumber) &&
+                e.seasonNumber > 0 &&
+                Number.isInteger(e.episodeNumber) &&
+                e.episodeNumber > 0
+            )
+        : undefined;
 
       try {
         const { evidence, preparedAction } = await this.prepareMediaRequestAction({
@@ -1651,7 +1731,8 @@ export class DeepSeekOrchestratorService {
           overseerrUserId: params.overseerrUserId,
           tmdbId,
           mediaType,
-          seasons
+          seasons,
+          episodes
         });
         params.onCardsCollected([evidence]);
         params.onPreparedActionCreated(preparedAction);

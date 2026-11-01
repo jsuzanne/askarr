@@ -670,6 +670,8 @@ export class PlexMultiServerConnector {
     libraryFilter?: string;
     personFilter?: string;
     yearFilter?: number;
+    minYear?: number;
+    maxYear?: number;
     limit?: number;
   }): Promise<{ items: PlexMetadataDetail[]; provenance: ProvenanceEntry[] }> {
     const limit = params.limit || 6;
@@ -677,6 +679,11 @@ export class PlexMultiServerConnector {
     const provenance: ProvenanceEntry[] = [];
     const results: PlexMetadataDetail[] = [];
     const personNorm = params.personFilter?.trim().toLowerCase();
+    const isHighRatingOrPastEraQuery = Boolean(
+      (params.minRating && params.minRating >= 8.0) ||
+        (params.minYear && params.minYear < 2022) ||
+        (params.maxYear && params.maxYear < 2023)
+    );
 
     // NucVillers + NucBuntu couvrent 100% des 17 bibliothèques sans dupliquer 5 fois les appels sur le NAS
     const discoveryServers = this.servers.slice(0, 2);
@@ -728,24 +735,28 @@ export class PlexMultiServerConnector {
           })
           .sort((a, b) => sectionPriority(a.title) - sectionPriority(b.title));
 
-        const containerSize = personNorm || params.yearFilter || params.genre ? 100 : 50;
-        for (const sec of matchingSections.slice(0, 3)) {
+        const containerSize =
+          personNorm || params.yearFilter || params.minYear || params.maxYear || params.genre ? 150 : 60;
+        const maxSectionsToInspect = isHighRatingOrPastEraQuery ? 4 : 3;
+        for (const sec of matchingSections.slice(0, maxSectionsToInspect)) {
           const secKeyNorm = normalizePlexLibraryKey(sec.title);
-          // Ne pas déborder dans les bibliothèques anciennes (Cinephile / FilmsLegacy) si on a déjà trouvé des films récents dans 'Films'
+          // Ne pas déborder dans les bibliothèques anciennes (Cinephile / FilmsLegacy) si on a déjà trouvé des films récents dans 'Films',
+          // SAUF si l'utilisateur demande explicitement une note IMDb >= 8.0 ou une période antérieure (ex: 2010-2020)
           if (
             (secKeyNorm === 'cinephile' || secKeyNorm === 'filmslegacy') &&
             !params.libraryFilter &&
             !personNorm &&
-            (!params.yearFilter || params.yearFilter >= 2015) &&
+            !isHighRatingOrPastEraQuery &&
+            (!params.yearFilter || params.yearFilter >= 2020) &&
             results.length > 0
           ) {
             continue;
           }
 
           const yearParam = params.yearFilter ? `&year=${encodeURIComponent(String(params.yearFilter))}` : '';
-          // Dans la bibliothèque récente 'Films', on mélange les ajouts/sorties récentes et les mieux notés
+          // Dans la bibliothèque récente 'Films', on trie par année décroissante par défaut, sauf si l'utilisateur cherche les meilleures notes IMDb (>= 8.0)
           const sortOrder =
-            secKeyNorm === 'films' && !params.yearFilter && !personNorm
+            secKeyNorm === 'films' && !params.yearFilter && !personNorm && !isHighRatingOrPastEraQuery
               ? 'year:desc'
               : 'audienceRating:desc';
           const data = await this.fetchPlexJson<{
@@ -760,6 +771,10 @@ export class PlexMultiServerConnector {
             const criticRating = typeof raw.rating === 'number' ? raw.rating : null;
             const bestRating = audienceRating ?? criticRating ?? 0;
             if (bestRating < effectiveMinRating) continue;
+
+            const itemYear = typeof raw.year === 'number' ? raw.year : null;
+            if (params.minYear && (!itemYear || itemYear < params.minYear)) continue;
+            if (params.maxYear && (!itemYear || itemYear > params.maxYear)) continue;
 
             const genres = ((raw.Genre as Array<{ tag?: string }> | undefined) || [])
               .map((g) => g.tag || '')
@@ -809,9 +824,11 @@ export class PlexMultiServerConnector {
               durationMinutes: typeof raw.duration === 'number' ? Math.round(raw.duration / 60000) : null
             });
 
-            if (results.length >= limit) break;
+            const maxCollectPerLoop = isHighRatingOrPastEraQuery ? limit * 2 : limit;
+            if (results.length >= maxCollectPerLoop) break;
           }
-          if (results.length >= limit) break;
+          const maxCollectPerLoop = isHighRatingOrPastEraQuery ? limit * 2 : limit;
+          if (results.length >= maxCollectPerLoop && !isHighRatingOrPastEraQuery) break;
         }
 
         provenance.push({
@@ -821,7 +838,7 @@ export class PlexMultiServerConnector {
           detail: `Recommandations Plex (${results.length})`
         });
 
-        if (results.length >= limit && !params.libraryFilter && !personNorm) break;
+        if (results.length >= limit && !params.libraryFilter && !personNorm && !isHighRatingOrPastEraQuery) break;
       } catch (err) {
         provenance.push({
           source: `plex:${srv.name}`,
@@ -830,6 +847,14 @@ export class PlexMultiServerConnector {
           detail: err instanceof Error ? err.message : 'ERROR'
         });
       }
+    }
+
+    if (isHighRatingOrPastEraQuery) {
+      results.sort((a, b) => {
+        const ra = a.audienceRating ?? a.criticRating ?? 0;
+        const rb = b.audienceRating ?? b.criticRating ?? 0;
+        return rb - ra;
+      });
     }
 
     return { items: results.slice(0, limit), provenance };
