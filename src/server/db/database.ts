@@ -1269,12 +1269,15 @@ export class AskarrDatabase {
   ): {
     lastManualSearchAt: string | null;
     lastManualSearchBy: string | null;
+    lastManualSearchCommandId: number | null;
+    lastManualSearchReportsDownloaded: number | null;
+    lastManualSearchDurationSeconds: number | null;
     manualSearchCount: number;
     followerEmails: string[];
   } {
     const rows = this.db
       .prepare(
-        `SELECT actor_email, actor_display_name, event_type, created_at
+        `SELECT actor_email, actor_display_name, event_type, details_json, created_at
          FROM media_workflow_events
          WHERE media_type = ? AND tmdb_id = ?
          ORDER BY created_at DESC`
@@ -1283,6 +1286,7 @@ export class AskarrDatabase {
       actor_email: string;
       actor_display_name: string | null;
       event_type: string;
+      details_json: string | null;
       created_at: string;
     }>;
 
@@ -1291,10 +1295,34 @@ export class AskarrDatabase {
     );
     const followerEmails = Array.from(new Set(rows.map((r) => r.actor_email.toLowerCase())));
 
+    let lastManualSearchCommandId: number | null = null;
+    let lastManualSearchReportsDownloaded: number | null = null;
+    let lastManualSearchDurationSeconds: number | null = null;
+
+    if (searchEvents[0]?.details_json) {
+      try {
+        const parsed = JSON.parse(searchEvents[0].details_json) as Record<string, unknown>;
+        if (typeof parsed.commandId === 'number') {
+          lastManualSearchCommandId = parsed.commandId;
+        }
+        if (typeof parsed.reportsDownloaded === 'number') {
+          lastManualSearchReportsDownloaded = parsed.reportsDownloaded;
+        }
+        if (typeof parsed.durationSeconds === 'number') {
+          lastManualSearchDurationSeconds = parsed.durationSeconds;
+        }
+      } catch {
+        // ignore JSON parse error
+      }
+    }
+
     return {
       lastManualSearchAt: searchEvents[0]?.created_at || null,
       lastManualSearchBy:
         searchEvents[0]?.actor_display_name || searchEvents[0]?.actor_email.split('@')[0] || null,
+      lastManualSearchCommandId,
+      lastManualSearchReportsDownloaded,
+      lastManualSearchDurationSeconds,
       manualSearchCount: searchEvents.length,
       followerEmails
     };

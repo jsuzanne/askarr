@@ -918,6 +918,9 @@ export class MediaAggregatorService {
     let lastSearchAt: string | null = null;
     let lastSearchSource: 'initial_request' | 'manual_retrigger' | 'radarr_grab' | null = null;
     let lastSearchBy: string | null = null;
+    let lastSearchReportsDownloaded: number | null = null;
+    let lastSearchDurationSeconds: number | null = null;
+    let lastSearchCommandId: number | null = null;
     let manualSearchCount = 0;
     let lastGrabbedAt: string | null = null;
     let lastGrabbedRelease: string | null = null;
@@ -963,6 +966,9 @@ export class MediaAggregatorService {
           lastSearchAt = workflowSummary.lastManualSearchAt;
           lastSearchSource = 'manual_retrigger';
           lastSearchBy = workflowSummary.lastManualSearchBy;
+          lastSearchReportsDownloaded = workflowSummary.lastManualSearchReportsDownloaded;
+          lastSearchDurationSeconds = workflowSummary.lastManualSearchDurationSeconds;
+          lastSearchCommandId = workflowSummary.lastManualSearchCommandId;
         }
       }
 
@@ -1072,6 +1078,9 @@ export class MediaAggregatorService {
         lastSearchAt,
         lastSearchSource,
         lastSearchBy,
+        lastSearchReportsDownloaded,
+        lastSearchDurationSeconds,
+        lastSearchCommandId,
         manualSearchCount,
         lastGrabbedAt,
         lastGrabbedRelease,

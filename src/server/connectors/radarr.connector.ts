@@ -302,9 +302,70 @@ export class RadarrConnector {
     }
   }
 
+  public async waitForCommandCompletion(
+    commandId: number,
+    maxWaitMs = 9500
+  ): Promise<{
+    commandStatus: string;
+    commandMessage: string | null;
+    reportsDownloaded: number | null;
+    durationSeconds: number | null;
+  }> {
+    const startMs = Date.now();
+    let lastStatus = 'queued';
+    let lastMessage: string | null = null;
+    let reportsDownloaded: number | null = null;
+    let durationSeconds: number | null = null;
+
+    while (Date.now() - startMs < maxWaitMs) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      try {
+        const data = await this.getJson<Record<string, unknown>>(
+          `/api/v3/command/${encodeURIComponent(String(commandId))}`
+        );
+        lastStatus = typeof data.status === 'string' ? data.status : lastStatus;
+        lastMessage = typeof data.message === 'string' ? data.message : lastMessage;
+
+        if (lastMessage) {
+          const match = lastMessage.match(/(\d+)\s+reports?\s+downloaded/i);
+          if (match) {
+            reportsDownloaded = Number(match[1]);
+          }
+        }
+
+        if (typeof data.started === 'string' && typeof data.ended === 'string') {
+          const diffMs = new Date(data.ended).getTime() - new Date(data.started).getTime();
+          if (Number.isFinite(diffMs) && diffMs >= 0) {
+            durationSeconds = Math.round((diffMs / 1000) * 10) / 10;
+          }
+        }
+
+        if (lastStatus === 'completed' || lastStatus === 'failed' || lastStatus === 'aborted') {
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+
+    return {
+      commandStatus: lastStatus,
+      commandMessage: lastMessage,
+      reportsDownloaded,
+      durationSeconds
+    };
+  }
+
   public async monitorAndSearchMovie(params: {
     tmdbId: number;
-  }): Promise<{ radarrMovieId: number; commandId: number | null }> {
+  }): Promise<{
+    radarrMovieId: number;
+    commandId: number | null;
+    commandStatus: string;
+    commandMessage: string | null;
+    reportsDownloaded: number | null;
+    durationSeconds: number | null;
+  }> {
     const { movie } = await this.getMovieByTmdbId(params.tmdbId);
     if (!movie) {
       throw new Error(`Film introuvable dans Radarr (TMDB ${params.tmdbId}).`);
@@ -314,9 +375,24 @@ export class RadarrConnector {
     }
     const { commandId } = await this.triggerMovieSearchCommand(movie.id);
     this.catalogCache = null;
+
+    if (commandId !== null) {
+      const completion = await this.waitForCommandCompletion(commandId, 9500);
+      this.catalogCache = null;
+      return {
+        radarrMovieId: movie.id,
+        commandId,
+        ...completion
+      };
+    }
+
     return {
       radarrMovieId: movie.id,
-      commandId
+      commandId: null,
+      commandStatus: 'queued',
+      commandMessage: null,
+      reportsDownloaded: null,
+      durationSeconds: null
     };
   }
 

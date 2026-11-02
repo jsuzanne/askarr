@@ -24,7 +24,9 @@ import {
   ExternalLink,
   Smartphone,
   Info,
-  X
+  X,
+  Search,
+  ArrowRight
 } from 'lucide-react';
 import type {
   MediaEvidence,
@@ -67,6 +69,17 @@ function formatDate(iso: string | null, lang: 'fr' | 'en'): string | null {
   return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'fr-FR', {
     day: 'numeric',
     month: 'long',
+    year: 'numeric'
+  });
+}
+
+function formatShortDate(iso: string | null, lang: 'fr' | 'en'): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'fr-FR', {
+    day: 'numeric',
+    month: 'short',
     year: 'numeric'
   });
 }
@@ -234,11 +247,12 @@ export const MediaCandidateCard: React.FC<Props> = ({
   };
 
   const vodDateFr = formatDate(identity.releaseDates.estimatedVodOrDvdDate, lang);
+  const vodDateShortFr = formatShortDate(identity.releaseDates.estimatedVodOrDvdDate, lang);
   const cinemaDateFr = formatDate(identity.releaseDates.inCinemas, lang);
-  const requestedOrAddedDateFr = formatDate(
-    localEvidence.requestState.requestedAt || acquisitionPipeline.addedAt || null,
-    lang
-  );
+  const cinemaDateShortFr = formatShortDate(identity.releaseDates.inCinemas, lang);
+  const requestedOrAddedIso = localEvidence.requestState.requestedAt || acquisitionPipeline.addedAt || null;
+  const requestedOrAddedDateFr = formatDate(requestedOrAddedIso, lang);
+  const requestedOrAddedDateShortFr = formatShortDate(requestedOrAddedIso, lang);
   const requesterName = localEvidence.requestState.requestedByDisplayName || null;
   const sourceOrigin =
     localEvidence.requestState.sourceOrigin ||
@@ -248,6 +262,9 @@ export const MediaCandidateCard: React.FC<Props> = ({
         ? 'auto_list'
         : null);
   const todayIso = new Date().toISOString().slice(0, 10);
+  const isCinemaFuture = Boolean(
+    identity.releaseDates.inCinemas && identity.releaseDates.inCinemas.slice(0, 10) > todayIso
+  );
   const vodReleaseIso =
     identity.releaseDates.estimatedVodOrDvdDate ||
     identity.releaseDates.digitalRelease ||
@@ -265,6 +282,9 @@ export const MediaCandidateCard: React.FC<Props> = ({
     acquisitionPipeline.addedAt ||
     null;
   const lastSearchDateFr = formatDate(lastSearchIso, lang);
+  const lastSearchDateShortFr = formatShortDate(lastSearchIso, lang);
+  const lastSearchReports = acquisitionPipeline.lastSearchReportsDownloaded ?? null;
+  const lastSearchDuration = acquisitionPipeline.lastSearchDurationSeconds ?? null;
   const searchedBeforeVodRelease = Boolean(
     !isVodFuture &&
       vodReleaseIso &&
@@ -951,19 +971,175 @@ export const MediaCandidateCard: React.FC<Props> = ({
             ) : ledState === 'waitlist' ? (
               <div
                 title={statusLabelText}
-                className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
+                className="rounded-xl border border-amber-400/45 bg-gradient-to-b from-amber-500/[0.14] to-stone-950/90 px-3 py-2.5 shadow-[0_0_18px_rgba(245,158,11,0.12)] space-y-2.5"
               >
-                <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-amber-100 leading-snug">
-                  <span className="mt-1 h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
-                  <span className="break-words">{statusPrimaryTitle}</span>
-                </div>
-                <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-amber-200/90 leading-snug">
-                  {isDownloadingNow ? (
-                    <Download className="mt-0.5 h-3 w-3 text-amber-300 animate-bounce shrink-0" />
+                {/* En-tête de statut sans doublon de dates */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs sm:text-[13px] font-bold text-amber-100 leading-snug">
+                    {isDownloadingNow ? (
+                      <Download className="h-3.5 w-3.5 text-amber-300 animate-bounce shrink-0" />
+                    ) : (
+                      <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
+                    )}
+                    <span className="break-words">{statusPrimaryTitle}</span>
+                  </div>
+
+                  {searchedBeforeVodRelease ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/25 border border-amber-400/60 px-2.5 py-0.5 text-[10px] font-bold text-amber-200">
+                      ⚠️{' '}
+                      {lang === 'en'
+                        ? 'Searched before VOD — Re-trigger ready'
+                        : 'Cherché avant VOD — Relance dispo'}
+                    </span>
                   ) : (
-                    <Clock className="mt-0.5 h-3 w-3 text-amber-300 shrink-0" />
+                    <span className="inline-flex items-center gap-1 rounded-full bg-stone-900/80 border border-amber-500/30 px-2 py-0.5 text-[10px] font-medium text-amber-200/90">
+                      <Clock className="h-2.5 w-2.5 text-amber-300 shrink-0" />
+                      <span>
+                        {lang === 'en' ? 'Auto-added upon release' : 'Ajout auto sur Plex dès dispo'}
+                      </span>
+                    </span>
                   )}
-                  <span className="break-words">{statusSecondarySubtitle}</span>
+                </div>
+
+                {/* Frise chronologique unifiée en 4 étapes (Cinéma ➔ Demande ➔ VOD/DVD ➔ Radarr) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2">
+                  {/* Étape 1 : Sortie Cinéma */}
+                  <div className="relative rounded-lg bg-stone-950/85 border border-stone-800/90 px-2.5 py-1.5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                      <span className="inline-flex items-center gap-1 truncate">
+                        <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
+                        <span>{lang === 'en' ? '1. Theaters' : '1. Sortie ciné'}</span>
+                      </span>
+                      <ArrowRight className="hidden sm:block h-2.5 w-2.5 text-stone-600 shrink-0" />
+                    </div>
+                    <div className="font-bold text-[11px] sm:text-xs text-stone-100 mt-1 truncate">
+                      {cinemaDateShortFr || (identity.year ? String(identity.year) : '—')}
+                    </div>
+                    <div className="text-[10px] text-stone-400 truncate">
+                      {isCinemaFuture
+                        ? lang === 'en'
+                          ? '⏳ Upcoming in theaters'
+                          : '⏳ Prochainement en salle'
+                        : lang === 'en'
+                          ? '✓ Released in theaters'
+                          : '✓ Sorti en salle'}
+                    </div>
+                  </div>
+
+                  {/* Étape 2 : Demande / Ajout */}
+                  <div className="relative rounded-lg bg-stone-950/85 border border-stone-800/90 px-2.5 py-1.5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                      <span className="inline-flex items-center gap-1 truncate">
+                        <PlusCircle className="h-3 w-3 text-amber-400 shrink-0" />
+                        <span>{lang === 'en' ? '2. Request' : '2. Demande'}</span>
+                      </span>
+                      <ArrowRight className="hidden sm:block h-2.5 w-2.5 text-stone-600 shrink-0" />
+                    </div>
+                    <div className="font-bold text-[11px] sm:text-xs text-stone-100 mt-1 truncate">
+                      {requestedOrAddedDateShortFr || '—'}
+                    </div>
+                    <div className="text-[10px] text-amber-300/95 font-medium truncate">
+                      {requesterName
+                        ? lang === 'en'
+                          ? `By ${requesterName}`
+                          : `Par ${requesterName}`
+                        : sourceOrigin === 'auto_list'
+                          ? lang === 'en'
+                            ? 'Auto list'
+                            : 'Liste automatique'
+                          : 'Overseerr / Radarr'}
+                    </div>
+                  </div>
+
+                  {/* Étape 3 : Sortie VOD / DVD */}
+                  <div
+                    className={`relative rounded-lg bg-stone-950/85 border px-2.5 py-1.5 flex flex-col justify-between ${
+                      isVodFuture ? 'border-amber-500/35' : 'border-emerald-500/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                      <span className="inline-flex items-center gap-1 truncate">
+                        <Disc
+                          className={`h-3 w-3 shrink-0 ${
+                            isVodFuture ? 'text-amber-400' : 'text-emerald-400'
+                          }`}
+                        />
+                        <span>3. VOD / DVD</span>
+                      </span>
+                      <ArrowRight className="hidden sm:block h-2.5 w-2.5 text-stone-600 shrink-0" />
+                    </div>
+                    <div className="font-bold text-[11px] sm:text-xs text-stone-100 mt-1 truncate">
+                      {vodDateShortFr
+                        ? `${identity.releaseDates.isEstimatedDate && isVodFuture ? '~' : ''}${vodDateShortFr}`
+                        : lang === 'en'
+                          ? 'Released'
+                          : 'Déjà sorti'}
+                    </div>
+                    <div
+                      className={`text-[10px] font-medium truncate ${
+                        isVodFuture ? 'text-amber-300' : 'text-emerald-300'
+                      }`}
+                    >
+                      {isVodFuture
+                        ? lang === 'en'
+                          ? '⏳ Awaiting VOD'
+                          : '⏳ Attente sortie VOD'
+                        : lang === 'en'
+                          ? '✓ Out on VOD/DVD'
+                          : '✓ Dispo en VOD/DVD'}
+                    </div>
+                  </div>
+
+                  {/* Étape 4 : Dernière recherche Radarr + Verdict */}
+                  <div
+                    className={`relative rounded-lg bg-stone-950/85 border px-2.5 py-1.5 flex flex-col justify-between ${
+                      lastSearchReports !== null && lastSearchReports > 0
+                        ? 'border-emerald-500/45'
+                        : acquisitionPipeline.lastSearchSource === 'manual_retrigger'
+                          ? 'border-amber-500/40'
+                          : 'border-stone-800/90'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                      <span className="inline-flex items-center gap-1 truncate">
+                        <Search className="h-3 w-3 text-amber-300 shrink-0" />
+                        <span>{lang === 'en' ? '4. Radarr' : '4. Radarr'}</span>
+                      </span>
+                    </div>
+                    <div className="font-bold text-[11px] sm:text-xs text-stone-100 mt-1 truncate">
+                      {lastSearchDateShortFr || '—'}
+                    </div>
+                    <div className="text-[10px] text-amber-300/95 truncate" title={
+                      lastSearchReports !== null
+                        ? `${lastSearchReports} release(s)${lastSearchDuration !== null ? ` (${lastSearchDuration.toFixed(1).replace('.', ',')} s)` : ''}`
+                        : undefined
+                    }>
+                      {lastSearchReports !== null ? (
+                        lastSearchReports > 0 ? (
+                          <span className="text-emerald-300 font-semibold">
+                            ✓ {lastSearchReports} release{lastSearchReports > 1 ? 's' : ''}
+                            {acquisitionPipeline.lastSearchBy ? ` (${acquisitionPipeline.lastSearchBy})` : ''}
+                          </span>
+                        ) : (
+                          <span className="text-stone-300">
+                            0 release
+                            {lastSearchDuration !== null
+                              ? ` (${lastSearchDuration.toFixed(1).replace('.', ',')}s)`
+                              : ''}
+                            {acquisitionPipeline.lastSearchBy ? ` • ${acquisitionPipeline.lastSearchBy}` : ''}
+                          </span>
+                        )
+                      ) : acquisitionPipeline.lastSearchSource === 'manual_retrigger' ? (
+                        lang === 'en'
+                          ? `By ${acquisitionPipeline.lastSearchBy || 'user'}`
+                          : `Relancée${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''}`
+                      ) : acquisitionPipeline.lastSearchSource === 'radarr_grab' ? (
+                        lang === 'en' ? 'Release grabbed' : 'Release récupérée'
+                      ) : (
+                        lang === 'en' ? 'Initial search' : 'Recherche initiale'
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -982,125 +1158,38 @@ export const MediaCandidateCard: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Dates de Sortie Cinéma & VOD/DVD (flex-wrap, zéro troncature) */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2.5 py-1 text-[11px] text-stone-300">
-                <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
-                <span>
-                  {t('theatrical_release', {
-                    date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
-                  })}
-                </span>
-              </span>
-
-              {vodDateFr && (
-                <span
-                  className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2.5 py-1 text-[11px] ${
-                    isVodFuture && ledState !== 'available'
-                      ? 'border-amber-500/35 text-amber-200 font-medium'
-                      : 'border-stone-700/80 text-stone-300'
-                  }`}
-                >
-                  <Disc
-                    className={`h-3 w-3 shrink-0 ${
-                      isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
-                    }`}
-                  />
+            {/* Dates de Sortie Cinéma & VOD/DVD (affichées uniquement hors liste d'attente pour éviter tout doublon avec la frise 4 étapes) */}
+            {ledState !== 'waitlist' && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2.5 py-1 text-[11px] text-stone-300">
+                  <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
                   <span>
-                    {t('vod_release', {
-                      date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                    {t('theatrical_release', {
+                      date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
                     })}
                   </span>
                 </span>
-              )}
-            </div>
 
-            {/* Historique du workflow d'acquisition (affiché pour les œuvres en file d'attente) */}
-            {ledState === 'waitlist' && (
-              <div className="rounded-xl border border-amber-500/30 bg-stone-950/85 px-3 py-2.5 text-[11px] sm:text-xs text-stone-200 space-y-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-bold uppercase tracking-wider text-[10px] text-amber-300/90">
-                    {lang === 'en' ? 'Acquisition Workflow History' : 'Historique du workflow'}
-                  </span>
-                  {searchedBeforeVodRelease && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 text-[10px] font-bold text-amber-200">
-                      ⚠️{' '}
-                      {lang === 'en'
-                        ? 'Searched before VOD release — Re-trigger available'
-                        : 'Cherché avant la sortie VOD — Relance dispo'}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-0.5">
-                  <div className="rounded-lg bg-stone-900/90 border border-stone-800 px-2.5 py-1.5">
-                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
-                      {lang === 'en' ? '1. Added / Requested' : '1. Demande / Ajout'}
-                    </div>
-                    <div className="font-semibold text-stone-100 mt-0.5">
-                      {requestedOrAddedDateFr || '—'}
-                    </div>
-                    <div className="text-[10px] text-amber-300/90 truncate">
-                      {requesterName
-                        ? lang === 'en'
-                          ? `By ${requesterName}`
-                          : `Par ${requesterName}`
-                        : sourceOrigin === 'auto_list'
-                          ? lang === 'en'
-                            ? 'Auto list'
-                            : 'Liste automatique'
-                          : 'Overseerr / Radarr'}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg bg-stone-900/90 border border-stone-800 px-2.5 py-1.5">
-                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
-                      {lang === 'en' ? '2. VOD / DVD Release' : '2. Sortie VOD / DVD'}
-                    </div>
-                    <div className="font-semibold text-stone-100 mt-0.5">
-                      {vodDateFr
-                        ? `${identity.releaseDates.isEstimatedDate && isVodFuture ? '~' : ''}${vodDateFr}`
-                        : lang === 'en'
-                          ? 'Already released'
-                          : 'Déjà sorti'}
-                    </div>
-                    <div
-                      className={`text-[10px] font-medium ${
-                        isVodFuture ? 'text-amber-300' : 'text-emerald-300'
+                {vodDateFr && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2.5 py-1 text-[11px] ${
+                      isVodFuture && ledState !== 'available'
+                        ? 'border-amber-500/35 text-amber-200 font-medium'
+                        : 'border-stone-700/80 text-stone-300'
+                    }`}
+                  >
+                    <Disc
+                      className={`h-3 w-3 shrink-0 ${
+                        isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
                       }`}
-                    >
-                      {isVodFuture
-                        ? lang === 'en'
-                          ? '⏳ Not released yet (Case 1)'
-                          : '⏳ Pas encore sorti (attente auto)'
-                        : lang === 'en'
-                          ? '✓ Released on VOD/DVD'
-                          : '✓ Déjà sorti en VOD/DVD'}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg bg-stone-900/90 border border-stone-800 px-2.5 py-1.5">
-                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
-                      {lang === 'en' ? '3. Last Radarr Search' : '3. Dernière recherche Radarr'}
-                    </div>
-                    <div className="font-semibold text-stone-100 mt-0.5">
-                      {lastSearchDateFr || '—'}
-                    </div>
-                    <div className="text-[10px] text-amber-300/90 truncate">
-                      {acquisitionPipeline.lastSearchSource === 'manual_retrigger'
-                        ? lang === 'en'
-                          ? `Re-triggered${acquisitionPipeline.lastSearchBy ? ` by ${acquisitionPipeline.lastSearchBy}` : ''}`
-                          : `Relancée${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''}`
-                        : acquisitionPipeline.lastSearchSource === 'radarr_grab'
-                          ? lang === 'en'
-                            ? 'Release grabbed by Radarr'
-                            : 'Release récupérée par Radarr'
-                          : lang === 'en'
-                            ? 'Initial search on request'
-                            : "Recherche initiale à l'ajout"}
-                    </div>
-                  </div>
-                </div>
+                    />
+                    <span>
+                      {t('vod_release', {
+                        date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                      })}
+                    </span>
+                  </span>
+                )}
               </div>
             )}
 

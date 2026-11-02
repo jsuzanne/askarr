@@ -662,7 +662,11 @@ export async function createApp(deps: AppDependencies): Promise<{
           eventType: 'RADARR_SEARCH_TRIGGERED',
           details: {
             radarrMovieId: radarrRes.radarrMovieId,
-            commandId: radarrRes.commandId
+            commandId: radarrRes.commandId,
+            commandStatus: radarrRes.commandStatus,
+            commandMessage: radarrRes.commandMessage,
+            reportsDownloaded: radarrRes.reportsDownloaded,
+            durationSeconds: radarrRes.durationSeconds
           }
         });
 
@@ -671,7 +675,10 @@ export async function createApp(deps: AppDependencies): Promise<{
           status: 'EXECUTED',
           externalResult: {
             radarrMovieId: radarrRes.radarrMovieId,
-            commandId: radarrRes.commandId
+            commandId: radarrRes.commandId,
+            commandStatus: radarrRes.commandStatus,
+            reportsDownloaded: radarrRes.reportsDownloaded,
+            durationSeconds: radarrRes.durationSeconds
           }
         });
         waitingListCache.clear();
@@ -682,12 +689,14 @@ export async function createApp(deps: AppDependencies): Promise<{
           actionType: 'RADARR_MOVIE_SEARCH',
           targetService: 'radarr',
           actionToken: record.token,
-          summaryFr: `Relance manuelle de recherche Radarr confirmée : ${record.payload.summaryFr}`,
+          summaryFr: `Relance manuelle de recherche Radarr confirmée (#${radarrRes.commandId || '?'}) : ${record.payload.summaryFr}`,
           diffRedacted: {
             tmdbId: record.payload.tmdbId,
             mediaType: 'movie',
             radarrMovieId: radarrRes.radarrMovieId,
-            commandId: radarrRes.commandId
+            commandId: radarrRes.commandId,
+            reportsDownloaded: radarrRes.reportsDownloaded,
+            durationSeconds: radarrRes.durationSeconds
           },
           status: 'SUCCESS'
         });
@@ -701,10 +710,23 @@ export async function createApp(deps: AppDependencies): Promise<{
           checkIndexers: false
         });
 
+        const durTxt =
+          typeof radarrRes.durationSeconds === 'number'
+            ? ` en ${radarrRes.durationSeconds.toFixed(1).replace('.', ',')} s`
+            : '';
+        const cmdTxt = radarrRes.commandId ? ` (Commande Radarr #${radarrRes.commandId})` : '';
+
+        const verdictMessageFr =
+          typeof radarrRes.reportsDownloaded === 'number' && radarrRes.reportsDownloaded > 0
+            ? `🎉 Recherche Radarr terminée${durTxt}${cmdTxt} : ${radarrRes.reportsDownloaded} release(s) trouvée(s) et envoyée(s) au téléchargement pour "${record.payload.title}" !`
+            : radarrRes.reportsDownloaded === 0
+              ? `Recherche Radarr terminée sur tous les indexeurs${durTxt}${cmdTxt} : 0 release valide trouvée pour "${record.payload.title}" pour le moment.`
+              : `La recherche immédiate dans Radarr${cmdTxt} pour "${record.payload.title}" a bien été lancée sur tous les indexeurs !`;
+
         return {
           actionId: record.token,
           status: 'EXECUTED',
-          messageFr: `La recherche immédiate dans Radarr pour "${record.payload.title}" a bien été relancée sur tous les indexeurs !`,
+          messageFr: verdictMessageFr,
           evidence: updatedEvidence
         };
       } catch (err) {

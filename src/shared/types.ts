@@ -110,6 +110,9 @@ export interface MediaEvidence {
     lastSearchAt?: string | null;
     lastSearchSource?: 'initial_request' | 'manual_retrigger' | 'radarr_grab' | null;
     lastSearchBy?: string | null;
+    lastSearchReportsDownloaded?: number | null;
+    lastSearchDurationSeconds?: number | null;
+    lastSearchCommandId?: number | null;
     manualSearchCount?: number;
     lastGrabbedAt?: string | null;
     lastGrabbedRelease?: string | null;
