@@ -444,24 +444,28 @@ export const MediaCandidateCard: React.FC<Props> = ({
 
   return (
     <div
-      className={`group rounded-2xl flex flex-col justify-between relative overflow-hidden transition-all ${
+      className={`group flex flex-col justify-between relative overflow-hidden transition-all ${
         compactRowMode && !rowExpanded
-          ? 'bg-black/50 border border-amber-500/25 hover:border-amber-400/50 px-3 py-2.5 sm:px-4 sm:py-2.5 shadow-[0_4px_16px_rgba(0,0,0,0.5)]'
-          : embeddedInChat
-            ? 'bg-black/45 border border-amber-500/25 p-3.5 sm:p-4 shadow-[0_8px_28px_rgba(0,0,0,0.65)]'
-            : 'cinema-poster-card p-4 sm:p-5 lg:p-6'
+          ? 'hover:bg-amber-500/[0.06] px-3 py-2.5 sm:px-3.5 sm:py-2.5'
+          : compactRowMode && rowExpanded
+            ? 'bg-stone-950/50 p-3.5 sm:p-4'
+            : embeddedInChat
+              ? 'rounded-2xl bg-black/45 border border-amber-500/25 p-3.5 sm:p-4 shadow-[0_8px_28px_rgba(0,0,0,0.65)]'
+              : 'rounded-2xl cinema-poster-card p-4 sm:p-5 lg:p-6'
       }`}
     >
-      {/* Fine ligne lumineuse dorée en haut de l'affiche */}
-      <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400/50 to-transparent opacity-75 group-hover:opacity-100 transition-opacity" />
+      {/* Fine ligne lumineuse dorée en haut de l'affiche (hors ligne compacte de tableau) */}
+      {(!compactRowMode || rowExpanded) && (
+        <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400/50 to-transparent opacity-75 group-hover:opacity-100 transition-opacity" />
+      )}
 
       {compactRowMode && !rowExpanded ? (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2.5 sm:gap-3.5">
-            {/* Gauche : Rang + Mini-Affiche 2:3 + Infos condensées sur 2 lignes */}
-            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-2.5 md:grid md:grid-cols-[minmax(195px,2.1fr)_84px_minmax(115px,1.1fr)_minmax(180px,1.5fr)_auto] md:items-center md:gap-3">
+            {/* Colonne 1 : #Rang + Mini-Affiche 2:3 + Titre (Année) + Durée & Réalisateur */}
+            <div className="flex items-center gap-2.5 min-w-0 flex-1 md:flex-initial">
               {typeof rankNumber === 'number' && (
-                <span className="hidden sm:inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-500/15 border border-amber-500/35 text-xs font-mono font-bold text-amber-300 shrink-0">
+                <span className="inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-amber-500/15 border border-amber-500/35 text-[11px] font-mono font-bold text-amber-300 shrink-0">
                   {rankNumber}
                 </span>
               )}
@@ -475,7 +479,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                     ? `View full sheet for "${identity.titleFr}"`
                     : `Voir la fiche complète de « ${identity.titleFr} »`
                 }
-                className="relative w-10 sm:w-11 aspect-[2/3] shrink-0 overflow-hidden rounded-lg bg-stone-950 border border-amber-500/35 shadow-md cursor-pointer group/mini"
+                className="relative w-9 sm:w-10 aspect-[2/3] shrink-0 overflow-hidden rounded-lg bg-stone-950 border border-amber-500/35 shadow-sm cursor-pointer group/mini"
               >
                 {identity.posterUrl ? (
                   <img
@@ -495,7 +499,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 )}
               </button>
 
-              {/* Zone Texte cliquable pour déplier la carte complète */}
+              {/* Titre + Sous-ligne Réalisateur / Durée (cliquable pour déplier) */}
               <div
                 onClick={() => setRowExpanded(true)}
                 className="min-w-0 flex-1 cursor-pointer"
@@ -505,61 +509,39 @@ export const MediaCandidateCard: React.FC<Props> = ({
                     : 'Cliquer pour déplier toute la fiche (synopsis, casting, trace...)'
                 }
               >
-                {/* Ligne 1 : Titre + Année + Note IMDb + Durée + Genres + Réalisateur */}
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-sm sm:text-[15px] font-bold text-white leading-tight">
+                <div className="flex items-baseline gap-1.5 min-w-0">
+                  <span className="text-sm font-bold text-white truncate">
                     {identity.titleFr}
-                    {identity.year ? (
-                      <span className="font-normal text-amber-300/90 text-xs sm:text-sm ml-1">
-                        ({identity.year})
-                      </span>
-                    ) : null}
                   </span>
-
-                  {rating !== null && rating > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.5 text-[11px] sm:text-xs font-bold text-amber-200 shrink-0">
-                      <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
-                      <span>{rating.toFixed(1)}</span>
-                      <span className="text-[9px] font-semibold text-amber-300/85 uppercase">
-                        {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
-                      </span>
+                  {identity.year ? (
+                    <span className="font-mono text-xs text-amber-300/90 shrink-0">
+                      ({identity.year})
                     </span>
-                  )}
-
-                  {formatDuration(identity.runtimeMinutes) && (
-                    <span className="text-xs font-semibold text-amber-300/90 shrink-0">
-                      • {formatDuration(identity.runtimeMinutes)}
-                    </span>
-                  )}
-
-                  <div className="hidden sm:flex flex-wrap items-center gap-1">
-                    {identity.genres.slice(0, 3).map((g) => (
-                      <span
-                        key={g}
-                        className="rounded-full bg-stone-900/90 border border-amber-500/25 px-2 py-0.2 text-[10px] font-medium text-amber-100/90"
-                      >
-                        {g}
-                      </span>
-                    ))}
-                  </div>
-
-                  {identity.directorOrCreator && (
-                    <span className="hidden lg:inline text-xs text-stone-400 truncate max-w-[14rem]">
-                      • {identity.directorOrCreator}
-                    </span>
-                  )}
+                  ) : null}
                 </div>
 
-                {/* Ligne 2 : LED Statut Plex + Trace Admin condensée (si activée) */}
-                <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
-                  <span className="inline-flex items-center gap-1.5 font-semibold">
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-stone-400 truncate">
+                  {formatDuration(identity.runtimeMinutes) && (
+                    <span className="font-semibold text-amber-300/90 shrink-0">
+                      {formatDuration(identity.runtimeMinutes)}
+                    </span>
+                  )}
+                  {identity.directorOrCreator && (
+                    <span className="truncate">
+                      {formatDuration(identity.runtimeMinutes) ? '• ' : ''}
+                      {identity.directorOrCreator}
+                    </span>
+                  )}
+                  {/* Sur mobile (< md) : note + statut condensés sous le titre */}
+                  <span className="md:hidden inline-flex items-center gap-1 font-semibold">
+                    •{' '}
                     <span
-                      className={`h-2 w-2 rounded-full shrink-0 ${
+                      className={`h-1.5 w-1.5 rounded-full shrink-0 ${
                         ledState === 'available'
-                          ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.95)]'
+                          ? 'bg-emerald-400'
                           : ledState === 'waitlist'
-                            ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.95)] animate-pulse'
-                            : 'bg-rose-500/85'
+                            ? 'bg-amber-400'
+                            : 'bg-rose-500'
                       }`}
                     />
                     <span
@@ -571,31 +553,103 @@ export const MediaCandidateCard: React.FC<Props> = ({
                             : 'text-stone-300'
                       }
                     >
-                      {statusPrimaryTitle}
+                      {ledState === 'available'
+                        ? 'Dispo Plex'
+                        : ledState === 'waitlist'
+                          ? 'En attente'
+                          : 'Sur demande'}
                     </span>
                   </span>
-
-                  {originText && (
-                    <span className="hidden md:inline text-[11px] text-stone-400">
-                      • {originText}
-                    </span>
-                  )}
-
-                  {showTechnicalTrace && (
-                    <span className="hidden sm:inline-flex items-center gap-1 rounded bg-black/80 border border-amber-500/30 px-1.5 py-0.2 text-[10px] font-mono text-amber-300/90">
-                      <Terminal className="h-2.5 w-2.5 shrink-0" />
-                      <span>
-                        TMDB={identity.tmdbId}
-                        {mdblistTrace ? ` • mdblist (${mdblistTrace.latencyMs}ms)` : ''}
-                      </span>
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
 
-            {/* Droite : Actions directes en 1 clic + Bouton Fiche + Bouton Déplier */}
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Colonne 2 : NOTE (alignée en colonne dès md:) */}
+            <div
+              onClick={() => setRowExpanded(true)}
+              className="hidden md:flex items-center cursor-pointer"
+            >
+              {rating !== null && rating > 0 ? (
+                <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 text-xs font-bold text-amber-200 whitespace-nowrap">
+                  <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
+                  <span>{rating.toFixed(1)}</span>
+                  <span className="text-[9px] font-semibold text-amber-300/85 uppercase">
+                    {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-xs font-mono text-stone-500">—</span>
+              )}
+            </div>
+
+            {/* Colonne 3 : GENRES (alignés en colonne dès md:) */}
+            <div
+              onClick={() => setRowExpanded(true)}
+              className="hidden md:flex flex-wrap items-center gap-1 cursor-pointer min-w-0"
+            >
+              {identity.genres.length > 0 ? (
+                identity.genres.slice(0, 2).map((g) => (
+                  <span
+                    key={g}
+                    className="rounded-md bg-stone-900/90 border border-amber-500/25 px-2 py-0.5 text-[10px] font-medium text-amber-100/90 truncate max-w-[110px]"
+                  >
+                    {g}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs font-mono text-stone-500">—</span>
+              )}
+              {identity.genres.length > 2 && (
+                <span className="text-[10px] font-mono text-stone-400">
+                  +{identity.genres.length - 2}
+                </span>
+              )}
+            </div>
+
+            {/* Colonne 4 : STATUT PLEX / DISPONIBILITÉ (aligné en colonne dès md:) */}
+            <div
+              onClick={() => setRowExpanded(true)}
+              className="hidden md:flex flex-col justify-center min-w-0 cursor-pointer"
+            >
+              <div className="flex items-center gap-1.5 text-xs font-semibold min-w-0">
+                <span
+                  className={`h-2 w-2 rounded-full shrink-0 ${
+                    ledState === 'available'
+                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.95)]'
+                      : ledState === 'waitlist'
+                        ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.95)] animate-pulse'
+                        : 'bg-rose-500/85'
+                  }`}
+                />
+                <span
+                  className={`truncate ${
+                    ledState === 'available'
+                      ? 'text-emerald-200'
+                      : ledState === 'waitlist'
+                        ? 'text-amber-200'
+                        : 'text-stone-300'
+                  }`}
+                  title={statusPrimaryTitle}
+                >
+                  {statusPrimaryTitle}
+                </span>
+              </div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-stone-400 min-w-0">
+                {originText && <span className="truncate">{originText}</span>}
+                {showTechnicalTrace && (
+                  <span className="inline-flex items-center gap-1 rounded bg-black/80 border border-amber-500/30 px-1.5 py-0.2 text-[9px] font-mono text-amber-300/90 shrink-0">
+                    <Terminal className="h-2.5 w-2.5 shrink-0" />
+                    <span>
+                      TMDB={identity.tmdbId}
+                      {mdblistTrace ? ` • mdblist (${mdblistTrace.latencyMs}ms)` : ''}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Colonne 5 : ACTIONS DIRECTES (alignées à droite façon PoteCast) */}
+            <div className="flex items-center justify-end gap-1.5 shrink-0">
               {plexWebUrl && (
                 <a
                   href={primaryPlexHref || plexWebUrl}
@@ -619,7 +673,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
               {plexIosDeepLink && !isMobileDevice && (
                 <a
                   href={plexIosDeepLink}
-                  className="hidden md:inline-flex items-center gap-1 rounded-xl border border-amber-500/35 bg-stone-900/90 px-2 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20 transition cursor-pointer"
+                  className="hidden lg:inline-flex items-center gap-1 rounded-xl border border-amber-500/35 bg-stone-900/90 px-2 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20 transition cursor-pointer"
                   title="Ouvrir dans l'app native Plex (plex://)"
                 >
                   <Smartphone className="h-3.5 w-3.5 text-amber-400 shrink-0" />
@@ -658,7 +712,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 }
               >
                 <Info className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                <span className="hidden md:inline">{lang === 'en' ? 'Sheet' : 'Fiche'}</span>
+                <span className="hidden lg:inline">{lang === 'en' ? 'Sheet' : 'Fiche'}</span>
               </button>
 
               <button

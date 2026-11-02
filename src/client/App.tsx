@@ -2887,12 +2887,27 @@ export function App() {
                             <div
                               className={
                                 layoutMode === 'compact'
-                                  ? 'flex flex-col gap-2'
+                                  ? 'rounded-2xl border border-amber-500/25 bg-black/45 overflow-hidden shadow-[0_6px_22px_rgba(0,0,0,0.45)] divide-y divide-amber-500/15'
                                   : `grid grid-cols-1 ${
                                       isMultiList ? 'lg:grid-cols-2 gap-4' : 'gap-3.5'
                                     }`
                               }
                             >
+                              {layoutMode === 'compact' && (
+                                <div className="hidden md:grid md:grid-cols-[minmax(195px,2.1fr)_84px_minmax(115px,1.1fr)_minmax(180px,1.5fr)_auto] items-center gap-3 px-3.5 py-2 bg-stone-950/85 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400">
+                                  <div className="pl-1">
+                                    {lang === 'en' ? '# • Title / Director' : '# • Film / Réalisateur'}
+                                  </div>
+                                  <div>{lang === 'en' ? 'Rating' : 'Note'}</div>
+                                  <div>{lang === 'en' ? 'Genres' : 'Genres'}</div>
+                                  <div>
+                                    {lang === 'en' ? 'Status / Availability' : 'Statut / Disponibilité'}
+                                  </div>
+                                  <div className="text-right pr-1">
+                                    {lang === 'en' ? 'Direct Actions' : 'Actions directes'}
+                                  </div>
+                                </div>
+                              )}
                               {msg.mediaCards.map((cand, idx) => (
                                 <MediaCandidateCard
                                   key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
