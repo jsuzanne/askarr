@@ -5,6 +5,25 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.38] - 2026-11-02
+
+### Ajouté
+- **Frise chronologique unifiée en 4 étapes & Relance Radarr à la demande avec verdict en direct (`MediaCandidateCard`, `RadarrConnector`)** :
+  - Lorsqu'un film est en file d'attente (`waitlist`), suppression des pastilles redondantes et affichage d'une frise horizontale connectée en 4 étapes : **1. Sortie ciné** ➔ **2. Demande** (`Par [utilisateur]` / `Liste auto`) ➔ **3. VOD / DVD** (`✓ Dispo en VOD/DVD` ou `⏳ Attente sortie VOD`) ➔ **4. Radarr** (date, auteur et verdict réel des indexeurs).
+  - Bouton **🔍 Relancer** pour les films déjà sortis en VOD/DVD mais bloqués sans fichier (Cas 2) : déclenche `MoviesSearch` dans Radarr (`POST /api/v3/command`), attend la fin de la recherche (`/api/v3/command/{id}`), affiche le nombre exact de releases trouvées et la durée (`0 release (4,0s)` ou `✓ X release(s)`), journalise l'événement dans `media_workflow_events` et rattache automatiquement le film à l'onglet personnel **🎟️ Mes demandes** de l'utilisateur.
+- **Espace personnel `🎟️ Mes demandes` synchronisé avec Overseerr + suivis Askarr** :
+  - Filtre strictement les demandes Overseerr de l'utilisateur connecté ainsi que les films qu'il a relancés/suivis dans Askarr, sans mélanger les demandes des autres utilisateurs ni les listes automatiques Radarr.
+- **Mode Liste Compacte triable et dépliable en accordéon (`compactRowMode`)** :
+  - Affichage en tableau aligné (jaquette 2:3, titre complet, note IMDb, date de sortie, statut LED Plex et bouton d'action rapide) dans le Ciné-Club et dans `Mes demandes`, dépliable au clic pour ouvrir la fiche complète.
+
+### Modifié
+- **Navigation & Thème Clair/Sombre** :
+  - Raccourcissement des onglets de navigation (`Ciné-Club`, `Mes demandes`) et simplification du sélecteur de thème par l'icône universelle Soleil / Lune (`☀️` / `🌙`).
+- **Contexte temporel du Projectionniste (`deepseek-orchestrator.service.ts`)** :
+  - Injection de la date du jour (`todayDate`) et du statut `isVodAlreadyReleased` pour que le Projectionniste s'exprime au passé lorsqu'une date de sortie VOD/DVD est déjà franchie.
+
+---
+
 ## [1.2.27] - 2026-11-02
 
 ### Ajouté

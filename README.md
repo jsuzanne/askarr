@@ -2,11 +2,11 @@
 
 ### The Conversational Cinema Assistant for Plex & Overseerr
 
-[![Version](https://img.shields.io/badge/version-1.2.15-amber.svg?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-1.2.38-amber.svg?style=flat-square)](package.json)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL_v3-purple.svg?style=flat-square)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fjsuzanne%2Faskarr-blue.svg?style=flat-square)](https://github.com/jsuzanne/askarr/pkgs/container/askarr)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-emerald.svg?style=flat-square)](package.json)
-[![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg?style=flat-square)](test/)
+[![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen.svg?style=flat-square)](tests/)
 [![Stack](https://img.shields.io/badge/stack-Fastify%205%20%7C%20React%2019%20%7C%20Tailwind%204%20%7C%20SQLite-red.svg?style=flat-square)](package.json)
 
 **English** | [Français](README.fr.md)
@@ -77,29 +77,33 @@ Status:
 
 ## Key Capabilities
 
-### 1. Conversational Semantic Search
-Search by plot points, quotes, directors, moods, or festival awards (Oscars, Cannes). Askarr's AI pipeline translates conversational queries into structured TMDB/IMDb lookups, eliminating search friction.
+### 1. Conversational Semantic Search & Multi-Criteria Discovery
+Search by plot points, quotes, directors, moods, or festival awards (Oscars, Cannes), or combine strict criteria (*"five 2010–2020 thrillers under 110 minutes with an IMDb rating above 8 available on my Plex servers"*). Askarr's AI pipeline translates natural queries into structured TMDB, IMDb, and **MDBList** lookups, eliminating search friction.
 
 ### 2. Multi-Server Plex Verification & Permission Scoping
 Connects to multiple Plex Media Servers (`Plex-Main`, `Plex-Vault`, etc.). Crucially, Askarr synchronizes with `plex.tv` sharing lists: media availability is verified strictly against the servers the logged-in user has permission to access.
 
-### 3. Clear Three-State Media Visibility
-Every media card accurately displays one of three deterministic states:
-- **Available Now (`available_now`)**: Instant playback links to Plex Web and native mobile apps (`plex://preplay/...`).
-- **Already in Queue (`already_requested` / `monitored`)**: Shows who requested the title, when it was queued, and estimated digital VOD/home release dates.
-- **Available to Request (`canRequestNow`)**: Generates a two-step confirmation token to submit the request through Overseerr cleanly.
+### 3. Three-State LED Visibility, 4-Step Workflow & Smart Radarr Re-Trigger
+Every media card (available in both **Large Poster** and **Sortable Expandable Compact Row** modes, with **Dark Cinema** `🌙` and **Matinée Ivory Light** `☀️` themes) displays one of three deterministic LED states:
+- **🟢 Available Now (`available_now`)**: Instant playback links to Plex Web and native mobile apps (`plex://preplay/...`).
+- **🟠 In Waiting List (`waitlist`)**: Displays a unified **4-step horizontal workflow timeline**:
+  1. **🎬 Theatrical Release** (`Sortie ciné`)
+  2. **➕ Request Origin** (Requested by `[User]` on Overseerr or added via automated list, with personal tracking in **🎟️ My Requests**)
+  3. **💿 VOD / DVD Release** (Automatically distinguishes upcoming VOD releases from titles already out on digital/DVD)
+  4. **🔍 Radarr Search & Live Verdict** (Shows the last indexer search date, who triggered it, and the real-time Radarr verdict such as `0 release (4.0s)` or `✓ 1 release`). When a movie is already released on VOD/DVD but still missing on disk, any user can click **🔍 Re-trigger Search** to launch an immediate on-demand Radarr indexer search and subscribe the movie to their personal **🎟️ My Requests** tab.
+- **🔴 Available to Request (`canRequestNow`)**: Generates a two-step confirmation token to submit the request through Overseerr cleanly (including missing episode/season completion for partially available TV series via Sonarr).
 
 ### 4. Resilient Multi-Provider AI Routing
-Supports **Google Gemini**, **Groq Cloud**, **Mistral AI**, **OpenRouter**, and **DeepSeek**.
-- **Cascade Free First**: Leverages cost-effective/free tier models first, immediately falling back to alternative providers on HTTP 429 rate limits.
+Supports **DeepSeek**, **Google Gemini**, **Groq Cloud**, **Mistral AI**, and **OpenRouter**.
+- **Cascade & Failover**: Supports manual primary provider selection (e.g. DeepSeek V3) or cost-effective free-first cascade, immediately falling back to alternative providers on rate limits or timeouts.
 - **Direct Search Fallback**: If all AI providers are exhausted or unreachable, Askarr automatically falls back to deterministic keyword search via TMDB and Plex/Overseerr. The app never crashes when external AI APIs go down.
 
 ### 5. Dedicated Administration: The Régie
 Administrators access a protected management dashboard to:
 - Test latency, connectivity, and versions of all media connectors.
 - Override API keys, endpoints, and server mappings at runtime with persistence in SQLite (no container restart needed).
-- Monitor AI token consumption and cache hit ratios.
-- Inspect real-time audit logs of all configuration changes and requests.
+- Monitor AI token consumption, cache hit ratios, and live API traces.
+- Send vintage Kraft VIP invitation tickets via SMTP and inspect real-time audit logs of all configuration changes, requests, and workflow events.
 
 ### 6. Zero-Trust Security & Safe Homelab Defaults
 - **Production**: Native verification of Cloudflare Access JWT assertions (`Cf-Access-Jwt-Assertion`) against Cloudflare JWKS.
@@ -117,16 +121,15 @@ flowchart TD
     User["👤 Family & Friends<br/>(Browser / Mobile)"] --> Proxy["🛡️ Reverse Proxy / Cloudflare Access"]
     Proxy --> Askarr["🎬 Askarr Application<br/>(Fastify 5 + React 19 + SQLite)"]
 
-    subgraph External AI APIs
-        Askarr -.-> Gemini["Google Gemini"]
-        Askarr -.-> Groq["Groq Cloud"]
-        Askarr -.-> Mistral["Mistral AI / DeepSeek"]
+    subgraph External AI & Catalog APIs
+        Askarr -.-> DeepSeek["DeepSeek / Gemini / Groq / Mistral"]
+        Askarr -.-> MDBList["🎯 MDBList<br/>(Multi-criteria catalog)"]
     end
 
     subgraph Homelab Media Stack
         Askarr ==> Plex["🎞️ Plex Media Servers<br/>(Plex-Main, Plex-Vault)"]
         Askarr ==> Overseerr["🎟️ Overseerr / Jellyseerr<br/>(Metadata & Requests)"]
-        Askarr -.-> Radarr["🎥 Radarr & Sonarr<br/>(Release dates & seasons)"]
+        Askarr -.-> Radarr["🎥 Radarr & Sonarr<br/>(Workflow, releases & re-search)"]
         Askarr -.-> Prowlarr["🔎 Prowlarr<br/>(Indexer health)"]
         Askarr -.-> Tracearr["📊 Tracearr<br/>(Watch history & telemetry)"]
     end
@@ -139,8 +142,9 @@ flowchart TD
 | **Plex Media Server** | Library check & play links | **Mandatory** | Cannot verify media presence or generate watch links. |
 | **Overseerr / Jellyseerr** | Metadata resolution & requests | **Mandatory** | Cannot search metadata or submit media requests. |
 | **AI Provider** | Natural language intent parsing | **Mandatory** *(≥1)* | App engages offline direct keyword search fallback. |
-| **Radarr** | Movie release date tracking | **Optional** | Overseerr provides request status; detailed release dates omitted. |
-| **Sonarr** | Season-level TV tracking | **Optional** | Shows tracked at series level via Overseerr. |
+| **Radarr** | Movie release dates, workflow & on-demand re-search | **Optional** | Overseerr provides request status; detailed workflow & re-search omitted. |
+| **Sonarr** | Season & missing episode TV tracking | **Optional** | Shows tracked at series level via Overseerr. |
+| **MDBList** | Structured multi-criteria discovery (genre, IMDb/RT, runtime) | **Optional** | Multi-criteria queries fall back to TMDB/Overseerr discovery. |
 | **Prowlarr** | Indexer diagnostic monitoring | **Optional** | Indexer health metrics omitted from Admin Régie. |
 | **Tracearr** | Plex playback history & live streams | **Optional** | Recommendations use generic TMDB trending data. |
 | **Cloudflare Access** | Zero Trust SSO authentication | **Optional** | Local LAN fallback or dev header authentication used. |

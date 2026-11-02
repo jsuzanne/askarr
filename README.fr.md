@@ -2,11 +2,11 @@
 
 ### Le copilote conversationnel de cinéma pour Plex et Overseerr
 
-[![Version](https://img.shields.io/badge/version-1.2.15-amber.svg?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-1.2.38-amber.svg?style=flat-square)](package.json)
 [![Licence: AGPL v3](https://img.shields.io/badge/licence-AGPL_v3-purple.svg?style=flat-square)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fjsuzanne%2Faskarr-blue.svg?style=flat-square)](https://github.com/jsuzanne/askarr/pkgs/container/askarr)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-emerald.svg?style=flat-square)](package.json)
-[![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg?style=flat-square)](test/)
+[![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen.svg?style=flat-square)](tests/)
 [![Stack](https://img.shields.io/badge/stack-Fastify%205%20%7C%20React%2019%20%7C%20Tailwind%204%20%7C%20SQLite-red.svg?style=flat-square)](package.json)
 
 [English](README.md) | **Français**
@@ -77,29 +77,33 @@ Disponibilité :
 
 ## Capacités clés
 
-### 1. Recherche conversationnelle sémantique
-Recherche par intrigue, réplique marquante, réalisateur, ambiance ou palmarès (César, Oscars, Festival de Cannes). La chaîne de traitement d'Askarr convertit les demandes en langage naturel en requêtes précises vers TMDB et IMDb.
+### 1. Recherche conversationnelle sémantique & découverte multi-critères
+Recherche par intrigue, réplique marquante, réalisateur, ambiance ou palmarès (César, Oscars, Festival de Cannes), ou combinaison de critères précis (*« cinq thrillers entre 2010 et 2020 de moins de 110 minutes avec une note IMDb supérieure à 8 disponibles sur mes serveurs Plex »*). La chaîne de traitement d'Askarr convertit les demandes naturelles en requêtes structurées vers TMDB, IMDb et **MDBList**.
 
 ### 2. Vérification multi-serveurs Plex et respect des permissions
 Connexion simultanée à plusieurs serveurs Plex Media Server (`Plex-Main`, `Plex-Vault`, etc.). Askarr synchronise les listes de partage `plex.tv` : la disponibilité d'une œuvre est vérifiée strictement sur les serveurs auxquels l'utilisateur connecté a le droit d'accéder.
 
-### 3. Visibilité nette des trois états d'un média
-Chaque fiche média présente sans ambiguïté l'un des trois états vérifiés :
-- **Disponible immédiatement (`available_now`)** : Liens directs vers Plex Web et l'application mobile (`plex://preplay/...`).
-- **Déjà en file d'attente (`already_requested` / `monitored`)** : Indication de l'utilisateur ayant fait la demande, date de mise en attente et date prévisionnelle de sortie VOD/numérique.
-- **Disponible à la demande (`canRequestNow`)** : Génération d'un jeton de confirmation pour soumettre la demande proprement dans Overseerr.
+### 3. Visibilité LED 3 états, frise chronologique en 4 étapes & relance Radarr à la demande
+Chaque fiche média (consultable en mode **Grandes Fiches** ou en **Liste Compacte triable et dépliable**, avec thème **Sombre** `🌙` ou **Clair Matinée Ivoire** `☀️`) présente sans ambiguïté l'un des trois états LED :
+- **🟢 Disponible sur Plex (`available_now`)** : Liens directs vers Plex Web et l'application mobile (`plex://preplay/...`).
+- **🟠 Dans la liste d'attente (`waitlist`)** : Affiche une **frise chronologique unifiée en 4 étapes** :
+  1. **🎬 Sortie ciné** (Date de sortie en salle)
+  2. **➕ Demande** (Demandé par `[Utilisateur]` dans Overseerr ou ajouté via liste automatique, avec suivi personnel dans l'onglet **🎟️ Mes demandes**)
+  3. **💿 VOD / DVD** (Distingue automatiquement les films en attente de sortie VOD de ceux déjà parus en numérique/DVD)
+  4. **🔍 Radarr & Verdict en direct** (Affiche la date de la dernière recherche d'indexeurs, qui l'a lancée, et le verdict réel de Radarr tel que `0 release (4,0s)` ou `✓ 1 release`). Lorsqu'un film est déjà sorti en VOD/DVD mais toujours en attente de fichier, tout utilisateur peut cliquer sur **🔍 Relancer** pour déclencher immédiatement une nouvelle recherche dans Radarr et rattacher le film à son espace **🎟️ Mes demandes**.
+- **🔴 Non disponible sur Plex (`canRequestNow`)** : Génération d'un jeton de confirmation en 2 étapes pour soumettre la demande proprement dans Overseerr (incluant la complétion des saisons/épisodes manquants via Sonarr).
 
 ### 4. Résilience et routage multi-fournisseurs d'IA
-Prise en charge de **Google Gemini**, **Groq Cloud**, **Mistral AI**, **OpenRouter** et **DeepSeek**.
-- **Cascade prioritaire** : Sollicite d'abord les modèles économiques ou avec quota offert, puis bascule instantanément vers le fournisseur suivant en cas de dépassement de quota (HTTP 429).
+Prise en charge de **DeepSeek**, **Google Gemini**, **Groq Cloud**, **Mistral AI** et **OpenRouter**.
+- **Cascade & bascule automatique** : Permet de définir un modèle principal (ex: DeepSeek V3) ou une cascade économique prioritaire, avec bascule instantanée vers le fournisseur suivant en cas d'indisponibilité ou de dépassement de quota (HTTP 429).
 - **Repli direct sans IA (`runDirectSearchFallback`)** : Si tous les fournisseurs d'IA sont temporairement indisponibles, Askarr bascule automatiquement sur une recherche textuelle directe vers TMDB, Plex et Overseerr. L'application reste pleinement fonctionnelle même en cas de coupure des API d'IA externes.
 
 ### 5. Régie d'administration dédiée
 Un tableau de bord sécurisé permet à l'administrateur de :
 - Vérifier la latence, la version et la santé de chaque connecteur multimédia.
 - Mettre à jour à chaud les clés d'API, les URLs et les identifiants avec persistance immédiate dans SQLite (aucun redémarrage de conteneur requis).
-- Suivre la consommation de jetons IA et le taux de succès du cache.
-- Consulter le journal d'audit complet des modifications et des demandes.
+- Suivre la consommation de jetons IA, le taux de succès du cache et le traceur d'appels API en temps réel.
+- Envoyer des billets d'invitation VIP Kraft vintage par SMTP et consulter le journal d'audit complet des modifications, demandes et relances.
 
 ### 6. Sécurité Zero Trust et fonctionnement en réseau local
 - **Production** : Validation cryptographique des assertions JWT Cloudflare Access (`Cf-Access-Jwt-Assertion`) via les clés publiques JWKS.
@@ -117,16 +121,15 @@ flowchart TD
     User["👤 Famille & Amis<br/>(Navigateur / Mobile)"] --> Proxy["🛡️ Reverse Proxy / Cloudflare Access"]
     Proxy --> Askarr["🎬 Serveur Askarr<br/>(Fastify 5 + React 19 + SQLite)"]
 
-    subgraph Fournisseurs IA Externes
-        Askarr -.-> Gemini["Google Gemini"]
-        Askarr -.-> Groq["Groq Cloud"]
-        Askarr -.-> Mistral["Mistral AI / DeepSeek"]
+    subgraph Fournisseurs IA & Catalogue Externes
+        Askarr -.-> DeepSeek["DeepSeek / Gemini / Groq / Mistral"]
+        Askarr -.-> MDBList["🎯 MDBList<br/>(Catalogue multi-critères)"]
     end
 
     subgraph Écosystème Multimédia Homelab
         Askarr ==> Plex["🎞️ Serveurs Plex<br/>(Plex-Main, Plex-Vault)"]
         Askarr ==> Overseerr["🎟️ Overseerr / Jellyseerr<br/>(Métadonnées & Demandes)"]
-        Askarr -.-> Radarr["🎥 Radarr & Sonarr<br/>(Sorties & Saisons)"]
+        Askarr -.-> Radarr["🎥 Radarr & Sonarr<br/>(Workflow, sorties & relances)"]
         Askarr -.-> Prowlarr["🔎 Prowlarr<br/>(Santé des indexeurs)"]
         Askarr -.-> Tracearr["📊 Tracearr<br/>(Historique & Télémétrie)"]
     end
@@ -139,8 +142,9 @@ flowchart TD
 | **Plex Media Server** | Vérification de bibliothèque et lecture | **Obligatoire** | Impossible de vérifier la présence d'un titre ou de générer des liens de lecture. |
 | **Overseerr / Jellyseerr** | Résolution métadonnées et demandes | **Obligatoire** | Impossible de rechercher des métadonnées ou d'enregistrer des demandes. |
 | **Fournisseur IA** | Analyse des requêtes en langage naturel | **Obligatoire** *(≥1)* | L'application active automatiquement le repli de recherche textuelle directe. |
-| **Radarr** | Suivi des dates de sortie cinéma et VOD | **Optionnel** | Overseerr fournit l'état de la demande ; les dates de sortie détaillées sont omises. |
-| **Sonarr** | Suivi granulaire des saisons de séries | **Optionnel** | Les séries sont suivies au niveau global via Overseerr. |
+| **Radarr** | Suivi des sorties, workflow 4 étapes & relance à la demande | **Optionnel** | Overseerr fournit l'état de la demande ; le workflow détaillé et la relance sont omis. |
+| **Sonarr** | Suivi granulaire des saisons et épisodes manquants | **Optionnel** | Les séries sont suivies au niveau global via Overseerr. |
+| **MDBList** | Découverte structurée multi-critères (genre, note IMDb/RT, durée) | **Optionnel** | Les requêtes par critères utilisent la découverte TMDB/Overseerr classique. |
 | **Prowlarr** | Diagnostic de santé des indexeurs | **Optionnel** | L'état des indexeurs est simplement omis de la Régie Admin. |
 | **Tracearr** | Historique de lecture Plex et flux actifs | **Optionnel** | Les recommandations s'appuient sur les tendances générales TMDB. |
 | **Cloudflare Access** | Authentification Zero Trust SSO | **Optionnel** | Authentification via le mode LAN local ou par en-tête de développement. |
