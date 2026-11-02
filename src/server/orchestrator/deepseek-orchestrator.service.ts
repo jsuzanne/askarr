@@ -54,10 +54,13 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - Chaque fiche comporte \`userAccessibleServers\` (les serveurs Plex auxquels l'utilisateur connecté a personnellement accès et où le titre est présent), \`userAllowedServers\` (tous les serveurs Plex autorisés pour ce compte) et \`accessibleToCurrentUser\` (true/false).
    - Quand un titre est disponible pour l'utilisateur (\`accessibleToCurrentUser !== false\`), cite UNIQUEMENT ses serveurs accessibles \`userAccessibleServers\` (ex: "Oui, il est disponible sur ton serveur Plex **NucBuntu**" s'il n'a accès qu'à NucBuntu, ou "Oui, il est disponible sur tous tes serveurs Plex (**NucVillers, NucBuntu, EQ12buntu, MacMini et Macmini4**)" s'il a accès aux 5). Ne cite JAMAIS un serveur Plex auquel l'utilisateur n'a pas accès comme s'il pouvait le regarder dessus !
    - Si \`accessibleToCurrentUser === false\`, préviens-le avec bienveillance ("Ce film est présent sur le serveur Plex ..., mais ton compte Plex a uniquement accès à ...").
-6. ORIGINE DES DEMANDES (QUI A DEMANDÉ vs LISTE AUTOMATIQUE), LISTE D'ATTENTE & SORTIES VOD / DVD :
+6. ORIGINE DES DEMANDES (QUI A DEMANDÉ vs LISTE AUTOMATIQUE), LISTE D'ATTENTE & SORTIES VOD / DVD (PASSÉ vs FUTUR) :
    - Savoir **qui a demandé** un film et **d'où il vient** est fondamental : chaque fiche indique \`requestedBy\` (le nom de l'utilisateur qui a fait la demande) et \`sourceOrigin\` (\`'overseerr_user'\` s'il a été demandé par un utilisateur précis, ou \`'auto_list'\` s'il a été programmé automatiquement via une liste).
+   - Compare TOUJOURS la date de sortie VOD/DVD (\`vodOrDvdReleaseDate\` / \`estimatedAvailabilityDate\`) avec la date du jour (\`todayDate\` / \`isVodAlreadyReleased\`) :
+     * Si \`isVodAlreadyReleased === true\` (la date VOD/DVD est DÉJÀ PASSÉE par rapport à \`todayDate\`) : **N'utilise JAMAIS le futur !** Dis clairement au passé que sa sortie numérique/VOD a déjà eu lieu le [date], qu'il est en attente d'une version disponible pour Plex, et précise (si \`canRetriggerSearch === true\`) que l'utilisateur peut relancer une vérification via le bouton sur la fiche ci-dessous (ou indique le résultat de la dernière recherche si \`lastSearchReportsDownloaded === 0\`).
+     * Si \`isVodAlreadyReleased === false\` (la date VOD/DVD est dans le FUTUR par rapport à \`todayDate\`) : précise que sa sortie VOD/DVD est prévue ou estimée vers le [date] et qu'il arrivera automatiquement sur Plex dès sa sortie.
    - Si un film figure dans la liste d'attente (\`monitored_waiting_release\` / \`monitored_searching\` / \`canRequestNow=false\`) ou si l'utilisateur demande qui l'a demandé :
-     -> Précise TOUJOURS **qui l'a demandé** (\`requestedBy\`, ex: "Demandé par jsuzanne le 31 octobre 2026") ou indique qu'il a été **ajouté automatiquement via une liste** (\`sourceOrigin === 'auto_list'\`, ex: "Ajouté automatiquement via une liste le 25 octobre 2026"), ainsi que sa date de sortie VOD ou DVD/Blu-Ray prévue ou estimée (\`estimatedAvailabilityDate\`).
+     -> Précise TOUJOURS **qui l'a demandé** (\`requestedBy\`, ex: "Demandé par omercier le 24 mai 2026") ou indique qu'il a été **ajouté automatiquement via une liste** (\`sourceOrigin === 'auto_list'\`).
    - Si l'utilisateur demande quels films sont en attente, qui a demandé quoi, ou les derniers films ajoutés dans la liste d'attente (même s'il utilise le mot "Radarr"), appelle OBLIGATOIREMENT \`get_my_requests\`.
    - Si le film n'est ni sur Plex ni dans la liste d'attente (\`canRequestNow=true\`), indique s'il est déjà sorti en VOD/DVD ou quand il sortira, et précise qu'il peut être demandé via le bouton sur sa fiche ci-dessous.
 7. DEMANDES EN 2 ÉTAPES & SÉRIES INCOMPLÈTES (ÉPISODES MANQUANTS) :
@@ -852,15 +855,18 @@ export class DeepSeekOrchestratorService {
     const tStart = Date.now();
     const isEn = params.lang === 'en';
 
+    const todayIso = new Date().toISOString().slice(0, 10);
     const allowedSrvList =
       params.plexAccess && params.plexAccess.askarrServerNames.length > 0
         ? params.plexAccess.askarrServerNames.join(', ')
         : isEn ? 'None' : 'Aucun';
     const userAccessContext = params.plexAccess
       ? isEn
-        ? `\n[Connected Plex Profile: ${params.plexAccess.plexUsername || params.userEmail} | Plex servers this user has access to: ${allowedSrvList} — IMPORTANT: in your reply, indicate availability ONLY with respect to this user's accessible Plex servers (${allowedSrvList}) and never use the word "room" for a server.]`
-        : `\n[Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Serveurs Plex auxquels cet utilisateur a accès : ${allowedSrvList} — IMPORTANT : dans ta réponse, indique la disponibilité UNIQUEMENT par rapport aux serveurs Plex de cet utilisateur (${allowedSrvList}) et n'utilise jamais le mot "salle".]`
-      : '';
+        ? `\n[Current Date: ${todayIso} | Connected Plex Profile: ${params.plexAccess.plexUsername || params.userEmail} | Plex servers this user has access to: ${allowedSrvList} — IMPORTANT: in your reply, indicate availability ONLY with respect to this user's accessible Plex servers (${allowedSrvList}) and never use the word "room" for a server.]`
+        : `\n[Date du jour : ${todayIso} | Profil Plex connecté : ${params.plexAccess.plexUsername || params.userEmail} | Serveurs Plex auxquels cet utilisateur a accès : ${allowedSrvList} — IMPORTANT : dans ta réponse, indique la disponibilité UNIQUEMENT par rapport aux serveurs Plex de cet utilisateur (${allowedSrvList}) et n'utilise jamais le mot "salle".]`
+      : isEn
+        ? `\n[Current Date: ${todayIso}]`
+        : `\n[Date du jour : ${todayIso}]`;
 
     let lastAppliedCriteria: NormalizedDiscoveryCriteria | null = null;
     for (const m of history) {
@@ -2109,10 +2115,16 @@ export class DeepSeekOrchestratorService {
   }
 
   private compactCardsForLlm(cards: MediaEvidence[]): Array<Record<string, unknown>> {
+    const todayIso = new Date().toISOString().slice(0, 10);
     return cards.map((c) => {
       const libs = Array.from(
         new Set(c.catalogPresence.matchedItems.map((m) => m.libraryTitle).filter(Boolean))
       );
+      const vodIso =
+        c.acquisitionPipeline.estimatedAvailabilityDate ||
+        c.identity.releaseDates.estimatedVodOrDvdDate ||
+        null;
+      const isVodAlreadyReleased = vodIso ? vodIso.slice(0, 10) <= todayIso : undefined;
       return {
         tmdbId: c.identity.tmdbId,
         mediaType: c.identity.mediaType,
@@ -2145,10 +2157,16 @@ export class DeepSeekOrchestratorService {
           : c.acquisitionPipeline.addedAt || undefined,
         requestedBy: c.requestState.requestedByDisplayName || undefined,
         sourceOrigin: c.requestState.sourceOrigin || undefined,
+        todayDate: todayIso,
+        vodOrDvdReleaseDate: vodIso || undefined,
+        isVodAlreadyReleased,
         estimatedAvailabilityDate:
-          c.acquisitionPipeline.estimatedAvailabilityDate ||
-          c.identity.releaseDates.estimatedVodOrDvdDate ||
-          undefined,
+          !isVodAlreadyReleased && vodIso ? vodIso : undefined,
+        lastSearchAt: c.acquisitionPipeline.lastSearchAt || undefined,
+        lastSearchBy: c.acquisitionPipeline.lastSearchBy || undefined,
+        lastSearchReportsDownloaded:
+          c.acquisitionPipeline.lastSearchReportsDownloaded ?? undefined,
+        canRetriggerSearch: c.acquisitionPipeline.canRetriggerSearch || undefined,
         releaseDates:
           c.catalogPresence.state !== 'available_now' ? c.identity.releaseDates : undefined,
         seasonsSummary: c.episodeCoverage?.seasons.map((s) => ({
@@ -2768,14 +2786,21 @@ export class DeepSeekOrchestratorService {
       const c = cards[0];
       const rating = c.identity.ratings.imdbOrAudienceRating ?? c.identity.ratings.tmdbVoteAverage;
       const ratingTxt = rating ? ` (⭐ ${rating}/10)` : '';
+      const vodIso = c.identity.releaseDates.estimatedVodOrDvdDate;
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const isVodPast = Boolean(vodIso && vodIso.slice(0, 10) <= todayIso);
       const vodDate = isEn
-        ? (c.identity.releaseDates.estimatedVodOrDvdDate || '')
-        : formatFrenchDate(c.identity.releaseDates.estimatedVodOrDvdDate);
+        ? (vodIso || '')
+        : formatFrenchDate(vodIso);
       const dateTxt =
         c.catalogPresence.state !== 'available_now' && vodDate
-          ? isEn
-            ? ` Digital/DVD release ${c.identity.releaseDates.isEstimatedDate ? 'estimated around' : 'scheduled for'} ${vodDate}.`
-            : ` Sortie VOD/DVD ${c.identity.releaseDates.isEstimatedDate ? 'estimée vers le' : 'prévue le'} ${vodDate}.`
+          ? isVodPast
+            ? isEn
+              ? ` Already released on digital/DVD on ${vodDate} (awaiting available version).`
+              : ` Déjà sorti en VOD/DVD le ${vodDate} (en attente d'une version disponible).`
+            : isEn
+              ? ` Digital/DVD release ${c.identity.releaseDates.isEstimatedDate ? 'estimated around' : 'scheduled for'} ${vodDate}.`
+              : ` Sortie VOD/DVD ${c.identity.releaseDates.isEstimatedDate ? 'estimée vers le' : 'prévue le'} ${vodDate}.`
           : '';
       const expl = isEn && c.actionability.userFriendlyExplanationFr
         ? (c.catalogPresence.state === 'available_now' ? 'Available now on Plex.' : c.actionability.userFriendlyStatusLabel)
