@@ -76,7 +76,7 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - Lorsque l'utilisateur te demande des **recommandations générales ouvertes sur Plex** sans critères de filtrage catalogue (ex: *"tu me conseilles quoi ce soir ?"*, *"as-tu des conseils pour ce soir ?"*, *"un film populaire sur le serveur"*) :
      -> Appelle **IMMÉDIATEMENT** \`discover_and_recommend_media\` (avec \`scope: 'on_plex_now'\`, \`mediaType: 'movie'\`, \`limit: 4\`).
      -> Commence ta recommandation par ce que les autres membres ont regardé récemment sur le serveur Plex (\`popularAmongOtherMembers\`, sans jamais citer le pseudo privé des autres spectateurs).
-10. EFFICACITÉ & CONCISION : Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message.`;
+10. EFFICACITÉ & CONCISION : Sois chaleureux, naturel et concis (2 à 5 phrases fluides maximum), car les fiches visuelles détaillées s'affichent juste en dessous de ton message. N'écris JAMAIS dans ta réponse de balises internes entre crochets comme "[Fiches affichées : ...]" ou "[Critères MDBList appliqués à ce tour : ...]" (ces annotations dans l'historique sont réservées à ta lecture interne).`;
 
 export const STATIC_ENGLISH_SYSTEM_PROMPT = `You are Askarr, the World Cinema & Series Specialist (in English) and the personal advisor for our family and friends Plex media library.
 You speak to non-technical users with warmth, clarity, cinema culture, and enthusiasm.
@@ -127,7 +127,18 @@ ABSOLUTE RULES OF TRUTH, RELEVANCE, AND CINEMA EXPERTISE:
    - For recent additions, call 'get_recently_added_on_plex'.
    - For user history, call 'get_watch_history_and_live_streams' with 'scope: "my_history"'.
    - For open personalized recommendations on Plex ("what do you recommend tonight?"), call 'discover_and_recommend_media' (excluding already watched titles and highlighting popular community choices).
-10. EFFICIENCY & CONCISENESS: Be warm, natural, and concise (2 to 5 fluid sentences maximum), as rich visual cards appear right underneath your message.`;
+10. EFFICIENCY & CONCISENESS: Be warm, natural, and concise (2 to 5 fluid sentences maximum), as rich visual cards appear right underneath your message. NEVER output internal bracketed context tags such as "[Fiches affichées : ...]" or "[Critères MDBList appliqués à ce tour : ...]" in your final reply.`;
+
+function sanitizeInternalContextTags(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\n*\[Fiches affichées\s*:[\s\S]*$/i, '')
+    .replace(/\n*\[Displayed Cards\s*:[\s\S]*$/i, '')
+    .replace(/\n*\[Critères MDBList appliqués[^\n]*$/gim, '')
+    .replace(/\n*\[Profil Plex connecté\s*:[^\n]*\]/gi, '')
+    .replace(/\n*\[Connected Plex Profile\s*:[^\n]*\]/gi, '')
+    .trim();
+}
 
 export const READ_ONLY_TOOLS_DEFINITIONS = [
   {
@@ -870,7 +881,7 @@ export class DeepSeekOrchestratorService {
     const messages: DeepSeekChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...history.slice(-4).map((m) => {
-        let content = m.content;
+        let content = sanitizeInternalContextTags(m.content);
         if (m.role === 'assistant' && m.mediaCards && m.mediaCards.length > 0) {
           const cardsSummary = m.mediaCards
             .map((c) => {
@@ -936,7 +947,8 @@ export class DeepSeekOrchestratorService {
 
         if (!choice.tool_calls || choice.tool_calls.length === 0) {
           let allCards = collectedCards.size > 0 ? Array.from(collectedCards.values()) : [];
-          const replyText = (choice.content || '').trim() || this.buildDeterministicSummary(allCards);
+          const replyText =
+            sanitizeInternalContextTags(choice.content || '') || this.buildDeterministicSummary(allCards);
 
           // Si le LLM a répondu sans appeler d'outil (car l'œuvre était déjà dans l'historique de la conversation),
           // récupérer les fiches de l'historique mentionnées dans sa réponse et les adapter aux serveurs Plex de l'utilisateur courant

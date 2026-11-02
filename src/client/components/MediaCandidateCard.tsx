@@ -48,6 +48,8 @@ interface Props {
   scanningPlayers?: boolean;
   embeddedInChat?: boolean;
   compactSynopsis?: boolean;
+  compactRowMode?: boolean;
+  rankNumber?: number;
   initialPreparedAction?: PreparedActionDTO | null;
 }
 
@@ -106,12 +108,15 @@ export const MediaCandidateCard: React.FC<Props> = ({
   scanningPlayers = false,
   embeddedInChat = false,
   compactSynopsis = false,
+  compactRowMode = false,
+  rankNumber,
   initialPreparedAction = null
 }) => {
   const { lang, t } = useI18n();
   const [localEvidence, setLocalEvidence] = useState<MediaEvidence>(evidence);
   const [showAllSeasons, setShowAllSeasons] = useState(false);
   const [synopsisExpanded, setSynopsisExpanded] = useState(!compactSynopsis);
+  const [rowExpanded, setRowExpanded] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>(evidence.actionability.requestableSeasons);
   const [preparedAction, setPreparedAction] = useState<PreparedActionDTO | null>(initialPreparedAction);
@@ -435,18 +440,321 @@ export const MediaCandidateCard: React.FC<Props> = ({
             : t('select_season')
       : t('request_on_plex');
 
+  const mdblistTrace = localEvidence.provenance.find((p) => p.source === 'mdblist');
+
   return (
     <div
-      className={`group rounded-2xl flex flex-col justify-between relative overflow-hidden ${
-        embeddedInChat
-          ? 'bg-black/45 border border-amber-500/25 p-3.5 sm:p-4 shadow-[0_8px_28px_rgba(0,0,0,0.65)]'
-          : 'cinema-poster-card p-4 sm:p-5 lg:p-6'
+      className={`group rounded-2xl flex flex-col justify-between relative overflow-hidden transition-all ${
+        compactRowMode && !rowExpanded
+          ? 'bg-black/50 border border-amber-500/25 hover:border-amber-400/50 px-3 py-2.5 sm:px-4 sm:py-2.5 shadow-[0_4px_16px_rgba(0,0,0,0.5)]'
+          : embeddedInChat
+            ? 'bg-black/45 border border-amber-500/25 p-3.5 sm:p-4 shadow-[0_8px_28px_rgba(0,0,0,0.65)]'
+            : 'cinema-poster-card p-4 sm:p-5 lg:p-6'
       }`}
     >
       {/* Fine ligne lumineuse dorée en haut de l'affiche */}
       <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400/50 to-transparent opacity-75 group-hover:opacity-100 transition-opacity" />
 
-      <div>
+      {compactRowMode && !rowExpanded ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2.5 sm:gap-3.5">
+            {/* Gauche : Rang + Mini-Affiche 2:3 + Infos condensées sur 2 lignes */}
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+              {typeof rankNumber === 'number' && (
+                <span className="hidden sm:inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-500/15 border border-amber-500/35 text-xs font-mono font-bold text-amber-300 shrink-0">
+                  {rankNumber}
+                </span>
+              )}
+
+              {/* Mini-jaquette cliquable vers la fiche complète */}
+              <button
+                type="button"
+                onClick={() => setShowDetailsModal(true)}
+                title={
+                  lang === 'en'
+                    ? `View full sheet for "${identity.titleFr}"`
+                    : `Voir la fiche complète de « ${identity.titleFr} »`
+                }
+                className="relative w-10 sm:w-11 aspect-[2/3] shrink-0 overflow-hidden rounded-lg bg-stone-950 border border-amber-500/35 shadow-md cursor-pointer group/mini"
+              >
+                {identity.posterUrl ? (
+                  <img
+                    src={identity.posterUrl}
+                    alt={identity.titleFr}
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover/mini:scale-105"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-amber-500/50 bg-stone-950">
+                    {identity.mediaType === 'movie' ? (
+                      <Film className="h-4 w-4" />
+                    ) : (
+                      <Tv className="h-4 w-4" />
+                    )}
+                  </div>
+                )}
+              </button>
+
+              {/* Zone Texte cliquable pour déplier la carte complète */}
+              <div
+                onClick={() => setRowExpanded(true)}
+                className="min-w-0 flex-1 cursor-pointer"
+                title={
+                  lang === 'en'
+                    ? 'Click to expand full details inline'
+                    : 'Cliquer pour déplier toute la fiche (synopsis, casting, trace...)'
+                }
+              >
+                {/* Ligne 1 : Titre + Année + Note IMDb + Durée + Genres + Réalisateur */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-sm sm:text-[15px] font-bold text-white leading-tight">
+                    {identity.titleFr}
+                    {identity.year ? (
+                      <span className="font-normal text-amber-300/90 text-xs sm:text-sm ml-1">
+                        ({identity.year})
+                      </span>
+                    ) : null}
+                  </span>
+
+                  {rating !== null && rating > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.5 text-[11px] sm:text-xs font-bold text-amber-200 shrink-0">
+                      <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
+                      <span>{rating.toFixed(1)}</span>
+                      <span className="text-[9px] font-semibold text-amber-300/85 uppercase">
+                        {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
+                      </span>
+                    </span>
+                  )}
+
+                  {formatDuration(identity.runtimeMinutes) && (
+                    <span className="text-xs font-semibold text-amber-300/90 shrink-0">
+                      • {formatDuration(identity.runtimeMinutes)}
+                    </span>
+                  )}
+
+                  <div className="hidden sm:flex flex-wrap items-center gap-1">
+                    {identity.genres.slice(0, 3).map((g) => (
+                      <span
+                        key={g}
+                        className="rounded-full bg-stone-900/90 border border-amber-500/25 px-2 py-0.2 text-[10px] font-medium text-amber-100/90"
+                      >
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+
+                  {identity.directorOrCreator && (
+                    <span className="hidden lg:inline text-xs text-stone-400 truncate max-w-[14rem]">
+                      • {identity.directorOrCreator}
+                    </span>
+                  )}
+                </div>
+
+                {/* Ligne 2 : LED Statut Plex + Trace Admin condensée (si activée) */}
+                <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+                  <span className="inline-flex items-center gap-1.5 font-semibold">
+                    <span
+                      className={`h-2 w-2 rounded-full shrink-0 ${
+                        ledState === 'available'
+                          ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.95)]'
+                          : ledState === 'waitlist'
+                            ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.95)] animate-pulse'
+                            : 'bg-rose-500/85'
+                      }`}
+                    />
+                    <span
+                      className={
+                        ledState === 'available'
+                          ? 'text-emerald-200'
+                          : ledState === 'waitlist'
+                            ? 'text-amber-200'
+                            : 'text-stone-300'
+                      }
+                    >
+                      {statusPrimaryTitle}
+                    </span>
+                  </span>
+
+                  {originText && (
+                    <span className="hidden md:inline text-[11px] text-stone-400">
+                      • {originText}
+                    </span>
+                  )}
+
+                  {showTechnicalTrace && (
+                    <span className="hidden sm:inline-flex items-center gap-1 rounded bg-black/80 border border-amber-500/30 px-1.5 py-0.2 text-[10px] font-mono text-amber-300/90">
+                      <Terminal className="h-2.5 w-2.5 shrink-0" />
+                      <span>
+                        TMDB={identity.tmdbId}
+                        {mdblistTrace ? ` • mdblist (${mdblistTrace.latencyMs}ms)` : ''}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Droite : Actions directes en 1 clic + Bouton Fiche + Bouton Déplier */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {plexWebUrl && (
+                <a
+                  href={primaryPlexHref || plexWebUrl}
+                  target={isMobileDevice ? undefined : '_blank'}
+                  rel={isMobileDevice ? undefined : 'noopener noreferrer'}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-2.5 sm:px-3 py-1.5 text-xs font-bold text-stone-950 shadow-[0_3px_12px_rgba(245,158,11,0.3)] hover:from-amber-400 hover:to-yellow-400 transition cursor-pointer whitespace-nowrap"
+                  title={
+                    isMobileDevice
+                      ? "Ouvrir directement dans l'application Plex (iPhone / iPad)"
+                      : 'Ouvrir directement dans Plex Web (PC / Mac)'
+                  }
+                >
+                  <Play className="h-3 w-3 fill-stone-950 text-stone-950 shrink-0" />
+                  <span className="hidden sm:inline">
+                    {isMobileDevice ? t('open_plex_app') : t('open_in_plex')}
+                  </span>
+                  <span className="sm:hidden">Plex</span>
+                </a>
+              )}
+
+              {plexIosDeepLink && !isMobileDevice && (
+                <a
+                  href={plexIosDeepLink}
+                  className="hidden md:inline-flex items-center gap-1 rounded-xl border border-amber-500/35 bg-stone-900/90 px-2 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20 transition cursor-pointer"
+                  title="Ouvrir dans l'app native Plex (plex://)"
+                >
+                  <Smartphone className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                  <span>App</span>
+                </a>
+              )}
+
+              {actionability.canRequestNow && !preparedAction && (
+                <button
+                  type="button"
+                  disabled={
+                    loadingAction || (identity.mediaType === 'tv' && selectedSeasons.length === 0)
+                  }
+                  onClick={handlePrepareRequest}
+                  className="cinema-velvet-pill inline-flex items-center gap-1.5 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50 transition cursor-pointer whitespace-nowrap"
+                  title={actionability.userFriendlyExplanationFr}
+                >
+                  {loadingAction ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                  ) : (
+                    <PlusCircle className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                  )}
+                  <span className="hidden sm:inline">{requestButtonLabel}</span>
+                  <span className="sm:hidden">{lang === 'en' ? 'Request' : 'Demander'}</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowDetailsModal(true)}
+                className="inline-flex items-center gap-1 rounded-xl border border-amber-500/35 bg-stone-900/90 px-2.5 py-1.5 text-xs font-semibold text-amber-100 hover:bg-stone-800 hover:border-amber-400/60 transition cursor-pointer"
+                title={
+                  lang === 'en'
+                    ? 'Open full movie sheet & synopsis'
+                    : 'Ouvrir la fiche complète et le synopsis'
+                }
+              >
+                <Info className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span className="hidden md:inline">{lang === 'en' ? 'Sheet' : 'Fiche'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRowExpanded(true)}
+                className="inline-flex items-center justify-center rounded-xl border border-stone-700/80 bg-stone-900/90 hover:bg-stone-800 hover:border-amber-500/40 p-1.5 text-stone-300 hover:text-amber-200 transition cursor-pointer"
+                title={
+                  lang === 'en'
+                    ? 'Expand full card inline'
+                    : 'Déplier la carte complète sur place'
+                }
+                aria-label={lang === 'en' ? 'Expand card' : 'Déplier la carte'}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {feedbackMessage && (
+            <div
+              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${
+                feedbackMessage.type === 'success'
+                  ? 'bg-emerald-950/70 border-emerald-600/60 text-emerald-200'
+                  : 'bg-rose-950/70 border-rose-600/60 text-rose-200'
+              }`}
+            >
+              {feedbackMessage.type === 'success' ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+              ) : (
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+              )}
+              <span>{feedbackMessage.text}</span>
+            </div>
+          )}
+
+          {preparedAction && (
+            <div className="rounded-xl border border-amber-400/50 bg-red-950/45 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-start gap-2 text-xs text-amber-100">
+                <ShieldCheck className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-white leading-snug">{preparedAction.summaryFr}</p>
+                  <p className="text-[11px] text-amber-200/90">
+                    Étape 2/2 : Confirme ton ticket pour lancer l’acquisition automatique vers Plex.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={loadingAction}
+                  onClick={() => setPreparedAction(null)}
+                  className="rounded-xl border border-stone-700 bg-stone-900 px-3 py-1 text-xs font-medium text-stone-300 hover:bg-stone-800 cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={loadingAction}
+                  onClick={handleConfirmRequest}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer shadow-md"
+                >
+                  {loadingAction ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  <span>Confirmer</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {compactRowMode && rowExpanded && (
+            <div className="mb-2.5 flex items-center justify-between gap-2 border-b border-amber-500/20 pb-2">
+              <span className="text-xs font-semibold text-amber-300/90 flex items-center gap-1.5">
+                {typeof rankNumber === 'number' && (
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-amber-500/20 text-[11px] font-mono font-bold text-amber-200">
+                    #{rankNumber}
+                  </span>
+                )}
+                <span>{lang === 'en' ? 'Expanded movie card' : 'Fiche détaillée dépliée'}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setRowExpanded(false)}
+                className="inline-flex items-center gap-1 rounded-lg bg-stone-900 hover:bg-stone-800 border border-amber-500/35 px-2.5 py-1 text-xs font-semibold text-amber-200 cursor-pointer"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+                <span>{lang === 'en' ? 'Collapse row' : 'Réduire en ligne'}</span>
+              </button>
+            </div>
+          )}
+
+          <div>
         {/* Grille Responsive :
             - Mobile (< sm) : Ligne 1 = Jaquette 2:3 + Identité côte à côte ; Ligne 2 (col-span-2 pleine largeur sous la jaquette) = Statut LED + Dates + Saisons
             - Desktop (sm+) : Colonne gauche (sm:row-span-2) = Jaquette 2:3 grand format ; Colonne droite (sm:col-start-2) = Identité + Statut LED + Dates + Synopsis inline */}
@@ -1179,6 +1487,8 @@ export const MediaCandidateCard: React.FC<Props> = ({
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* Popup / Bottom Sheet : Fiche Complète (Jaquette Grand Format entière + Synopsis Intégral + Métadonnées) */}
       {showDetailsModal && (

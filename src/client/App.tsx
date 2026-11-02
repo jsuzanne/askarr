@@ -265,6 +265,17 @@ function serviceBadgeColor(service: ApiTraceEntryDTO['service']): string {
   }
 }
 
+function stripLeakedContextTags(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\n*\[Fiches affichées\s*:[\s\S]*$/i, '')
+    .replace(/\n*\[Displayed Cards\s*:[\s\S]*$/i, '')
+    .replace(/\n*\[Critères MDBList appliqués[^\n]*$/gim, '')
+    .replace(/\n*\[Profil Plex connecté\s*:[^\n]*\]/gi, '')
+    .replace(/\n*\[Connected Plex Profile\s*:[^\n]*\]/gi, '')
+    .trim();
+}
+
 export function App() {
   const { lang, setLang, toggleLang, t } = useI18n();
   const quickPrompts = getQuickPrompts(lang);
@@ -274,6 +285,7 @@ export function App() {
   const [adminTab, setAdminTab] = useState<'cloudflare' | 'health' | 'traces' | 'feedback' | 'settings'>('cloudflare');
   // Toggle for Admin to see inline technical traces inside the User Chat & Media Cards
   const [debugOverlay, setDebugOverlay] = useState<boolean>(true);
+  const [listLayoutByMsgId, setListLayoutByMsgId] = useState<Record<string, 'compact' | 'grid'>>({});
   // Mode Viewer (User) for Admin: preview exact non-admin user UI & simulate Plex server permissions without creating a separate account
   const [viewerUserMode, setViewerUserMode] = useState<boolean>(false);
   const [viewerImmersiveHeader, setViewerImmersiveHeader] = useState<boolean>(false);
@@ -2789,41 +2801,125 @@ export function App() {
                             </div>
                           </>
                         ) : (
-                          <RichMarkdownText text={msg.content} />
+                          <RichMarkdownText text={stripLeakedContextTags(msg.content)} />
                         )
                       ) : (
                         <div className="whitespace-pre-line">{msg.content}</div>
                       )}
 
                       {/* Fiche-Séance intégrée dans le bloc Projectionniste (Proposition A — Tout-en-Un) */}
-                      {msg.mediaCards && msg.mediaCards.length > 0 && (
-                        <div
-                          className={`mt-4 pt-4 border-t border-amber-500/20 w-full grid grid-cols-1 ${
-                            msg.mediaCards.length > 1 ? 'lg:grid-cols-2 gap-4' : 'gap-3.5'
-                          }`}
-                        >
-                          {msg.mediaCards.map((cand) => (
-                            <MediaCandidateCard
-                              key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
-                              evidence={cand}
-                              initialPreparedAction={
-                                msg.preparedAction && msg.preparedAction.tmdbId === cand.identity.tmdbId
-                                  ? msg.preparedAction
-                                  : null
+                      {msg.mediaCards && msg.mediaCards.length > 0 && (() => {
+                        const isMultiList = msg.mediaCards.length > 1;
+                        const layoutMode: 'compact' | 'grid' = isMultiList
+                          ? listLayoutByMsgId[msg.id] || 'compact'
+                          : 'grid';
+                        const availOnPlexCount = msg.mediaCards.filter(
+                          (c) =>
+                            c.catalogPresence.state === 'available_now' &&
+                            c.catalogPresence.accessibleToCurrentUser !== false
+                        ).length;
+
+                        return (
+                          <div className="mt-4 pt-3.5 border-t border-amber-500/20 w-full space-y-3">
+                            {isMultiList && (
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <div className="flex flex-wrap items-center gap-2 text-stone-300">
+                                  <span className="font-bold text-amber-200">
+                                    🎬 {msg.mediaCards.length}{' '}
+                                    {lang === 'en' ? 'verified titles' : 'titres vérifiés'}
+                                  </span>
+                                  {availOnPlexCount > 0 && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                      <span>
+                                        {availOnPlexCount}{' '}
+                                        {lang === 'en' ? 'on Plex' : 'dispo sur Plex'}
+                                      </span>
+                                    </span>
+                                  )}
+                                  {layoutMode === 'compact' && (
+                                    <span className="hidden md:inline text-[11px] text-stone-400">
+                                      •{' '}
+                                      {lang === 'en'
+                                        ? 'Click a row to expand its full card'
+                                        : 'Clique sur une ligne pour déplier sa fiche complète'}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="inline-flex items-center rounded-xl bg-stone-950/90 border border-amber-500/30 p-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setListLayoutByMsgId((prev) => ({
+                                        ...prev,
+                                        [msg.id]: 'compact'
+                                      }))
+                                    }
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                                      layoutMode === 'compact'
+                                        ? 'cinema-velvet-pill text-white shadow-sm'
+                                        : 'text-stone-400 hover:text-stone-200'
+                                    }`}
+                                  >
+                                    {lang === 'en' ? '☰ Compact List' : '☰ Liste compacte'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setListLayoutByMsgId((prev) => ({
+                                        ...prev,
+                                        [msg.id]: 'grid'
+                                      }))
+                                    }
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                                      layoutMode === 'grid'
+                                        ? 'cinema-velvet-pill text-white shadow-sm'
+                                        : 'text-stone-400 hover:text-stone-200'
+                                    }`}
+                                  >
+                                    {lang === 'en' ? '⊞ Full Cards' : '⊞ Grandes fiches'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            <div
+                              className={
+                                layoutMode === 'compact'
+                                  ? 'flex flex-col gap-2'
+                                  : `grid grid-cols-1 ${
+                                      isMultiList ? 'lg:grid-cols-2 gap-4' : 'gap-3.5'
+                                    }`
                               }
-                              onAskSimilar={handleAskSimilar}
-                              showTechnicalTrace={showInlineDebug}
-                              plexPlayers={plexPlayers}
-                              selectedPlayerId={selectedPlayerId}
-                              onSelectPlayerId={handleSelectPlayerId}
-                              onRefreshPlayers={fetchPlexPlayers}
-                              scanningPlayers={scanningPlayers}
-                              embeddedInChat={true}
-                              compactSynopsis={true}
-                            />
-                          ))}
-                        </div>
-                      )}
+                            >
+                              {msg.mediaCards.map((cand, idx) => (
+                                <MediaCandidateCard
+                                  key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
+                                  evidence={cand}
+                                  initialPreparedAction={
+                                    msg.preparedAction &&
+                                    msg.preparedAction.tmdbId === cand.identity.tmdbId
+                                      ? msg.preparedAction
+                                      : null
+                                  }
+                                  onAskSimilar={handleAskSimilar}
+                                  showTechnicalTrace={showInlineDebug}
+                                  plexPlayers={plexPlayers}
+                                  selectedPlayerId={selectedPlayerId}
+                                  onSelectPlayerId={handleSelectPlayerId}
+                                  onRefreshPlayers={fetchPlexPlayers}
+                                  scanningPlayers={scanningPlayers}
+                                  embeddedInChat={true}
+                                  compactSynopsis={true}
+                                  compactRowMode={layoutMode === 'compact'}
+                                  rankNumber={isMultiList ? idx + 1 : undefined}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Barre de Note Spectateur / Critique (1 à 5 étoiles) */}
                       {msg.role === 'assistant' && !isWelcome && (
