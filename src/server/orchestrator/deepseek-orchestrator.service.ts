@@ -240,11 +240,13 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
               'letterboxd',
               'mal'
             ],
-            description: 'Source explicite de la note (ex: "imdb" pour une note IMDb)'
+            description:
+              'Source explicite de la note UNIQUEMENT si l’utilisateur mentionne une source ou un seuil précis (ex: "imdb" pour "note IMDb > 8"). Laisser omis si l’utilisateur demande simplement "les meilleurs films" afin d’utiliser le score multi-critiques MDBList.'
           },
           minRating: {
             type: 'number',
-            description: 'Seuil minimal de note dans l’échelle de la source (ex: 8 sur 10 pour IMDb)'
+            description:
+              'Seuil minimal de note UNIQUEMENT si l’utilisateur précise une valeur numérique (ex: 8 sur 10 pour "note supérieure à 8"). Ne pas inventer de seuil si non demandé.'
           },
           maxRating: {
             type: 'number',

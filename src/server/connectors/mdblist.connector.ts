@@ -433,6 +433,9 @@ export class MdblistConnector {
           'mdblist',
           criteria.ratingComparison
         );
+      } else if (criteria.sort === 'score' && criteria.order === 'desc') {
+        // Plancher qualité par défaut lors d'un tri par score composite descendant
+        queryParams.score_min = 60;
       }
       if (criteria.maxRating !== null) {
         queryParams.score_max = toMdblistRatingScale100(
@@ -443,15 +446,15 @@ export class MdblistConnector {
       }
     } else if (criteria.ratingSource && criteria.minRating !== null) {
       // Sur /catalog/{type}, un tri direct par note source (ex: sort=imdbrating) sans score_min
-      // remonte d'abord des entrées non indexées (score=null) avec très peu de votes.
-      // On applique un plancher technique conservateur sur score_min tout en vérifiant
+      // suffisant remonte des entrées régionales/non-indexées avec peu de consensus critique.
+      // On applique un plancher qualitatif sur score_min tout en vérifiant
       // strictement la vraie note de la source demandée (ex: IMDb > 8) après réception.
       const scaledMin = toMdblistRatingScale100(
         criteria.minRating,
         criteria.ratingSource,
         criteria.ratingComparison
       );
-      queryParams.score_min = Math.max(1, Math.min(60, scaledMin - 20));
+      queryParams.score_min = Math.max(50, Math.min(72, scaledMin - 10));
     }
 
     if (criteria.minRuntimeMinutes !== null) {

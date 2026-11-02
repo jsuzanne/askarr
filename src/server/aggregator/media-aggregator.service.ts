@@ -1928,15 +1928,17 @@ export class MediaAggregatorService {
 
       const tCatalog = Date.now();
       let catalogPage;
+      let catalogLatencyMs = 0;
       try {
         catalogPage = await this.mdblist.searchCatalog(criteria, {
           cursor,
           pageLimit
         });
+        catalogLatencyMs = Date.now() - tCatalog;
         provenance.push({
           source: 'mdblist',
           status: 'ok',
-          latencyMs: Date.now() - tCatalog,
+          latencyMs: catalogLatencyMs,
           detail: `Catalogue ${criteria.mediaType} page ${page + 1}: ${catalogPage.candidates.length} candidat(s)${catalogPage.fromCache ? ' (cache)' : ''}`
         });
       } catch (err) {
@@ -2193,6 +2195,33 @@ export class MediaAggregatorService {
           stats.excludedByScopeCount += 1;
           continue;
         }
+
+        // 12. Injection de la trace MDBList en tête de provenance de la fiche média (visible dans TRACE TECHNIQUE ADMIN DEBUG)
+        const mdbTraceParts: string[] = [`Catalogue MDBList (${criteria.mediaType})`];
+        if (
+          candidate.ratingsBySource.imdb?.score !== null &&
+          candidate.ratingsBySource.imdb?.score !== undefined
+        ) {
+          const votesStr = candidate.ratingsBySource.imdb.votes
+            ? ` (${candidate.ratingsBySource.imdb.votes.toLocaleString('fr-FR')} votes)`
+            : '';
+          mdbTraceParts.push(`IMDb ${candidate.ratingsBySource.imdb.score}/10${votesStr}`);
+        }
+        if (candidate.mdblistScore !== null && candidate.mdblistScore !== undefined) {
+          mdbTraceParts.push(`Score ${candidate.mdblistScore}/100`);
+        }
+        if (catalogPage.fromCache) {
+          mdbTraceParts.push('cache');
+        }
+        evidence.provenance = [
+          {
+            source: 'mdblist',
+            status: 'ok',
+            latencyMs: catalogLatencyMs,
+            detail: mdbTraceParts.join(' · ')
+          },
+          ...evidence.provenance
+        ];
 
         verifiedCards.push(evidence);
       }
