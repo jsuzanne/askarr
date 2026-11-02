@@ -88,10 +88,14 @@ export interface Translations {
   active_key: string;
   to_review: string;
 
-  // Language Switcher
+  // Language Switcher & Theme
   language: string;
   switch_to_fr: string;
   switch_to_en: string;
+  theme_light: string;
+  theme_dark: string;
+  switch_to_light: string;
+  switch_to_dark: string;
 }
 
 const translations: Record<SupportedLanguage, Translations> = {
@@ -176,7 +180,11 @@ const translations: Record<SupportedLanguage, Translations> = {
 
     language: 'Langue',
     switch_to_fr: 'Passer en Français',
-    switch_to_en: 'Switch to English'
+    switch_to_en: 'Switch to English',
+    theme_light: 'Clair',
+    theme_dark: 'Sombre',
+    switch_to_light: 'Passer en mode Clair (Matinée Cinéma)',
+    switch_to_dark: 'Passer en mode Sombre (Salle obscure)'
   },
   en: {
     salle_cine: 'Cinema Room',
@@ -259,7 +267,11 @@ const translations: Record<SupportedLanguage, Translations> = {
 
     language: 'Language',
     switch_to_fr: 'Passer en Français',
-    switch_to_en: 'Switch to English'
+    switch_to_en: 'Switch to English',
+    theme_light: 'Light',
+    theme_dark: 'Dark',
+    switch_to_light: 'Switch to Light mode (Matinée Cinema)',
+    switch_to_dark: 'Switch to Dark mode (Dark room)'
   }
 };
 

@@ -34,7 +34,9 @@ import {
   Mail,
   Volume2,
   VolumeX,
-  Tv
+  Tv,
+  Sun,
+  Moon
 } from 'lucide-react';
 import type {
   AdminInteractionEntryDTO,
@@ -277,6 +279,29 @@ export function App() {
   const [audioVolume, setAudioVolume] = useState<number>(() => cinemaAudio.getVolume());
   const [showAudioMenu, setShowAudioMenu] = useState<boolean>(false);
   const audioMenuRef = useRef<HTMLDivElement | null>(null);
+  // Thème visuel : 'dark' (Salle Obscure) vs 'light' (Matinée / Foyer Lumineux)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      const saved = window.localStorage.getItem('askarr_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch {
+      // ignore storage errors
+    }
+    return 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      window.localStorage.setItem('askarr_theme', theme);
+    } catch {
+      // ignore storage errors
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
   const [expandedMsgTraceId, setExpandedMsgTraceId] = useState<string | null>(null);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
   const [traceServiceFilter, setTraceServiceFilter] = useState<string>('all');
@@ -1679,6 +1704,26 @@ export function App() {
               title={lang === 'fr' ? t('switch_to_en') : t('switch_to_fr')}
             >
               <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
+            </button>
+
+            {/* Sélecteur de Thème Clair / Sombre (Matinée vs Salle Obscure) */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
+              title={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
+            >
+              {theme === 'dark' ? (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <span className="hidden sm:inline">{t('theme_light')}</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="hidden sm:inline">{t('theme_dark')}</span>
+                </>
+              )}
             </button>
 
             {/* Sélecteur Ambiance Sonore Cinéma (Web Audio 0 Mo / 0% ralentissement) */}
