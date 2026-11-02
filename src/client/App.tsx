@@ -1759,28 +1759,22 @@ export function App() {
               <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
             </button>
 
-            {/* Bascule Thème Clair / Sombre (accessible directement sur smartphone et desktop) */}
+            {/* Bascule Thème Clair / Sombre (icône Soleil / Lune uniquement) */}
             <button
               type="button"
               onClick={toggleTheme}
-              className={`p-2 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer min-h-[38px] min-w-[38px] ${
+              className={`p-2 rounded-xl border inline-flex items-center justify-center transition-all cursor-pointer min-h-[34px] min-w-[34px] ${
                 theme === 'light'
-                  ? 'bg-amber-500/20 text-amber-950 border-amber-600/50 shadow-sm'
+                  ? 'bg-amber-500/20 text-amber-900 border-amber-600/50 hover:bg-amber-500/30 shadow-sm'
                   : 'bg-stone-900/95 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-800'
               }`}
               title={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
               aria-label={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
             >
               {theme === 'dark' ? (
-                <>
-                  <Sun className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-amber-300 shrink-0" />
-                  <span className="hidden md:inline">{t('theme_light')}</span>
-                </>
+                <Sun className="w-4 h-4 text-amber-300 shrink-0" />
               ) : (
-                <>
-                  <Moon className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-amber-700 shrink-0" />
-                  <span className="hidden md:inline">{t('theme_dark')}</span>
-                </>
+                <Moon className="w-4 h-4 text-amber-800 shrink-0" />
               )}
             </button>
 
@@ -2248,10 +2242,7 @@ export function App() {
                     }`}
                   >
                     <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
-                    <span className="sm:hidden">{t('grand_ecran_cine_club')}</span>
-                    <span className="hidden sm:inline">
-                      {lang === 'en' ? 'Big Screen & Film Club' : 'Grand Écran & Ciné-Club'}
-                    </span>
+                    <span>{t('grand_ecran_cine_club')}</span>
                   </button>
 
                   <button
@@ -2264,10 +2255,7 @@ export function App() {
                     }`}
                   >
                     <Ticket className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
-                    <span className="sm:hidden">{t('mes_programmations')}</span>
-                    <span className="hidden sm:inline">
-                      {lang === 'en' ? 'My Requests & Waiting List' : "Mes Programmations & Liste d'attente"}
-                    </span>
+                    <span>{t('mes_programmations')}</span>
                     {myRequests && myRequests.length > 0 && (
                       <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-black/35 text-amber-200">
                         {myRequests.length}

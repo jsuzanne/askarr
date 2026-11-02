@@ -126,7 +126,7 @@ const translations: Record<SupportedLanguage, Translations> = {
     audio_fip_jazz: '🎷 FIP Jazz',
     audio_grand_cine: 'Grand Ciné',
 
-    grand_ecran_cine_club: 'Salle Ciné',
+    grand_ecran_cine_club: 'Ciné-Club',
     mes_programmations: 'Mes demandes',
     nouvelle_discussion: 'Nouvelle discussion',
     derniers_ajouts_plex: 'Derniers ajouts Plex',
