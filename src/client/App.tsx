@@ -3386,47 +3386,90 @@ export function App() {
                 </button>
               </div>
 
-              {/* Filtres rapides par statut LED */}
+              {/* Filtres rapides par statut LED + Bascule Liste compacte / Grandes fiches */}
               {myRequests && myRequests.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 mb-4 pb-3 border-b border-amber-500/15">
-                  {(
-                    [
-                      { id: 'all', label: `Toutes (${myRequests.length})` },
-                      {
-                        id: 'waitlist',
-                        label: `🟠 En attente (${
-                          myRequests.filter(
-                            (r) =>
-                              r.evidence.catalogPresence.state !== 'available_now' &&
-                              r.evidence.catalogPresence.state !== 'partially_available'
-                          ).length
-                        })`
-                      },
-                      {
-                        id: 'available',
-                        label: `🟢 Disponibles (${
-                          myRequests.filter(
-                            (r) =>
-                              r.evidence.catalogPresence.state === 'available_now' ||
-                              r.evidence.catalogPresence.state === 'partially_available'
-                          ).length
-                        })`
-                      }
-                    ] as const
-                  ).map((flt) => (
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-amber-500/15">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        { id: 'all', label: `Toutes (${myRequests.length})` },
+                        {
+                          id: 'waitlist',
+                          label: `🟠 En attente (${
+                            myRequests.filter(
+                              (r) =>
+                                r.evidence.catalogPresence.state !== 'available_now' &&
+                                r.evidence.catalogPresence.state !== 'partially_available'
+                            ).length
+                          })`
+                        },
+                        {
+                          id: 'available',
+                          label: `🟢 Disponibles (${
+                            myRequests.filter(
+                              (r) =>
+                                r.evidence.catalogPresence.state === 'available_now' ||
+                                r.evidence.catalogPresence.state === 'partially_available'
+                            ).length
+                          })`
+                        }
+                      ] as const
+                    ).map((flt) => (
+                      <button
+                        key={flt.id}
+                        type="button"
+                        onClick={() => setRequestsFilter(flt.id)}
+                        className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                          requestsFilter === flt.id
+                            ? 'bg-amber-500/20 text-amber-100 border-amber-400/60 shadow-sm'
+                            : 'bg-stone-900/80 text-stone-400 border-stone-800 hover:text-stone-200'
+                        }`}
+                      >
+                        {flt.label}
+                      </button>
+                    ))}
+                    <span className="hidden sm:inline text-xs text-stone-400 ml-1">
+                      •{' '}
+                      {lang === 'en'
+                        ? 'Click a row to expand / collapse its sheet'
+                        : 'Clique sur une ligne pour déplier / replier sa fiche'}
+                    </span>
+                  </div>
+
+                  <div className="inline-flex items-center rounded-xl border border-amber-500/30 bg-stone-950/90 p-0.5">
                     <button
-                      key={flt.id}
                       type="button"
-                      onClick={() => setRequestsFilter(flt.id)}
-                      className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                        requestsFilter === flt.id
-                          ? 'bg-amber-500/20 text-amber-100 border-amber-400/60 shadow-sm'
-                          : 'bg-stone-900/80 text-stone-400 border-stone-800 hover:text-stone-200'
+                      onClick={() =>
+                        setListLayoutByMsgId((prev) => ({
+                          ...prev,
+                          __my_requests__: 'compact'
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                        (listLayoutByMsgId['__my_requests__'] ?? 'compact') === 'compact'
+                          ? 'cinema-velvet-pill text-white shadow-sm'
+                          : 'text-stone-400 hover:text-stone-200'
                       }`}
                     >
-                      {flt.label}
+                      {lang === 'en' ? '☰ Compact List' : '☰ Liste compacte'}
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setListLayoutByMsgId((prev) => ({
+                          ...prev,
+                          __my_requests__: 'grid'
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                        (listLayoutByMsgId['__my_requests__'] ?? 'compact') === 'grid'
+                          ? 'cinema-velvet-pill text-white shadow-sm'
+                          : 'text-stone-400 hover:text-stone-200'
+                      }`}
+                    >
+                      {lang === 'en' ? '⊞ Full Cards' : '⊞ Grandes fiches'}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -3435,30 +3478,168 @@ export function App() {
               ) : myRequests.length === 0 ? (
                 <p className="text-sm sm:text-base text-stone-400">Aucune demande récente trouvée.</p>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
-                  {myRequests
-                    .filter((req) => {
-                      const isOnPlex =
-                        req.evidence.catalogPresence.state === 'available_now' ||
-                        req.evidence.catalogPresence.state === 'partially_available';
-                      if (requestsFilter === 'waitlist') return !isOnPlex;
-                      if (requestsFilter === 'available') return isOnPlex;
-                      return true;
-                    })
-                    .map((req) => (
-                      <MediaCandidateCard
-                        key={req.requestId}
-                        evidence={req.evidence}
-                        onAskSimilar={handleAskSimilar}
-                        showTechnicalTrace={showInlineDebug}
-                        plexPlayers={plexPlayers}
-                        selectedPlayerId={selectedPlayerId}
-                        onSelectPlayerId={handleSelectPlayerId}
-                        onRefreshPlayers={fetchPlexPlayers}
-                        scanningPlayers={scanningPlayers}
-                      />
-                    ))}
-                </div>
+                (() => {
+                  const reqLayoutMode = listLayoutByMsgId['__my_requests__'] ?? 'compact';
+                  const reqSortConf = listSortByMsgId['__my_requests__'] ?? {
+                    field: 'default',
+                    dir: 'desc'
+                  };
+                  const toggleReqSort = (field: 'title' | 'rating' | 'plex') => {
+                    setListSortByMsgId((prev) => {
+                      const cur = prev['__my_requests__'] ?? { field: 'default', dir: 'desc' };
+                      if (cur.field !== field) {
+                        return {
+                          ...prev,
+                          __my_requests__: {
+                            field,
+                            dir: field === 'title' ? 'asc' : 'desc'
+                          }
+                        };
+                      }
+                      if (cur.dir === (field === 'title' ? 'asc' : 'desc')) {
+                        return {
+                          ...prev,
+                          __my_requests__: {
+                            field,
+                            dir: field === 'title' ? 'desc' : 'asc'
+                          }
+                        };
+                      }
+                      return {
+                        ...prev,
+                        __my_requests__: { field: 'default', dir: 'desc' }
+                      };
+                    });
+                  };
+
+                  const filteredReqs = myRequests.filter((req) => {
+                    const isOnPlex =
+                      req.evidence.catalogPresence.state === 'available_now' ||
+                      req.evidence.catalogPresence.state === 'partially_available';
+                    if (requestsFilter === 'waitlist') return !isOnPlex;
+                    if (requestsFilter === 'available') return isOnPlex;
+                    return true;
+                  });
+
+                  const sortedReqs = [...filteredReqs];
+                  if (reqSortConf.field === 'rating') {
+                    sortedReqs.sort((a, b) => {
+                      const rA =
+                        a.evidence.identity.ratings.imdbOrAudienceRating ??
+                        a.evidence.identity.ratings.tmdbVoteAverage ??
+                        0;
+                      const rB =
+                        b.evidence.identity.ratings.imdbOrAudienceRating ??
+                        b.evidence.identity.ratings.tmdbVoteAverage ??
+                        0;
+                      return reqSortConf.dir === 'desc' ? rB - rA : rA - rB;
+                    });
+                  } else if (reqSortConf.field === 'title') {
+                    sortedReqs.sort((a, b) => {
+                      const cmp = a.evidence.identity.titleFr.localeCompare(
+                        b.evidence.identity.titleFr,
+                        'fr'
+                      );
+                      return reqSortConf.dir === 'asc' ? cmp : -cmp;
+                    });
+                  } else if (reqSortConf.field === 'plex') {
+                    const scorePlex = (c: MediaEvidence) =>
+                      c.catalogPresence.state === 'available_now' &&
+                      c.catalogPresence.accessibleToCurrentUser !== false
+                        ? 2
+                        : c.requestState.state !== 'not_requested' ||
+                            c.acquisitionPipeline.state.startsWith('monitored') ||
+                            c.acquisitionPipeline.state === 'downloading'
+                          ? 1
+                          : 0;
+                    sortedReqs.sort((a, b) =>
+                      reqSortConf.dir === 'desc'
+                        ? scorePlex(b.evidence) - scorePlex(a.evidence)
+                        : scorePlex(a.evidence) - scorePlex(b.evidence)
+                    );
+                  }
+
+                  return (
+                    <div
+                      className={
+                        reqLayoutMode === 'compact'
+                          ? 'rounded-2xl border border-amber-500/25 bg-black/45 overflow-hidden shadow-[0_6px_22px_rgba(0,0,0,0.45)] divide-y divide-amber-500/15'
+                          : 'grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5'
+                      }
+                    >
+                      {reqLayoutMode === 'compact' && (
+                        <div className="hidden md:grid md:grid-cols-[minmax(260px,1fr)_88px_150px_90px_148px] items-center gap-3 px-3.5 py-2 bg-stone-950/85 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400 select-none">
+                          <button
+                            type="button"
+                            onClick={() => toggleReqSort('title')}
+                            className="inline-flex items-center gap-1 text-left hover:text-amber-300 transition cursor-pointer"
+                            title="Trier par titre"
+                          >
+                            <span>
+                              {lang === 'en' ? '# • Title / Director' : '# • Film / Réalisateur'}
+                            </span>
+                            <span className="text-amber-400">
+                              {reqSortConf.field === 'title'
+                                ? reqSortConf.dir === 'asc'
+                                  ? '↑'
+                                  : '↓'
+                                : '↕'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleReqSort('rating')}
+                            className="inline-flex items-center gap-1 text-left hover:text-amber-300 transition cursor-pointer"
+                            title="Trier par note"
+                          >
+                            <span>{lang === 'en' ? 'Rating' : 'Note'}</span>
+                            <span className="text-amber-400">
+                              {reqSortConf.field === 'rating'
+                                ? reqSortConf.dir === 'desc'
+                                  ? '↓'
+                                  : '↑'
+                                : '↕'}
+                            </span>
+                          </button>
+                          <span>{lang === 'en' ? 'Genres' : 'Genres'}</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleReqSort('plex')}
+                            className="inline-flex items-center justify-center gap-1 hover:text-amber-300 transition cursor-pointer"
+                            title="Trier par disponibilité Plex"
+                          >
+                            <span>Plex</span>
+                            <span className="text-amber-400">
+                              {reqSortConf.field === 'plex'
+                                ? reqSortConf.dir === 'desc'
+                                  ? '↓'
+                                  : '↑'
+                                : '↕'}
+                            </span>
+                          </button>
+                          <span className="text-right">
+                            {lang === 'en' ? 'Actions' : 'Actions'}
+                          </span>
+                        </div>
+                      )}
+                      {sortedReqs.map((req, idx) => (
+                        <MediaCandidateCard
+                          key={req.requestId}
+                          evidence={req.evidence}
+                          onAskSimilar={handleAskSimilar}
+                          showTechnicalTrace={showInlineDebug}
+                          compactRowMode={reqLayoutMode === 'compact'}
+                          rankNumber={reqLayoutMode === 'compact' ? idx + 1 : undefined}
+                          plexPlayers={plexPlayers}
+                          selectedPlayerId={selectedPlayerId}
+                          onSelectPlayerId={handleSelectPlayerId}
+                          onRefreshPlayers={fetchPlexPlayers}
+                          scanningPlayers={scanningPlayers}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()
               )}
             </div>
           </div>
