@@ -5,6 +5,16 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.27] - 2026-11-02
+
+### Ajouté
+- **Recherche dynamique par critères via le catalogue MDBList (`discover_media_by_criteria`)** :
+  - Intégration non-intrusive de l'API MDBList (`GET /catalog/movie` et `GET /catalog/show`) permettant au Projectionniste de filtrer à la volée le catalogue mondial par genre(s), période (`yearFrom`/`yearTo` ou filtre `recent`), note minimale (`imdb`, `tmdb`, `trakt`, `tomatoes`, `metacritic`, `letterboxd`, `mdblist` avec distinction stricte `gt` vs `gte`), durée (`minRuntimeMinutes`/`maxRuntimeMinutes`), langue originale, tri et présence sur Plex (`scope`).
+  - Schéma de validation métier strict (`mdblist-criteria.schema.ts`), détection explicite des critères non supportés (langue audio doublée, plateformes de streaming externes) et enrichissement complet via le pipeline habituel (`buildMediaEvidence` : multi-serveurs Plex, permissions utilisateur, historique Tracearr/Plex, Radarr/Sonarr/Overseerr).
+  - Administration & observabilité : ajout de la carte **MDBList (Catalogue)** dans les paramètres des connecteurs, du filtre dédié dans le Traceur d'Appels API, et du champ `MDBLIST_API_KEY` avec sauvegarde/test à chaud SQLite. Fonctionnement 100 % transparent et sans régression lorsque `MDBLIST_API_KEY` n'est pas configurée.
+
+---
+
 ## [1.2.10] - 2026-11-01
 
 ### Modifié

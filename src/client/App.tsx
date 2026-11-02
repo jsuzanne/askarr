@@ -250,6 +250,8 @@ function serviceBadgeColor(service: ApiTraceEntryDTO['service']): string {
       return 'bg-orange-500/20 text-orange-300 border-orange-500/40';
     case 'tracearr':
       return 'bg-teal-500/20 text-teal-300 border-teal-500/40';
+    case 'mdblist':
+      return 'bg-lime-500/20 text-lime-300 border-lime-500/40';
     case 'deepseek':
       return 'bg-rose-500/20 text-rose-300 border-rose-500/40';
     case 'cloudflare':
@@ -413,6 +415,7 @@ export function App() {
     prowlarrApiKey: '',
     tracearrBaseUrl: '',
     tracearrApiKey: '',
+    mdblistApiKey: '',
     cloudflareAccountId: '',
     cloudflareApiToken: '',
     cfAccessTargetMode: 'group' as 'policy' | 'group',
@@ -610,6 +613,7 @@ export function App() {
             prowlarrApiKey: '',
             tracearrBaseUrl: ev.tracearrBaseUrl || prev.tracearrBaseUrl,
             tracearrApiKey: '',
+            mdblistApiKey: '',
             cloudflareAccountId: ev.cloudflareAccountId || prev.cloudflareAccountId,
             cloudflareApiToken: '',
             cfAccessTargetMode: ev.cfAccessTargetMode || prev.cfAccessTargetMode,
@@ -3290,6 +3294,7 @@ export function App() {
                   { id: 'overseerr', label: 'Overseerr' },
                   { id: 'plex', label: 'Plex (NucVillers & NucBuntu)' },
                   { id: 'tracearr', label: 'Tracearr (Ajouts & Historique)' },
+                  { id: 'mdblist', label: 'MDBList (Catalogue)' },
                   { id: 'prowlarr', label: 'Prowlarr' },
                   { id: 'deepseek', label: 'DeepSeek IA' },
                   { id: 'cloudflare', label: 'Cloudflare Access' },
@@ -3868,7 +3873,16 @@ export function App() {
                         title: 'Tracearr (Historique de Visionnage & Derniers Ajouts Plex)',
                         url: adminSettings.connectors.tracearr?.baseUrl || 'http://192.168.1.163:3999',
                         configured: Boolean(adminSettings.connectors.tracearr?.configured),
+                        optional: false,
                         meta: 'API v2 (/api/v2/public/recently-added, /history, /streams)'
+                      },
+                      {
+                        key: 'mdblist',
+                        title: 'MDBList (Catalogue par Critères & Notes IMDb/RT/Letterboxd)',
+                        url: adminSettings.connectors.mdblist?.baseUrl || 'https://api.mdblist.com',
+                        configured: Boolean(adminSettings.connectors.mdblist?.configured),
+                        optional: true,
+                        meta: 'Optionnel • API v1 lecture seule (/catalog/movie, /catalog/show, /user) • Repli auto sur Plex/Overseerr si désactivé'
                       },
                       {
                         key: 'deepseek',
@@ -3901,10 +3915,16 @@ export function App() {
                                 className={`text-xs px-2.5 py-0.5 rounded-full border ${
                                   srv.configured
                                     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                                    : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                                    : 'optional' in srv && srv.optional
+                                      ? 'bg-stone-800 text-stone-300 border-stone-700'
+                                      : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
                                 }`}
                               >
-                                {srv.configured ? 'Clé API active' : 'Clé manquante'}
+                                {srv.configured
+                                  ? 'Clé API active'
+                                  : 'optional' in srv && srv.optional
+                                    ? 'Optionnel (sans clé)'
+                                    : 'Clé manquante'}
                               </span>
                             </div>
                             <div className="text-xs sm:text-sm font-mono text-amber-300 break-all">{srv.url}</div>
@@ -4384,6 +4404,61 @@ export function App() {
                             className="rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
                           />
                         </div>
+                      </div>
+
+                      <div className="space-y-2 md:col-span-2 pt-2 border-t border-stone-800/80">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="block text-stone-300 font-semibold">
+                            MDBList — Recherche Dynamique par Critères & Notes IMDb (Optionnel — Clé API uniquement)
+                          </label>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <a
+                              href="https://mdblist.com/preferences/"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-amber-300 hover:text-amber-200 underline"
+                            >
+                              Obtenir ma clé sur mdblist.com/preferences ↗
+                            </a>
+                            <span
+                              className={`px-2 py-0.5 rounded-full border font-mono ${
+                                adminSettings.editableValues?.mdblistApiKeyConfigured
+                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-stone-800 text-stone-400 border-stone-700'
+                              }`}
+                            >
+                              {adminSettings.editableValues?.mdblistApiKeyConfigured
+                                ? `Active (${adminSettings.editableValues.mdblistApiKeyMasked})`
+                                : 'Non configurée (Mode standard Plex/Overseerr actif)'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="password"
+                            value={configForm.mdblistApiKey}
+                            onChange={(e) => setConfigForm((p) => ({ ...p, mdblistApiKey: e.target.value }))}
+                            placeholder={
+                              adminSettings.editableValues?.mdblistApiKeyMasked ||
+                              'Clé API MDBList (laisser vide si non utilisé — Askarr fonctionne sans)'
+                            }
+                            className="flex-1 rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-white font-mono text-xs"
+                          />
+                          <button
+                            type="button"
+                            disabled={testingServiceKey === 'mdblist'}
+                            onClick={() => void handleTestService('mdblist')}
+                            className="px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 border border-amber-500/35 text-xs font-semibold text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+                          >
+                            <Play className="w-3.5 h-3.5 text-amber-400" />
+                            <span>
+                              {testingServiceKey === 'mdblist' ? 'Test...' : 'Sauver & Tester MDBList'}
+                            </span>
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-stone-400">
+                          L’URL (<code className="text-stone-300">https://api.mdblist.com</code>) et le cache (15 min) sont gérés automatiquement. Sans clé MDBList, Askarr fonctionne normalement via Overseerr/TMDb et tes serveurs Plex.
+                        </p>
                       </div>
                     </div>
 

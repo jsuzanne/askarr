@@ -87,6 +87,9 @@ export class ApiTracer {
     if (lower.includes(':3999') || lower.includes('/api/v2/public/')) {
       return { service: 'tracearr', serverLabel: 'Tracearr Multi-Plex', sanitizedUrl };
     }
+    if (lower.includes('mdblist.com')) {
+      return { service: 'mdblist', serverLabel: 'MDBList Catalog API', sanitizedUrl };
+    }
     if (lower.includes('deepseek.com')) {
       return { service: 'deepseek', serverLabel: 'DeepSeek LLM', sanitizedUrl };
     }

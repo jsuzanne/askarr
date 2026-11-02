@@ -47,6 +47,7 @@ export const logger = pino({
       '*.token',
       '*.plexToken',
       '*.deepseekApiKey',
+      '*.mdblistApiKey',
       '*.cloudflareApiToken',
       '*.downloadUrl',
       '*.guid',

@@ -53,6 +53,9 @@ export interface MediaEvidence {
       imdbOrAudienceRating: number | null;
       tmdbVoteAverage: number | null;
       criticRating: number | null;
+      imdbRating?: number | null;
+      imdbVotes?: number | null;
+      mdblistScore?: number | null;
     };
     releaseDates: {
       inCinemas: string | null;
@@ -224,7 +227,7 @@ export interface PreparedActionDTO {
 export interface ApiTraceEntryDTO {
   id: string;
   timestamp: string;
-  service: 'plex' | 'overseerr' | 'radarr' | 'sonarr' | 'prowlarr' | 'tracearr' | 'deepseek' | 'cloudflare' | 'smtp' | 'discord' | 'other';
+  service: 'plex' | 'overseerr' | 'radarr' | 'sonarr' | 'prowlarr' | 'tracearr' | 'mdblist' | 'deepseek' | 'cloudflare' | 'smtp' | 'discord' | 'other';
   serverLabel?: string;
   method: string;
   url: string;
@@ -322,6 +325,9 @@ export interface AdminEditableSettingsDTO {
   tracearrBaseUrl?: string;
   tracearrApiKeyMasked?: string;
   tracearrApiKeyConfigured?: boolean;
+  mdblistBaseUrl?: string;
+  mdblistApiKeyMasked?: string;
+  mdblistApiKeyConfigured?: boolean;
   cloudflareAccountId: string;
   cloudflareApiTokenMasked: string;
   cloudflareApiTokenConfigured?: boolean;
@@ -369,6 +375,7 @@ export interface AdminSettingsDTO {
     sonarr: { baseUrl: string; configured: boolean };
     prowlarr: { baseUrl: string; configured: boolean };
     tracearr?: { baseUrl: string; configured: boolean };
+    mdblist?: { baseUrl: string; configured: boolean };
     cloudflareAccess: {
       accountIdConfigured: boolean;
       apiTokenConfigured: boolean;

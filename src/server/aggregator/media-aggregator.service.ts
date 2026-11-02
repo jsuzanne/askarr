@@ -10,6 +10,41 @@ import { buildPlexDeepLinks, type PlexMultiServerConnector, type PlexMetadataDet
 import type { RadarrConnector, RadarrMovieStatus, RadarrQueueItem } from '../connectors/radarr.connector.js';
 import type { SonarrConnector, SonarrSeriesStatus, SonarrQueueItem } from '../connectors/sonarr.connector.js';
 import type { ProwlarrConnector } from '../connectors/prowlarr.connector.js';
+import {
+  MdblistApiError,
+  type MdblistCatalogCandidate,
+  type MdblistConnector
+} from '../connectors/mdblist.connector.js';
+import {
+  matchesRatingConstraint,
+  matchesRuntimeConstraint,
+  matchesYearConstraint,
+  validateAndNormalizeCriteria,
+  type NormalizedDiscoveryCriteria
+} from '../connectors/mdblist-criteria.schema.js';
+
+export type WatchHistoryVerificationStatus = 'verified' | 'unavailable' | 'not_requested';
+
+export interface DiscoverByCriteriaResult {
+  status: 'ok' | 'empty' | 'invalid_criteria' | 'connector_error';
+  cards: MediaEvidence[];
+  appliedCriteria: NormalizedDiscoveryCriteria | null;
+  watchHistoryStatus: WatchHistoryVerificationStatus;
+  watchHistoryWarningFr: string | null;
+  unsupportedConstraints: string[];
+  shortfallReasonFr: string | null;
+  stats: {
+    catalogCandidatesExamined: number;
+    excludedWatchedCount: number;
+    excludedUnauthorizedServerCount: number;
+    excludedByScopeCount: number;
+    rejectedByCriteriaCount: number;
+    enrichedCount: number;
+  };
+  provenance: ProvenanceEntry[];
+  errorCode?: string;
+  errorMessageFr?: string;
+}
 
 export function formatFrenchDate(isoDate: string | null): string | null {
   if (!isoDate) return null;
@@ -31,8 +66,17 @@ export class MediaAggregatorService {
     private readonly plex: PlexMultiServerConnector,
     private readonly radarr: RadarrConnector,
     private readonly sonarr: SonarrConnector,
-    private readonly prowlarr: ProwlarrConnector
+    private readonly prowlarr: ProwlarrConnector,
+    private mdblist?: MdblistConnector,
+    private recentYearsWindow: number = 3
   ) {}
+
+  public setMdblistConnector(mdblist: MdblistConnector, recentYearsWindow?: number): void {
+    this.mdblist = mdblist;
+    if (recentYearsWindow !== undefined && Number.isFinite(recentYearsWindow)) {
+      this.recentYearsWindow = Math.max(1, Math.min(15, recentYearsWindow));
+    }
+  }
 
   public async searchAndCheckMedia(params: {
     query: string;
@@ -398,6 +442,11 @@ export class MediaAggregatorService {
       requestedAt: string | null;
       requestedByEmail: string | null;
       requestedByDisplayName: string | null;
+    };
+    externalRatings?: {
+      imdbRating?: number | null;
+      imdbVotes?: number | null;
+      mdblistScore?: number | null;
     };
   }): Promise<MediaEvidence> {
     const provenance: ProvenanceEntry[] = [];
@@ -899,9 +948,22 @@ export class MediaAggregatorService {
         directorOrCreator: osDetail.directorOrCreator || firstPlexDetail?.directors[0] || null,
         topCast: osDetail.topCast.length > 0 ? osDetail.topCast : firstPlexDetail?.cast || [],
         ratings: {
-          imdbOrAudienceRating: firstPlexDetail?.audienceRating ?? osDetail.voteAverage ?? null,
+          imdbOrAudienceRating:
+            params.externalRatings?.imdbRating ??
+            firstPlexDetail?.audienceRating ??
+            osDetail.voteAverage ??
+            null,
           tmdbVoteAverage: osDetail.voteAverage,
-          criticRating: firstPlexDetail?.criticRating ?? null
+          criticRating: firstPlexDetail?.criticRating ?? null,
+          ...(params.externalRatings?.imdbRating !== undefined
+            ? { imdbRating: params.externalRatings.imdbRating }
+            : {}),
+          ...(params.externalRatings?.imdbVotes !== undefined
+            ? { imdbVotes: params.externalRatings.imdbVotes }
+            : {}),
+          ...(params.externalRatings?.mdblistScore !== undefined
+            ? { mdblistScore: params.externalRatings.mdblistScore }
+            : {})
         },
         releaseDates: {
           inCinemas,
@@ -1692,5 +1754,522 @@ export class MediaAggregatorService {
     );
 
     return enriched.filter((e): e is MediaEvidence => e !== null);
+  }
+
+  /**
+   * Recherche dynamique de films ou séries par critères via le catalogue MDBList,
+   * suivie de la validation stricte des contraintes et de l'enrichissement Askarr
+   * (`buildMediaEvidence` : Plex, droits serveurs utilisateur, Radarr/Sonarr/Overseerr, historique).
+   *
+   * Garanties :
+   * - Aucune écriture dans MDBList, Radarr, Sonarr ou Overseerr.
+   * - Ne remplace jamais silencieusement une note IMDb (ou autre source) par TMDb ou un score agrégé.
+   * - Une note ou durée absente ne satisfait jamais un seuil minimum/maximum.
+   * - Ne complète jamais avec des titres hors critères et n'assouplit jamais les critères.
+   */
+  public async discoverMediaByCriteria(params: {
+    rawCriteria: unknown;
+    currentUserEmail?: string;
+    currentUserOverseerrId?: number | null;
+    userAllowedServers?: string[];
+    watchedFilter?: {
+      status: WatchHistoryVerificationStatus;
+      watchedTmdbIds?: ReadonlySet<number>;
+      watchedNormTitles?: ReadonlySet<string>;
+    };
+    recentYearsWindow?: number;
+    currentYear?: number;
+  }): Promise<DiscoverByCriteriaResult> {
+    const emptyStats = {
+      catalogCandidatesExamined: 0,
+      excludedWatchedCount: 0,
+      excludedUnauthorizedServerCount: 0,
+      excludedByScopeCount: 0,
+      rejectedByCriteriaCount: 0,
+      enrichedCount: 0
+    };
+
+    const validation = validateAndNormalizeCriteria(params.rawCriteria, {
+      currentYear: params.currentYear,
+      recentYearsWindow: params.recentYearsWindow ?? this.recentYearsWindow
+    });
+
+    if (!validation.ok) {
+      return {
+        status: 'invalid_criteria',
+        cards: [],
+        appliedCriteria: null,
+        watchHistoryStatus: 'not_requested',
+        watchHistoryWarningFr: null,
+        unsupportedConstraints: validation.unsupportedConstraints,
+        shortfallReasonFr: null,
+        stats: emptyStats,
+        provenance: [],
+        errorCode: validation.errorCode,
+        errorMessageFr: validation.errorMessageFr
+      };
+    }
+
+    const criteria = validation.criteria;
+
+    let watchHistoryStatus: WatchHistoryVerificationStatus = 'not_requested';
+    let watchHistoryWarningFr: string | null = null;
+    if (criteria.excludeWatched) {
+      if (params.watchedFilter?.status === 'verified') {
+        watchHistoryStatus = 'verified';
+      } else {
+        watchHistoryStatus = 'unavailable';
+        watchHistoryWarningFr =
+          "Ton historique de visionnage personnel n'a pas pu être vérifié : il n'est pas garanti que tu n'aies jamais vu ces titres.";
+      }
+    }
+
+    if (!this.mdblist || !this.mdblist.isConfigured()) {
+      return {
+        status: 'connector_error',
+        cards: [],
+        appliedCriteria: criteria,
+        watchHistoryStatus,
+        watchHistoryWarningFr,
+        unsupportedConstraints: criteria.unsupportedConstraints,
+        shortfallReasonFr: null,
+        stats: emptyStats,
+        provenance: [
+          {
+            source: 'mdblist',
+            status: 'error',
+            latencyMs: 0,
+            detail: 'Connecteur MDBList non configuré'
+          }
+        ],
+        errorCode: 'NOT_CONFIGURED',
+        errorMessageFr:
+          "La recherche par critères via MDBList n'est pas disponible car la clé API MDBList n'est pas configurée côté serveur."
+      };
+    }
+
+    let userAllowedServers: string[] | undefined =
+      params.userAllowedServers && params.userAllowedServers.length > 0
+        ? params.userAllowedServers
+        : undefined;
+
+    if (
+      !userAllowedServers &&
+      params.currentUserEmail &&
+      typeof this.plex.resolveUserPlexServerAccess === 'function'
+    ) {
+      try {
+        const access = await this.plex.resolveUserPlexServerAccess({
+          email: params.currentUserEmail
+        });
+        if (access && access.askarrServerNames.length > 0) {
+          userAllowedServers = access.askarrServerNames;
+        }
+      } catch {
+        // Ignorer en cas d'erreur de résolution
+      }
+    }
+
+    const normTitleFn = (s: string | null | undefined): string =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const isTitleOrTmdbWatched = (
+      tmdbId: number | null,
+      titles: Array<string | null | undefined>
+    ): boolean => {
+      if (watchHistoryStatus !== 'verified' || !params.watchedFilter) {
+        return false;
+      }
+      if (
+        tmdbId !== null &&
+        tmdbId > 0 &&
+        params.watchedFilter.watchedTmdbIds?.has(tmdbId)
+      ) {
+        return true;
+      }
+      if (params.watchedFilter.watchedNormTitles) {
+        for (const t of titles) {
+          const norm = normTitleFn(t);
+          if (norm && params.watchedFilter.watchedNormTitles.has(norm)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    const provenance: ProvenanceEntry[] = [];
+    const verifiedCards: MediaEvidence[] = [];
+    const seenTmdbIds = new Set<number>();
+    const seenImdbIds = new Set<string>();
+
+    const stats = { ...emptyStats };
+
+    const MAX_CATALOG_PAGES = 2;
+    const MAX_MDBLIST_DETAIL_CALLS = 12;
+    const MAX_EVIDENCE_ENRICHMENTS = Math.min(15, Math.max(8, criteria.limit * 3));
+    const pageLimit = Math.min(35, Math.max(15, criteria.limit * 4));
+
+    let cursor: string | null = null;
+    let mdblistDetailCalls = 0;
+
+    for (let page = 0; page < MAX_CATALOG_PAGES; page++) {
+      if (
+        verifiedCards.length >= criteria.limit ||
+        stats.enrichedCount >= MAX_EVIDENCE_ENRICHMENTS
+      ) {
+        break;
+      }
+
+      const tCatalog = Date.now();
+      let catalogPage;
+      try {
+        catalogPage = await this.mdblist.searchCatalog(criteria, {
+          cursor,
+          pageLimit
+        });
+        provenance.push({
+          source: 'mdblist',
+          status: 'ok',
+          latencyMs: Date.now() - tCatalog,
+          detail: `Catalogue ${criteria.mediaType} page ${page + 1}: ${catalogPage.candidates.length} candidat(s)${catalogPage.fromCache ? ' (cache)' : ''}`
+        });
+      } catch (err) {
+        const latencyMs = Date.now() - tCatalog;
+        const apiErr = err instanceof MdblistApiError ? err : null;
+        const errorCode = apiErr?.code || 'UPSTREAM_ERROR';
+        const errorMessageFr =
+          apiErr?.message ||
+          "Le service MDBList est temporairement indisponible pour la recherche par critères.";
+
+        provenance.push({
+          source: 'mdblist',
+          status: errorCode === 'TIMEOUT' ? 'timeout' : 'error',
+          latencyMs,
+          detail: `${errorCode}: ${errorMessageFr}`
+        });
+
+        if (verifiedCards.length > 0) {
+          break;
+        }
+
+        return {
+          status: 'connector_error',
+          cards: [],
+          appliedCriteria: criteria,
+          watchHistoryStatus,
+          watchHistoryWarningFr,
+          unsupportedConstraints: criteria.unsupportedConstraints,
+          shortfallReasonFr: null,
+          stats,
+          provenance,
+          errorCode,
+          errorMessageFr
+        };
+      }
+
+      for (const rawCandidate of catalogPage.candidates) {
+        if (
+          verifiedCards.length >= criteria.limit ||
+          stats.enrichedCount >= MAX_EVIDENCE_ENRICHMENTS
+        ) {
+          break;
+        }
+
+        // Vérification stricte du type de média
+        if (rawCandidate.mediaType !== criteria.mediaType) {
+          continue;
+        }
+
+        // Déduplication par identifiants stables (TMDb / IMDb)
+        if (rawCandidate.tmdbId !== null && seenTmdbIds.has(rawCandidate.tmdbId)) {
+          continue;
+        }
+        const normImdb = rawCandidate.imdbId ? rawCandidate.imdbId.toLowerCase() : null;
+        if (normImdb && seenImdbIds.has(normImdb)) {
+          continue;
+        }
+        if (rawCandidate.tmdbId !== null) {
+          seenTmdbIds.add(rawCandidate.tmdbId);
+        }
+        if (normImdb) {
+          seenImdbIds.add(normImdb);
+        }
+
+        stats.catalogCandidatesExamined += 1;
+
+        // 1. Pré-filtrage sur l'historique de visionnage si vérifié
+        if (isTitleOrTmdbWatched(rawCandidate.tmdbId, [rawCandidate.title])) {
+          stats.excludedWatchedCount += 1;
+          continue;
+        }
+
+        let candidate: MdblistCatalogCandidate = rawCandidate;
+        let detailFetched = false;
+
+        const fetchCandidateDetailIfNeeded = async (): Promise<void> => {
+          if (detailFetched || mdblistDetailCalls >= MAX_MDBLIST_DETAIL_CALLS || !this.mdblist) {
+            return;
+          }
+          detailFetched = true;
+          mdblistDetailCalls += 1;
+          const detail =
+            candidate.tmdbId !== null
+              ? await this.mdblist.getMediaDetailByTmdbId(candidate.tmdbId, criteria.mediaType)
+              : candidate.imdbId !== null
+                ? await this.mdblist.getMediaDetailByImdbId(candidate.imdbId, criteria.mediaType)
+                : null;
+          if (detail && detail.mediaType === criteria.mediaType) {
+            candidate = this.mergeMdblistCandidateWithDetail(candidate, detail);
+            if (candidate.tmdbId !== null) seenTmdbIds.add(candidate.tmdbId);
+            if (candidate.imdbId) seenImdbIds.add(candidate.imdbId.toLowerCase());
+          }
+        };
+
+        // 2. Si tmdbId absent mais imdbId présent, résoudre via MDBList
+        if (candidate.tmdbId === null && candidate.imdbId !== null) {
+          await fetchCandidateDetailIfNeeded();
+        }
+        if (candidate.tmdbId === null || candidate.tmdbId <= 0) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        // 3. Vérification stricte de la note pour la source demandée (sans jamais substituer une autre source)
+        if (
+          criteria.ratingSource &&
+          (criteria.minRating !== null || criteria.maxRating !== null)
+        ) {
+          let sourceRating = candidate.ratingsBySource[criteria.ratingSource]?.score ?? null;
+          if (sourceRating === null) {
+            await fetchCandidateDetailIfNeeded();
+            sourceRating = candidate.ratingsBySource[criteria.ratingSource]?.score ?? null;
+          }
+          if (!matchesRatingConstraint(sourceRating, criteria)) {
+            stats.rejectedByCriteriaCount += 1;
+            continue;
+          }
+        }
+
+        // 4. Vérification du nombre minimum de votes si demandé
+        if (criteria.minVotes !== null) {
+          const voteSource = criteria.ratingSource ?? 'imdb';
+          let votes = candidate.ratingsBySource[voteSource]?.votes ?? null;
+          if (votes === null) {
+            await fetchCandidateDetailIfNeeded();
+            votes = candidate.ratingsBySource[voteSource]?.votes ?? null;
+          }
+          if (votes === null || votes < criteria.minVotes) {
+            stats.rejectedByCriteriaCount += 1;
+            continue;
+          }
+        }
+
+        // 5. Pré-vérification de l'année si déjà connue sur le candidat MDBList
+        if (
+          candidate.year !== null &&
+          !matchesYearConstraint(candidate.year, criteria)
+        ) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        // 6. Vérification de la durée si demandée
+        if (criteria.minRuntimeMinutes !== null || criteria.maxRuntimeMinutes !== null) {
+          if (candidate.runtimeMinutes === null) {
+            await fetchCandidateDetailIfNeeded();
+          }
+          if (
+            candidate.runtimeMinutes !== null &&
+            !matchesRuntimeConstraint(candidate.runtimeMinutes, criteria)
+          ) {
+            stats.rejectedByCriteriaCount += 1;
+            continue;
+          }
+        }
+
+        // 7. Vérification de la langue originale si déjà connue sur le candidat MDBList
+        if (
+          criteria.originalLanguage !== null &&
+          candidate.originalLanguage !== null &&
+          candidate.originalLanguage.toLowerCase() !== criteria.originalLanguage.toLowerCase()
+        ) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        // 8. Enrichissement par le pipeline de preuves Askarr (`buildMediaEvidence`)
+        stats.enrichedCount += 1;
+        let evidence: MediaEvidence;
+        try {
+          evidence = await this.buildMediaEvidence({
+            tmdbId: candidate.tmdbId,
+            mediaType: criteria.mediaType,
+            currentUserEmail: params.currentUserEmail,
+            currentUserOverseerrId: params.currentUserOverseerrId,
+            userAllowedServers,
+            includeSeasons: criteria.mediaType === 'tv',
+            checkIndexers: false,
+            externalRatings: {
+              imdbRating: candidate.ratingsBySource.imdb?.score ?? null,
+              imdbVotes: candidate.ratingsBySource.imdb?.votes ?? null,
+              mdblistScore: candidate.mdblistScore
+            }
+          });
+        } catch {
+          continue;
+        }
+
+        // Vérification stricte de non-collision de type de média après enrichissement
+        if (evidence.identity.mediaType !== criteria.mediaType) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        // Compléter runtimeMinutes et imdbId si Overseerr ne les avait pas mais MDBList les avait
+        if (evidence.identity.runtimeMinutes === null && candidate.runtimeMinutes !== null) {
+          evidence.identity.runtimeMinutes = candidate.runtimeMinutes;
+        }
+        if (!evidence.identity.imdbId && candidate.imdbId) {
+          evidence.identity.imdbId = candidate.imdbId;
+        }
+
+        // 9. Post-vérification de l'historique sur les titres FR et VO issus d'Overseerr
+        if (
+          isTitleOrTmdbWatched(evidence.identity.tmdbId, [
+            evidence.identity.titleFr,
+            evidence.identity.originalTitle,
+            candidate.title
+          ])
+        ) {
+          stats.excludedWatchedCount += 1;
+          continue;
+        }
+
+        // 10. Post-vérification stricte de l'année et de la durée après enrichissement
+        const effectiveYear = evidence.identity.year ?? candidate.year;
+        if (!matchesYearConstraint(effectiveYear, criteria)) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        const effectiveRuntime =
+          evidence.identity.runtimeMinutes ?? candidate.runtimeMinutes;
+        if (!matchesRuntimeConstraint(effectiveRuntime, criteria)) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        // 11. Vérification des droits d'accès Plex de l'utilisateur et du périmètre (`scope`)
+        const isPresentOnAnyPlex =
+          evidence.catalogPresence.state === 'available_now' ||
+          evidence.catalogPresence.state === 'partially_available';
+        const isUnauthorizedPlexOnly =
+          isPresentOnAnyPlex && evidence.catalogPresence.accessibleToCurrentUser === false;
+
+        if (isUnauthorizedPlexOnly) {
+          stats.excludedUnauthorizedServerCount += 1;
+          continue;
+        }
+
+        const isAvailableOnUserPlex =
+          isPresentOnAnyPlex && evidence.catalogPresence.accessibleToCurrentUser !== false;
+
+        if (criteria.scope === 'on_plex_now' && !isAvailableOnUserPlex) {
+          stats.excludedByScopeCount += 1;
+          continue;
+        }
+
+        if (
+          criteria.scope === 'missing_on_plex' &&
+          evidence.catalogPresence.state === 'available_now' &&
+          evidence.catalogPresence.accessibleToCurrentUser !== false
+        ) {
+          stats.excludedByScopeCount += 1;
+          continue;
+        }
+
+        verifiedCards.push(evidence);
+      }
+
+      if (!catalogPage.hasMore || !catalogPage.nextCursor) {
+        break;
+      }
+      cursor = catalogPage.nextCursor;
+    }
+
+    let shortfallReasonFr: string | null = null;
+    if (verifiedCards.length < criteria.limit) {
+      const reasons: string[] = [];
+      if (stats.excludedByScopeCount > 0) {
+        reasons.push(
+          criteria.scope === 'on_plex_now'
+            ? `${stats.excludedByScopeCount} titre(s) exclu(s) car absents de tes serveurs Plex`
+            : `${stats.excludedByScopeCount} titre(s) exclu(s) car déjà présents sur Plex`
+        );
+      }
+      if (stats.excludedUnauthorizedServerCount > 0) {
+        reasons.push(
+          `${stats.excludedUnauthorizedServerCount} titre(s) exclu(s) car présents uniquement sur un serveur Plex non autorisé pour ton compte`
+        );
+      }
+      if (stats.excludedWatchedCount > 0) {
+        reasons.push(`${stats.excludedWatchedCount} titre(s) exclu(s) car déjà vus`);
+      }
+      if (stats.rejectedByCriteriaCount > 0) {
+        reasons.push(
+          `${stats.rejectedByCriteriaCount} candidat(s) écarté(s) lors de la vérification stricte des critères (note, durée ou période)`
+        );
+      }
+
+      const detailSuffix = reasons.length > 0 ? ` (${reasons.join(' ; ')})` : '';
+      if (verifiedCards.length === 0) {
+        shortfallReasonFr = `Aucun titre ne satisfait simultanément tous les critères demandés parmi les ${stats.catalogCandidatesExamined} candidat(s) examinés${detailSuffix}. Les critères n'ont pas été assouplis.`;
+      } else {
+        shortfallReasonFr = `Seul(s) ${verifiedCards.length} titre(s) sur les ${criteria.limit} demandés respecte(nt) strictement tous les critères après vérification${detailSuffix}. Aucun titre hors critères n'a été ajouté.`;
+      }
+    }
+
+    return {
+      status: verifiedCards.length > 0 ? 'ok' : 'empty',
+      cards: verifiedCards,
+      appliedCriteria: criteria,
+      watchHistoryStatus,
+      watchHistoryWarningFr,
+      unsupportedConstraints: criteria.unsupportedConstraints,
+      shortfallReasonFr,
+      stats,
+      provenance
+    };
+  }
+
+  private mergeMdblistCandidateWithDetail(
+    base: MdblistCatalogCandidate,
+    detail: MdblistCatalogCandidate
+  ): MdblistCatalogCandidate {
+    return {
+      tmdbId: base.tmdbId ?? detail.tmdbId,
+      imdbId: base.imdbId ?? detail.imdbId,
+      tvdbId: base.tvdbId ?? detail.tvdbId,
+      mdblistId: base.mdblistId ?? detail.mdblistId,
+      mediaType: base.mediaType,
+      title: base.title || detail.title,
+      year: base.year ?? detail.year,
+      runtimeMinutes: base.runtimeMinutes ?? detail.runtimeMinutes,
+      originalLanguage: base.originalLanguage ?? detail.originalLanguage,
+      genres: base.genres.length > 0 ? base.genres : detail.genres,
+      posterUrl: base.posterUrl ?? detail.posterUrl,
+      overview: base.overview ?? detail.overview,
+      mdblistScore: detail.mdblistScore ?? base.mdblistScore,
+      ratingsBySource: {
+        ...base.ratingsBySource,
+        ...detail.ratingsBySource
+      }
+    };
   }
 }

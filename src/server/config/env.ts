@@ -10,7 +10,13 @@ if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath });
 }
 if (fs.existsSync(qualEnvPath)) {
-  dotenv.config({ path: qualEnvPath });
+  const qualParsed = dotenv.parse(fs.readFileSync(qualEnvPath));
+  for (const [key, value] of Object.entries(qualParsed)) {
+    const current = process.env[key];
+    if (current === undefined || current.trim() === '') {
+      process.env[key] = value;
+    }
+  }
 }
 
 export interface PlexServerConfig {
@@ -39,6 +45,10 @@ export interface AppConfig {
   prowlarrApiKey: string;
   tracearrBaseUrl: string;
   tracearrApiKey: string;
+  mdblistBaseUrl: string;
+  mdblistApiKey: string;
+  mdblistCacheTtlSeconds: number;
+  mdblistRecentYearsWindow: number;
   cloudflareAccountId: string;
   cloudflareApiToken: string;
   cfAccessTargetMode: 'policy' | 'group';
@@ -151,6 +161,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     prowlarrApiKey: env.PROWLARR_API_KEY || '',
     tracearrBaseUrl: (env.TRACEARR_BASE_URL || 'http://192.168.1.163:3999').replace(/\/+$/, ''),
     tracearrApiKey: env.TRACEARR_API_KEY || env.Tracearr_API_KEY || '',
+    mdblistBaseUrl: (env.MDBLIST_BASE_URL || 'https://api.mdblist.com').replace(/\/+$/, ''),
+    mdblistApiKey: (env.MDBLIST_API_KEY || '').trim(),
+    mdblistCacheTtlSeconds: Math.max(30, Number(env.MDBLIST_CACHE_TTL_SECONDS || 900)),
+    mdblistRecentYearsWindow: Math.max(1, Math.min(15, Number(env.MDBLIST_RECENT_YEARS_WINDOW || 3))),
     cloudflareAccountId: env.CLOUDFLARE_ACCOUNT_ID || '',
     cloudflareApiToken: env.CLOUDFLARE_API_TOKEN || '',
     cfAccessTargetMode: env.CF_ACCESS_TARGET_MODE === 'policy' ? 'policy' : 'group',

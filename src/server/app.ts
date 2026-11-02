@@ -14,6 +14,7 @@ import { SonarrConnector } from './connectors/sonarr.connector.js';
 import { ProwlarrConnector } from './connectors/prowlarr.connector.js';
 import { CloudflareAccessConnector } from './connectors/cloudflare-access.connector.js';
 import { TracearrConnector } from './connectors/tracearr.js';
+import { MdblistConnector } from './connectors/mdblist.connector.js';
 import { SmtpInviteService } from './connectors/smtp-invite.service.js';
 import { DiscordNotifierService } from './connectors/discord-notifier.service.js';
 import { MediaAggregatorService } from './aggregator/media-aggregator.service.js';
@@ -48,6 +49,10 @@ export async function createApp(deps: AppDependencies): Promise<{
   const sonarr = new SonarrConnector(config.sonarrBaseUrl, config.sonarrApiKey, fetchImpl);
   const prowlarr = new ProwlarrConnector(config.prowlarrBaseUrl, config.prowlarrApiKey, fetchImpl);
   const tracearr = new TracearrConnector(config.tracearrBaseUrl, config.tracearrApiKey, fetchImpl);
+  const mdblist = new MdblistConnector(config.mdblistBaseUrl, config.mdblistApiKey, {
+    fetchImpl,
+    cacheTtlSeconds: config.mdblistCacheTtlSeconds
+  });
   const cfAccess = new CloudflareAccessConnector(
     config.cloudflareAccountId,
     config.cloudflareApiToken,
@@ -57,7 +62,15 @@ export async function createApp(deps: AppDependencies): Promise<{
     fetchImpl
   );
 
-  const aggregator = new MediaAggregatorService(overseerr, plex, radarr, sonarr, prowlarr);
+  const aggregator = new MediaAggregatorService(
+    overseerr,
+    plex,
+    radarr,
+    sonarr,
+    prowlarr,
+    mdblist,
+    config.mdblistRecentYearsWindow
+  );
   const orchestrator = new DeepSeekOrchestratorService(config, db, aggregator, overseerr, fetchImpl, tracearr);
   const smtpInvite = new SmtpInviteService(db, config.adminEmails[0] || '', apiTracer);
   const discord = new DiscordNotifierService(db, fetchImpl, config.nodeEnv);
@@ -118,6 +131,14 @@ export async function createApp(deps: AppDependencies): Promise<{
       config.tracearrApiKey = saved.cfg_tracearr_key;
     }
     tracearr.updateConfig(config.tracearrBaseUrl, config.tracearrApiKey);
+
+    if (saved.cfg_mdblist_url) {
+      config.mdblistBaseUrl = saved.cfg_mdblist_url.replace(/\/+$/, '');
+    }
+    if (saved.cfg_mdblist_key) {
+      config.mdblistApiKey = saved.cfg_mdblist_key;
+    }
+    mdblist.updateCredentials(config.mdblistBaseUrl, config.mdblistApiKey);
 
     if (saved.cfg_cf_account_id !== undefined) {
       config.cloudflareAccountId = saved.cfg_cf_account_id;
@@ -1753,6 +1774,10 @@ export async function createApp(deps: AppDependencies): Promise<{
           baseUrl: config.tracearrBaseUrl,
           configured: Boolean(config.tracearrApiKey && config.tracearrBaseUrl)
         },
+        mdblist: {
+          baseUrl: config.mdblistBaseUrl,
+          configured: Boolean(config.mdblistApiKey && config.mdblistBaseUrl)
+        },
         cloudflareAccess: {
           accountIdConfigured: Boolean(config.cloudflareAccountId),
           apiTokenConfigured: Boolean(config.cloudflareApiToken),
@@ -1799,6 +1824,9 @@ export async function createApp(deps: AppDependencies): Promise<{
         tracearrBaseUrl: config.tracearrBaseUrl,
         tracearrApiKeyMasked: maskSecret(config.tracearrApiKey),
         tracearrApiKeyConfigured: Boolean(config.tracearrApiKey),
+        mdblistBaseUrl: config.mdblistBaseUrl,
+        mdblistApiKeyMasked: maskSecret(config.mdblistApiKey),
+        mdblistApiKeyConfigured: Boolean(config.mdblistApiKey),
         cloudflareAccountId: config.cloudflareAccountId,
         cloudflareApiTokenMasked: maskSecret(config.cloudflareApiToken),
         cloudflareApiTokenConfigured: Boolean(config.cloudflareApiToken),
@@ -1848,6 +1876,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     prowlarrApiKey: z.string().optional(),
     tracearrBaseUrl: z.string().optional(),
     tracearrApiKey: z.string().optional(),
+    mdblistBaseUrl: z.string().optional(),
+    mdblistApiKey: z.string().optional(),
     cloudflareAccountId: z.string().optional(),
     cloudflareApiToken: z.string().optional(),
     cfAccessTargetMode: z.enum(['policy', 'group']).optional(),
@@ -1893,6 +1923,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     saveIfPresent('cfg_prowlarr_key', body.prowlarrApiKey);
     saveIfPresent('cfg_tracearr_url', body.tracearrBaseUrl);
     saveIfPresent('cfg_tracearr_key', body.tracearrApiKey);
+    saveIfPresent('cfg_mdblist_url', body.mdblistBaseUrl);
+    saveIfPresent('cfg_mdblist_key', body.mdblistApiKey);
 
     if (body.cloudflareAccountId !== undefined && body.cloudflareAccountId.trim().length > 0) {
       db.setAppSetting('cfg_cf_account_id', body.cloudflareAccountId.trim());
@@ -2068,6 +2100,14 @@ export async function createApp(deps: AppDependencies): Promise<{
       latencyMs = h.latencyMs;
       detail = h.ok
         ? `Tracearr connecté (${h.monitoredServersCount ?? 0} serveurs supervisés : ${(h.serverNames ?? []).join(', ')})`
+        : h.error || 'Erreur';
+    } else if (body.service === 'mdblist') {
+      const h = await mdblist.checkHealth();
+      result = h;
+      ok = h.ok;
+      latencyMs = h.latencyMs;
+      detail = h.ok
+        ? `MDBList connecté (Statut : ${h.patronStatus ?? 'actif'} • Requêtes restantes : ${h.requestsRemaining ?? '?'})`
         : h.error || 'Erreur';
     } else if (body.service === 'cloudflare') {
       const h = await cfAccess.checkHealth();

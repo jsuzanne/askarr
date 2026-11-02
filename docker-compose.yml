@@ -5,7 +5,6 @@
 services:
   askarr:
     image: ghcr.io/jsuzanne/askarr:latest
-    build: .
     container_name: askarr
     restart: unless-stopped
     ports:
