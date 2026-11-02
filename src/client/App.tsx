@@ -298,6 +298,9 @@ export function App() {
     try {
       const saved = window.localStorage.getItem('askarr_theme');
       if (saved === 'light' || saved === 'dark') return saved;
+      if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        return 'light';
+      }
     } catch {
       // ignore storage errors
     }
@@ -306,6 +309,10 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.setAttribute('content', theme === 'light' ? '#f7f3eb' : '#0c070a');
+    }
     try {
       window.localStorage.setItem('askarr_theme', theme);
     } catch {
@@ -1716,25 +1723,26 @@ export function App() {
               <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
             </button>
 
-            {/* Desktop (sm+) : Bascule Thème Clair / Sombre */}
+            {/* Bascule Thème Clair / Sombre (accessible directement sur smartphone et desktop) */}
             <button
               type="button"
               onClick={toggleTheme}
-              className={`hidden sm:inline-flex px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap items-center gap-1.5 transition-all cursor-pointer ${
+              className={`p-2 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer min-h-[38px] min-w-[38px] ${
                 theme === 'light'
                   ? 'bg-amber-500/20 text-amber-950 border-amber-600/50 shadow-sm'
                   : 'bg-stone-900/95 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-800'
               }`}
               title={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
+              aria-label={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
             >
               {theme === 'dark' ? (
                 <>
-                  <Sun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <Sun className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-amber-300 shrink-0" />
                   <span className="hidden md:inline">{t('theme_light')}</span>
                 </>
               ) : (
                 <>
-                  <Moon className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <Moon className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-amber-700 shrink-0" />
                   <span className="hidden md:inline">{t('theme_dark')}</span>
                 </>
               )}

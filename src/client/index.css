@@ -225,7 +225,9 @@ html[data-theme="light"] .bg-\[\#120a0d\] {
 }
 
 html[data-theme="light"] .bg-\[\#140a0e\],
+html[data-theme="light"] .bg-\[\#140a0e\]\/95,
 html[data-theme="light"] .bg-\[\#140a0e\]\/98,
+html[data-theme="light"] .bg-\[\#130a0e\],
 html[data-theme="light"] .bg-\[\#140c10\],
 html[data-theme="light"] .bg-\[\#11090d\]\/98,
 html[data-theme="light"] .bg-\[\#090608\] {
@@ -241,11 +243,17 @@ html[data-theme="light"] .via-\[\#080507\] {
 }
 
 /* Sous-barre de navigation, cartes intégrées & tiroirs en mode Clair */
+html[data-theme="light"] .bg-black\/35,
 html[data-theme="light"] .bg-black\/45,
 html[data-theme="light"] .bg-black\/50,
 html[data-theme="light"] .bg-black\/55 {
   background-color: rgba(245, 239, 228, 0.85) !important;
   box-shadow: 0 4px 14px rgba(68, 48, 28, 0.06) !important;
+}
+
+/* Backdrops de modales et bottom-sheets en mode Clair : semi-transparents et floutés (ne pas rendre opaque) */
+html[data-theme="light"] .fixed.inset-0.bg-black\/80 {
+  background-color: rgba(20, 12, 16, 0.65) !important;
 }
 
 html[data-theme="light"] .bg-black\/30,
@@ -254,7 +262,6 @@ html[data-theme="light"] .bg-black\/60,
 html[data-theme="light"] .bg-black\/65,
 html[data-theme="light"] .bg-black\/70,
 html[data-theme="light"] .bg-black\/75,
-html[data-theme="light"] .bg-black\/80,
 html[data-theme="light"] .bg-black\/85,
 html[data-theme="light"] .bg-black\/90,
 html[data-theme="light"] .bg-black {
@@ -266,15 +273,27 @@ html[data-theme="light"] .text-white {
   color: #16100b;
 }
 
+html[data-theme="light"] .hover\:text-white:hover {
+  color: #16100b;
+}
+
 html[data-theme="light"] .cinema-velvet-pill,
 html[data-theme="light"] .cinema-velvet-pill.text-white,
 html[data-theme="light"] .cinema-velvet-pill .text-white,
+html[data-theme="light"] .cinema-velvet-pill:hover,
+html[data-theme="light"] .cinema-velvet-pill:hover .text-white,
 html[data-theme="light"] .bg-emerald-600.text-white,
 html[data-theme="light"] .bg-emerald-600\/90.text-white,
+html[data-theme="light"] .bg-emerald-600:hover .text-white,
 html[data-theme="light"] .bg-amber-600.text-white,
+html[data-theme="light"] .bg-amber-600:hover .text-white,
 html[data-theme="light"] .bg-rose-600.text-white,
 html[data-theme="light"] .bg-red-500.text-white {
   color: #ffffff !important;
+}
+
+html[data-theme="light"] textarea::placeholder {
+  color: #8c7b65 !important;
 }
 
 html[data-theme="light"] .cinema-velvet-pill .text-amber-200 {
