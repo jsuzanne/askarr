@@ -127,15 +127,23 @@ export class SmtpInviteService {
     const recipientEmail = params.recipientEmail.trim().toLowerCase();
     const appUrl = cfg.publicAppUrl || params.fallbackOrigin || 'http://localhost:4880';
     const displayName = params.recipientName?.trim() || recipientEmail.split('@')[0];
+
+    // Numéro de série déterministe style billet vintage (ex: N° 087481-B)
+    const serialHash = Array.from(recipientEmail).reduce(
+      (acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 900000,
+      100000
+    );
+    const ticketSerial = `N° ${String(serialHash).padStart(6, '0')}-B`;
+
     const serversBadgeHtml =
       params.plexServers && params.plexServers.length > 0
-        ? `<div style="margin:16px 0;padding:12px 16px;background-color:#171014;border:1px solid rgba(234,179,8,0.28);border-radius:12px;font-size:13px;color:#fef3c7;">
-             🎬 <strong>Tes serveurs Plex rattachés :</strong> ${params.plexServers.join(' · ')}
+        ? `<div style="margin:0 0 12px 0;padding:8px 12px;background-color:#fdf6e4;border:1px solid #8c2d19;border-radius:8px;font-size:12px;color:#261710;">
+             🎞️ <strong style="color:#8c2d19;">Serveurs Plex :</strong> ${params.plexServers.join(' · ')}
            </div>`
         : '';
 
     const customNoteHtml = params.customMessage?.trim()
-      ? `<div style="margin:16px 0;padding:14px 16px;background-color:#1f1318;border-left:3px solid #e11d48;border-radius:8px;font-size:14px;color:#fce7f3;font-style:italic;">
+      ? `<div style="margin:0 0 12px 0;padding:10px 12px;background-color:#fdf6e4;border-left:3px solid #8c2d19;border-radius:6px;font-size:13px;color:#382419;font-style:italic;">
            « ${params.customMessage.trim()} »
          </div>`
       : '';
@@ -148,34 +156,138 @@ export class SmtpInviteService {
     const htmlBody = `<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="UTF-8" /></head>
-<body style="margin:0;padding:24px;background-color:#090608;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#f5f0e6;">
-  <div style="max-width:540px;margin:0 auto;background:linear-gradient(165deg,#181115 0%,#0d090c 100%);border:1px solid rgba(234,179,8,0.35);border-radius:20px;padding:32px;box-shadow:0 20px 50px rgba(0,0,0,0.8);">
-    <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#eab308;font-weight:700;margin-bottom:8px;">
-      ★ BILLET D'INVITATION VIP · GRAND CINÉMA PLEX ★
-    </div>
-    <h1 style="margin:0 0 14px 0;font-size:24px;color:#fffdf9;letter-spacing:0.5px;">
-      Bienvenue dans la salle Askarr, ${displayName} !
-    </h1>
-    <p style="font-size:15px;line-height:1.65;color:#d6d1c7;margin:0 0 18px 0;">
-      Ton adresse <strong style="color:#fde68a;">${recipientEmail}</strong> dispose désormais d'un accès coupe-file à <strong>Askarr</strong>, le concierge IA cinéma &amp; séries relié aux serveurs Plex.
-    </p>
-    ${serversBadgeHtml}
-    ${customNoteHtml}
-    <ul style="font-size:14px;line-height:1.7;color:#d6d1c7;padding-left:20px;margin:16px 0 24px 0;">
-      <li>Vérifie instantanément si un film ou une série est disponible sur ton serveur Plex</li>
-      <li>Retrouve un film même avec quelques indices (acteur, réalisateur, intrigue, festival)</li>
-      <li>Demande l'ajout automatique d'un film ou d'une saison en 1 clic</li>
-    </ul>
-    <div style="margin:28px 0;text-align:center;">
-      <a href="${appUrl}" style="display:inline-block;background:linear-gradient(135deg,#eab308 0%,#ca8a04 100%);color:#090608;font-weight:800;font-size:15px;text-decoration:none;padding:14px 32px;border-radius:12px;letter-spacing:0.5px;">
-        Entrer dans la Salle Askarr →
-      </a>
-    </div>
-    <div style="background-color:#120d10;border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:18px;font-size:13px;color:#d6d1c7;line-height:1.6;">
-      <strong style="color:#fde68a;display:block;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-size:11px;">Comment te connecter :</strong>
-      1. Clique sur <a href="${appUrl}" style="color:#eab308;font-weight:600;">${appUrl}</a><br/>
-      2. Sur le portail de sécurité <strong>Cloudflare Access</strong>, connecte-toi avec <strong>Google</strong> (${recipientEmail}) ou saisis ton adresse pour recevoir un <strong>code PIN à 6 chiffres</strong> par email.<br/>
-      3. <strong>Astuce iPhone :</strong> dans Safari, touche <em>Partager → Sur l'écran d'accueil</em> pour installer Askarr comme une application plein écran.
+<body style="margin:0;padding:20px 12px;background-color:#140d0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#261710;">
+  <div style="max-width:630px;margin:0 auto;background-color:#f3e3c3;border:2px solid #261710;border-radius:16px;overflow:hidden;box-shadow:0 20px 45px rgba(0,0,0,0.75);">
+    <!-- Bande pellicule supérieure -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#261710;color:#f3e3c3;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;letter-spacing:2px;">
+      <tr>
+        <td style="padding:7px 16px;white-space:nowrap;">▪ ▪ ▪ ▪ &nbsp;GRAND CINÉMA PLEX · SALLE ASKARR&nbsp; ▪ ▪ ▪ ▪</td>
+        <td align="right" style="padding:7px 16px;white-space:nowrap;color:#eab308;font-weight:700;">35MM · VIP</td>
+      </tr>
+    </table>
+
+    <div style="padding:18px;">
+      <!-- Double cadre intérieur type ticket vintage avec souche détachable -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:2px solid #261710;border-radius:12px;overflow:hidden;background-color:#f3e3c3;">
+        <tr>
+          <!-- Partie principale du billet (Gauche) -->
+          <td valign="top" style="padding:18px 20px;background-color:#f3e3c3;">
+            <!-- Barre supérieure garantie sur 1 seule ligne -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-bottom:2px solid rgba(38,23,16,0.22);padding-bottom:8px;margin-bottom:14px;">
+              <tr>
+                <td style="font-size:11px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#8c2d19;white-space:nowrap;">
+                  ★ BILLET D'INVITATION VIP ★
+                </td>
+                <td align="right" style="white-space:nowrap;">
+                  <span style="display:inline-block;background-color:#ead2a8;border:1px solid #8c2d19;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;letter-spacing:1px;color:#8c2d19;text-transform:uppercase;">
+                    ACCÈS ILLIMITÉ
+                  </span>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Cartouche Invité(e) avec GRAND BLASON CINÉMA VINTAGE (82x82px) -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:14px;">
+              <tr>
+                <td width="86" valign="middle" style="padding-right:14px;">
+                  <table role="presentation" width="84" cellpadding="0" cellspacing="0" border="0" style="width:84px;height:84px;background-color:#fdf6e4;border:2px solid #261710;outline:2px solid #8c2d19;border-radius:12px;text-align:center;">
+                    <tr>
+                      <td align="center" style="padding-top:4px;font-size:10px;font-weight:900;letter-spacing:2px;color:#8c2d19;line-height:1;white-space:nowrap;">
+                        &#9733; &#9733; &#9733;
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="font-size:36px;line-height:1.05;padding:2px 0;">
+                        🎬
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:0 5px 5px 5px;">
+                        <div style="background-color:#8c2d19;color:#fdf6e4;font-size:9px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;border-radius:4px;padding:2px 0;line-height:1.1;white-space:nowrap;">
+                          CINÉMA
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+                <td valign="middle">
+                  <div style="display:inline-block;background-color:#e8d3ab;border:1px solid rgba(38,23,16,0.3);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#8c2d19;margin-bottom:4px;">
+                    🎟️ INVITÉ(E) D'HONNEUR
+                  </div>
+                  <div style="font-size:22px;font-weight:900;color:#261710;letter-spacing:-0.3px;line-height:1.15;">
+                    ${displayName}
+                  </div>
+                  <div style="font-size:12px;font-weight:600;color:#5c3e2e;margin-top:2px;">
+                    Salle Privée Askarr · Concierge IA Plex
+                  </div>
+                </td>
+              </tr>
+            </table>
+
+            <p style="font-size:13px;line-height:1.55;color:#382419;margin:0 0 12px 0;">
+              Ton compte <a href="mailto:${recipientEmail}" style="color:#8c2d19 !important;font-weight:800;text-decoration:underline;">${recipientEmail}</a> dispose d'un accès coupe-file à <strong>Askarr</strong>, le concierge IA relié aux serveurs Plex.
+            </p>
+
+            ${serversBadgeHtml}
+            ${customNoteHtml}
+
+            <!-- 3 puces courtes calibrées pour tenir sur 1 seule ligne chacune -->
+            <div style="background-color:#e8d3ab;border:1px solid rgba(38,23,16,0.38);border-radius:8px;padding:10px 12px;margin:0 0 16px 0;font-size:12px;line-height:1.75;color:#261710;">
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                <span style="color:#8c2d19;font-weight:900;">✓</span>&nbsp; <strong>Disponibilité immédiate</strong> sur tes serveurs Plex
+              </div>
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                <span style="color:#8c2d19;font-weight:900;">✓</span>&nbsp; <strong>Recherche intelligente</strong> (acteur, intrigue, festival)
+              </div>
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                <span style="color:#8c2d19;font-weight:900;">✓</span>&nbsp; <strong>Ajout automatique</strong> d'un film ou d'une série en 1 clic
+              </div>
+            </div>
+
+            <div>
+              <a href="${appUrl}" style="display:inline-block;background-color:#8c2d19;color:#fdf6e7 !important;font-weight:800;font-size:13px;text-decoration:none;padding:10px 20px;border-radius:8px;border:2px solid #261710;">
+                🎟️ Entrer dans la Salle Askarr &rarr;
+              </a>
+            </div>
+          </td>
+
+          <!-- Talon détachable perforé (Droite) avec Médaillon Projecteur -->
+          <td width="165" valign="middle" align="center" style="width:165px;background-color:#ead6ae;border-left:2px dashed #261710;padding:16px 12px;text-align:center;">
+            <div style="font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#6e503b;margin-bottom:10px;">
+              COUPE-FILE
+            </div>
+
+            <!-- Médaillon Projecteur Cinéma dans le talon -->
+            <div style="width:48px;height:48px;line-height:48px;margin:0 auto 12px auto;background-color:#fdf6e4;border:2px solid #261710;border-radius:999px;font-size:24px;text-align:center;">
+              📽️
+            </div>
+
+            <div style="border-top:2px solid #261710;border-bottom:2px solid #261710;padding:5px 4px;font-size:16px;font-weight:900;letter-spacing:2px;color:#261710;white-space:nowrap;">
+              ADMIT ONE
+            </div>
+            <div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#8c2d19;margin-top:5px;margin-bottom:16px;">
+              FAUTEUIL VIP
+            </div>
+
+            <div style="font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;font-weight:700;letter-spacing:1px;color:#261710;background-color:#f3e3c3;border:1px solid rgba(38,23,16,0.45);border-radius:4px;padding:4px 6px;margin-bottom:6px;white-space:nowrap;">
+              ${ticketSerial}
+            </div>
+            <div style="font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;letter-spacing:-1px;color:#261710;line-height:1;">
+              ||| || |||| | ||| |||| ||
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Pied explicatif compact et net -->
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(38,23,16,0.22);font-size:12px;line-height:1.6;color:#4a3223;">
+        <div>
+          <strong>1. Connexion :</strong> Ouvre <a href="${appUrl}" style="color:#8c2d19 !important;font-weight:800;text-decoration:underline;">${appUrl}</a> et connecte-toi via <strong>Google</strong> (${recipientEmail}) ou code PIN email.
+        </div>
+        <div>
+          <strong>2. Astuce iPhone :</strong> Dans Safari, touche <em>Partager &rarr; Sur l'écran d'accueil</em> pour l'avoir en plein écran.
+        </div>
+      </div>
     </div>
   </div>
 </body>
