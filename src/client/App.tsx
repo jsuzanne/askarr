@@ -283,8 +283,11 @@ export function App() {
   const [workspaceMode, setWorkspaceMode] = useState<'user' | 'admin'>('user');
   const [userTab, setUserTab] = useState<'chat' | 'requests'>('chat');
   const [adminTab, setAdminTab] = useState<'cloudflare' | 'health' | 'traces' | 'feedback' | 'settings'>('cloudflare');
-  // Toggle for Admin to see inline technical traces inside the User Chat & Media Cards
-  const [debugOverlay, setDebugOverlay] = useState<boolean>(true);
+  // Toggle for Admin to see inline technical traces inside the User Chat & Media Cards (OFF by default on desktop, disabled on smartphone)
+  const [debugOverlay, setDebugOverlay] = useState<boolean>(false);
+  const [isSmartphoneViewport, setIsSmartphoneViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 640 : false
+  );
   const [listLayoutByMsgId, setListLayoutByMsgId] = useState<Record<string, 'compact' | 'grid'>>({});
   const [listSortByMsgId, setListSortByMsgId] = useState<
     Record<string, { field: 'default' | 'title' | 'rating' | 'plex'; dir: 'asc' | 'desc' }>
@@ -1604,7 +1607,9 @@ export function App() {
   const isAdmin = session?.role === 'admin';
   const isViewerPreview = Boolean(isAdmin && workspaceMode === 'user' && viewerUserMode);
   const activeViewerSim = getActiveViewerSimulation();
-  const showInlineDebug = Boolean(isAdmin && debugOverlay && !isViewerPreview);
+  const showInlineDebug = Boolean(
+    isAdmin && debugOverlay && !isViewerPreview && !isSmartphoneViewport
+  );
 
   useEffect(() => {
     const handleFirstGesture = () => {
@@ -1615,11 +1620,16 @@ export function App() {
         setShowAudioMenu(false);
       }
     };
+    const handleResize = () => {
+      setIsSmartphoneViewport(window.innerWidth < 640);
+    };
     window.addEventListener('pointerdown', handleFirstGesture, { once: true, passive: true });
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleResize, { passive: true });
     return () => {
       window.removeEventListener('pointerdown', handleFirstGesture);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleResize);
     };
   }, []);
 
@@ -1978,26 +1988,6 @@ export function App() {
                             <span className="truncate">{t('regie_admin')}</span>
                           </button>
                         </div>
-
-                        {workspaceMode === 'user' && !isViewerPreview && (
-                          <button
-                            type="button"
-                            onClick={() => setDebugOverlay((v) => !v)}
-                            className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border flex items-center justify-between transition-colors cursor-pointer ${
-                              debugOverlay
-                                ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
-                                : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
-                            }`}
-                          >
-                            <span className="flex items-center gap-2">
-                              <Bug className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Traces techniques sous les cartes</span>
-                            </span>
-                            <span className="font-mono font-bold px-2 py-0.5 rounded bg-black/40">
-                              {debugOverlay ? 'ON' : 'OFF'}
-                            </span>
-                          </button>
-                        )}
                       </div>
                     )}
 
