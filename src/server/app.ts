@@ -1539,11 +1539,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     try {
       const result = await smtpInvite.sendInvitationEmail({
         recipientEmail: targetEmail,
-        recipientName: 'Administrateur Askarr (Test VIP)',
-        plexServers: config.plexServers.map((s) => s.name),
-        fallbackOrigin: origin,
-        customMessage:
-          'Ceci est un billet de test envoyé depuis Askarr pour vérifier ta configuration Google App Password (SMTPS port 465).'
+        recipientName: targetEmail.split('@')[0],
+        fallbackOrigin: origin
       });
       return {
         ok: true,
