@@ -447,8 +447,16 @@ export const MediaCandidateCard: React.FC<Props> = ({
       <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400/50 to-transparent opacity-75 group-hover:opacity-100 transition-opacity" />
 
       <div>
-        {/* Partie haute : Jaquette 2:3 entière non tronquée + Identité complète sans troncature */}
-        <div className="flex flex-row items-start gap-3.5 sm:gap-4">
+        {/* Grille Responsive :
+            - Mobile (< sm) : Ligne 1 = Jaquette 2:3 + Identité côte à côte ; Ligne 2 (col-span-2 pleine largeur sous la jaquette) = Statut LED + Dates + Saisons
+            - Desktop (sm+) : Colonne gauche (sm:row-span-2) = Jaquette 2:3 grand format ; Colonne droite (sm:col-start-2) = Identité + Statut LED + Dates + Synopsis inline */}
+        <div
+          className={`grid items-start gap-x-3.5 sm:gap-x-4 gap-y-3 ${
+            embeddedInChat
+              ? 'grid-cols-[6rem_minmax(0,1fr)] sm:grid-cols-[8.5rem_minmax(0,1fr)] lg:grid-cols-[9.5rem_minmax(0,1fr)]'
+              : 'grid-cols-[7rem_minmax(0,1fr)] sm:grid-cols-[9.5rem_minmax(0,1fr)] lg:grid-cols-[10.5rem_minmax(0,1fr)]'
+          }`}
+        >
           {/* Jaquette 2:3 entière (object-contain, aucun badge par-dessus pour ne jamais masquer l'affiche) */}
           <button
             type="button"
@@ -458,11 +466,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 ? `View full details & poster for "${identity.titleFr}"`
                 : `Voir la fiche complète et l'affiche entière de « ${identity.titleFr} »`
             }
-            className={`relative shrink-0 aspect-[2/3] overflow-hidden rounded-xl bg-stone-950 border border-amber-500/35 shadow-[0_10px_25px_rgba(0,0,0,0.85)] group/poster cursor-pointer text-left ${
-              embeddedInChat
-                ? 'w-24 sm:w-28 lg:w-32'
-                : 'w-28 sm:w-32 lg:w-36'
-            }`}
+            className="col-span-1 row-span-1 sm:row-span-2 relative w-full aspect-[2/3] overflow-hidden rounded-xl bg-stone-950 border border-amber-500/35 shadow-[0_10px_25px_rgba(0,0,0,0.85)] group/poster cursor-pointer text-left"
           >
             {identity.posterUrl ? (
               <img
@@ -486,7 +490,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
           </button>
 
           {/* Identité du film/série : Zéro troncature, retour à la ligne naturel */}
-          <div className="flex-1 min-w-0">
+          <div className="col-start-2 row-start-1 min-w-0">
             {/* Ligne 1 : Titre complet + Année + Note avec source réelle */}
             <div className="flex items-start justify-between gap-2">
               <h3 className="text-base sm:text-lg font-bold text-white leading-snug tracking-tight min-w-0 break-words">
@@ -571,182 +575,199 @@ export const MediaCandidateCard: React.FC<Props> = ({
               )}
             </div>
           </div>
-        </div>
 
-        {/* Partie basse Pleine Largeur (100% de la carte) : Statut LED Plex complet (zéro troncature) + Dates de sortie */}
-        <div className="mt-3 space-y-2">
-          {ledState === 'available' ? (
-            <div
-              onClick={() => {
-                if (primaryPlexHref) {
-                  window.open(primaryPlexHref, isMobileDevice ? '_self' : '_blank', 'noopener,noreferrer');
-                }
-              }}
-              title={statusLabelText}
-              className={`rounded-xl border border-emerald-500/45 bg-emerald-500/15 px-3 py-2 shadow-[0_0_15px_rgba(16,185,129,0.12)] transition ${
-                primaryPlexHref ? ' hover:brightness-110 cursor-pointer' : ''
-              }`}
-            >
-              <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-emerald-100 leading-snug">
-                <span className="mt-1 h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
-                <span className="break-words">{statusPrimaryTitle}</span>
-              </div>
-              <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-emerald-200/90 leading-snug">
-                <Clock className="mt-0.5 h-3 w-3 text-emerald-300 shrink-0" />
-                <span className="break-words">{statusSecondarySubtitle}</span>
-              </div>
-            </div>
-          ) : ledState === 'waitlist' ? (
-            <div
-              title={statusLabelText}
-              className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
-            >
-              <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-amber-100 leading-snug">
-                <span className="mt-1 h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
-                <span className="break-words">{statusPrimaryTitle}</span>
-              </div>
-              <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-amber-200/90 leading-snug">
-                {isDownloadingNow ? (
-                  <Download className="mt-0.5 h-3 w-3 text-amber-300 animate-bounce shrink-0" />
-                ) : (
-                  <Clock className="mt-0.5 h-3 w-3 text-amber-300 shrink-0" />
-                )}
-                <span className="break-words">{statusSecondarySubtitle}</span>
-              </div>
-            </div>
-          ) : (
-            <div
-              title={statusLabelText}
-              className="rounded-xl border border-stone-600/60 bg-stone-900/90 px-3 py-2"
-            >
-              <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-stone-200 leading-snug">
-                <span className="mt-1 h-2.5 w-2.5 rounded-full bg-rose-500/85 shadow-[0_0_8px_rgba(244,63,94,0.6)] shrink-0" />
-                <span className="break-words">{statusPrimaryTitle}</span>
-              </div>
-              <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-stone-300 leading-snug">
-                <Clock className="mt-0.5 h-3 w-3 text-stone-400 shrink-0" />
-                <span className="break-words">{statusSecondarySubtitle}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Dates de Sortie Cinéma & VOD/DVD en pleine largeur (flex-wrap, zéro troncature) */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2.5 py-1 text-[11px] text-stone-300">
-              <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
-              <span>
-                {t('theatrical_release', {
-                  date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
-                })}
-              </span>
-            </span>
-
-            {vodDateFr && (
-              <span
-                className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2.5 py-1 text-[11px] ${
-                  isVodFuture && ledState !== 'available'
-                    ? 'border-amber-500/35 text-amber-200 font-medium'
-                    : 'border-stone-700/80 text-stone-300'
+          {/* Partie Statut LED + Dates + Synopsis Desktop + Saisons :
+              - Sur Mobile (< sm) : col-span-2 (100% pleine largeur sous la jaquette)
+              - Sur Desktop (sm+) : sm:col-span-1 sm:col-start-2 (dans la colonne de droite à côté de la jaquette) */}
+          <div className="col-span-2 sm:col-span-1 sm:col-start-2 row-start-2 min-w-0 space-y-2">
+            {ledState === 'available' ? (
+              <div
+                onClick={() => {
+                  if (primaryPlexHref) {
+                    window.open(primaryPlexHref, isMobileDevice ? '_self' : '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                title={statusLabelText}
+                className={`rounded-xl border border-emerald-500/45 bg-emerald-500/15 px-3 py-2 shadow-[0_0_15px_rgba(16,185,129,0.12)] transition ${
+                  primaryPlexHref ? ' hover:brightness-110 cursor-pointer' : ''
                 }`}
               >
-                <Disc
-                  className={`h-3 w-3 shrink-0 ${
-                    isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
-                  }`}
-                />
+                <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-emerald-100 leading-snug">
+                  <span className="mt-1 h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
+                  <span className="break-words">{statusPrimaryTitle}</span>
+                </div>
+                <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-emerald-200/90 leading-snug">
+                  <Clock className="mt-0.5 h-3 w-3 text-emerald-300 shrink-0" />
+                  <span className="break-words">{statusSecondarySubtitle}</span>
+                </div>
+              </div>
+            ) : ledState === 'waitlist' ? (
+              <div
+                title={statusLabelText}
+                className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
+              >
+                <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-amber-100 leading-snug">
+                  <span className="mt-1 h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
+                  <span className="break-words">{statusPrimaryTitle}</span>
+                </div>
+                <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-amber-200/90 leading-snug">
+                  {isDownloadingNow ? (
+                    <Download className="mt-0.5 h-3 w-3 text-amber-300 animate-bounce shrink-0" />
+                  ) : (
+                    <Clock className="mt-0.5 h-3 w-3 text-amber-300 shrink-0" />
+                  )}
+                  <span className="break-words">{statusSecondarySubtitle}</span>
+                </div>
+              </div>
+            ) : (
+              <div
+                title={statusLabelText}
+                className="rounded-xl border border-stone-600/60 bg-stone-900/90 px-3 py-2"
+              >
+                <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-stone-200 leading-snug">
+                  <span className="mt-1 h-2.5 w-2.5 rounded-full bg-rose-500/85 shadow-[0_0_8px_rgba(244,63,94,0.6)] shrink-0" />
+                  <span className="break-words">{statusPrimaryTitle}</span>
+                </div>
+                <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-stone-300 leading-snug">
+                  <Clock className="mt-0.5 h-3 w-3 text-stone-400 shrink-0" />
+                  <span className="break-words">{statusSecondarySubtitle}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Dates de Sortie Cinéma & VOD/DVD (flex-wrap, zéro troncature) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2.5 py-1 text-[11px] text-stone-300">
+                <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
                 <span>
-                  {t('vod_release', {
-                    date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                  {t('theatrical_release', {
+                    date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
                   })}
                 </span>
               </span>
+
+              {vodDateFr && (
+                <span
+                  className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2.5 py-1 text-[11px] ${
+                    isVodFuture && ledState !== 'available'
+                      ? 'border-amber-500/35 text-amber-200 font-medium'
+                      : 'border-stone-700/80 text-stone-300'
+                  }`}
+                >
+                  <Disc
+                    className={`h-3 w-3 shrink-0 ${
+                      isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
+                    }`}
+                  />
+                  <span>
+                    {t('vod_release', {
+                      date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                    })}
+                  </span>
+                </span>
+              )}
+            </div>
+
+            {/* Synopsis FR inline sur Desktop (sm:block) ; sur Smartphone (< sm), accessible via le popup "ℹ️ Détails & Synopsis" */}
+            {identity.overviewFr && (
+              <div className="hidden sm:block pt-0.5">
+                <p
+                  className={`text-xs sm:text-[13px] leading-relaxed text-stone-200/95 ${
+                    compactSynopsis && !synopsisExpanded ? 'line-clamp-2' : ''
+                  }`}
+                >
+                  {identity.overviewFr}
+                </p>
+                {compactSynopsis && identity.overviewFr.length > 135 && (
+                  <button
+                    type="button"
+                    onClick={() => setSynopsisExpanded((v) => !v)}
+                    className="mt-0.5 text-[11px] font-semibold text-amber-300 hover:text-amber-200 cursor-pointer"
+                  >
+                    {synopsisExpanded ? '− Réduire le synopsis' : '+ Lire tout le synopsis'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Alerte uniquement si l'utilisateur n'a PAS accès au serveur où se trouve le média */}
+            {catalogPresence.accessibleToCurrentUser === false && (
+              <div className="inline-flex items-center gap-2 rounded-lg bg-amber-950/70 border border-amber-500/50 px-3 py-1.5 text-xs text-amber-200">
+                <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+                <span>
+                  Présent sur <strong>{catalogPresence.availableServers?.join(' & ')}</strong>, mais ton compte Plex est rattaché à{' '}
+                  <strong>{catalogPresence.userAllowedServers?.join(' & ') || 'un autre serveur'}</strong>.
+                </span>
+              </div>
+            )}
+
+            {/* Pilules compactes des saisons pour les Séries TV */}
+            {episodeCoverage && episodeCoverage.seasons.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300/80 mr-1">
+                  Saisons :
+                </span>
+                {(showAllSeasons ? episodeCoverage.seasons : episodeCoverage.seasons.slice(0, 6)).map((s) => {
+                  const isRequestable = actionability.requestableSeasons.includes(s.seasonNumber);
+                  const isSelected = selectedSeasons.includes(s.seasonNumber);
+                  const presentEpCount = Math.max(s.plexEpisodeCount, s.sonarrEpisodeFileCount);
+                  const missingCount = Math.max(0, s.totalEpisodeCount - presentEpCount);
+                  return (
+                    <button
+                      type="button"
+                      disabled={!isRequestable}
+                      onClick={() => isRequestable && toggleSeason(s.seasonNumber)}
+                      key={s.seasonNumber}
+                      title={
+                        s.state === 'partially_available'
+                          ? `Saison ${s.seasonNumber} incomplète : ${presentEpCount}/${s.totalEpisodeCount} épisodes sur Plex (${missingCount} manquant${missingCount > 1 ? 's' : ''}). Cliquer pour sélectionner.`
+                          : undefined
+                      }
+                      className={`rounded-lg border px-2.5 py-1 text-xs inline-flex items-center gap-1.5 transition ${
+                        s.state === 'available_on_plex'
+                          ? 'bg-emerald-950/35 border-emerald-700/50 text-emerald-200 cursor-default'
+                          : s.state === 'requested_or_monitored'
+                            ? 'bg-amber-950/35 border-amber-700/50 text-amber-200 cursor-default'
+                            : isSelected
+                              ? 'bg-red-900/60 border-amber-400 text-white cursor-pointer shadow-[0_0_10px_rgba(245,158,11,0.2)]'
+                              : 'bg-stone-900/90 border-stone-800 text-stone-400 cursor-pointer hover:border-amber-500/40'
+                      }`}
+                    >
+                      {isRequestable && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          readOnly
+                          className="h-3 w-3 accent-amber-400 rounded pointer-events-none"
+                        />
+                      )}
+                      <span className="font-semibold">S{s.seasonNumber}</span>
+                      <span className="opacity-90">
+                        {s.state === 'available_on_plex'
+                          ? `✓ ${presentEpCount} ép.`
+                          : s.state === 'partially_available'
+                            ? `${presentEpCount}/${s.totalEpisodeCount} ép. (${missingCount} manq.)`
+                            : s.state === 'requested_or_monitored'
+                              ? 'En attente'
+                              : 'À demander'}
+                      </span>
+                    </button>
+                  );
+                })}
+                {episodeCoverage.seasons.length > 6 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllSeasons(!showAllSeasons)}
+                    className="inline-flex items-center gap-0.5 text-xs text-amber-400 hover:underline cursor-pointer ml-1"
+                  >
+                    <span>{showAllSeasons ? 'Réduire' : `+${episodeCoverage.seasons.length - 6} saisons`}</span>
+                    {showAllSeasons ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
-
-        {/* Synopsis FR (affiché en entier si déplié) */}
-        {identity.overviewFr && synopsisExpanded && (
-          <p className="mt-2.5 text-xs sm:text-[13px] leading-relaxed text-stone-200/95">
-            {identity.overviewFr}
-          </p>
-        )}
-
-        {/* Alerte uniquement si l'utilisateur n'a PAS accès au serveur où se trouve le média */}
-        {catalogPresence.accessibleToCurrentUser === false && (
-          <div className="mt-2.5 inline-flex items-center gap-2 rounded-lg bg-amber-950/70 border border-amber-500/50 px-3 py-1.5 text-xs text-amber-200">
-            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
-            <span>
-              Présent sur <strong>{catalogPresence.availableServers?.join(' & ')}</strong>, mais ton compte Plex est rattaché à{' '}
-              <strong>{catalogPresence.userAllowedServers?.join(' & ') || 'un autre serveur'}</strong>.
-            </span>
-          </div>
-        )}
-
-        {/* Pilules compactes des saisons pour les Séries TV */}
-        {episodeCoverage && episodeCoverage.seasons.length > 0 && (
-          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300/80 mr-1">
-              Saisons :
-            </span>
-            {(showAllSeasons ? episodeCoverage.seasons : episodeCoverage.seasons.slice(0, 6)).map((s) => {
-              const isRequestable = actionability.requestableSeasons.includes(s.seasonNumber);
-              const isSelected = selectedSeasons.includes(s.seasonNumber);
-              const presentEpCount = Math.max(s.plexEpisodeCount, s.sonarrEpisodeFileCount);
-              const missingCount = Math.max(0, s.totalEpisodeCount - presentEpCount);
-              return (
-                <button
-                  type="button"
-                  disabled={!isRequestable}
-                  onClick={() => isRequestable && toggleSeason(s.seasonNumber)}
-                  key={s.seasonNumber}
-                  title={
-                    s.state === 'partially_available'
-                      ? `Saison ${s.seasonNumber} incomplète : ${presentEpCount}/${s.totalEpisodeCount} épisodes sur Plex (${missingCount} manquant${missingCount > 1 ? 's' : ''}). Cliquer pour sélectionner.`
-                      : undefined
-                  }
-                  className={`rounded-lg border px-2.5 py-1 text-xs inline-flex items-center gap-1.5 transition ${
-                    s.state === 'available_on_plex'
-                      ? 'bg-emerald-950/35 border-emerald-700/50 text-emerald-200 cursor-default'
-                      : s.state === 'requested_or_monitored'
-                        ? 'bg-amber-950/35 border-amber-700/50 text-amber-200 cursor-default'
-                        : isSelected
-                          ? 'bg-red-900/60 border-amber-400 text-white cursor-pointer shadow-[0_0_10px_rgba(245,158,11,0.2)]'
-                          : 'bg-stone-900/90 border-stone-800 text-stone-400 cursor-pointer hover:border-amber-500/40'
-                  }`}
-                >
-                  {isRequestable && (
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      readOnly
-                      className="h-3 w-3 accent-amber-400 rounded pointer-events-none"
-                    />
-                  )}
-                  <span className="font-semibold">S{s.seasonNumber}</span>
-                  <span className="opacity-90">
-                    {s.state === 'available_on_plex'
-                      ? `✓ ${presentEpCount} ép.`
-                      : s.state === 'partially_available'
-                        ? `${presentEpCount}/${s.totalEpisodeCount} ép. (${missingCount} manq.)`
-                        : s.state === 'requested_or_monitored'
-                          ? 'En attente'
-                          : 'À demander'}
-                  </span>
-                </button>
-              );
-            })}
-            {episodeCoverage.seasons.length > 6 && (
-              <button
-                type="button"
-                onClick={() => setShowAllSeasons(!showAllSeasons)}
-                className="inline-flex items-center gap-0.5 text-xs text-amber-400 hover:underline cursor-pointer ml-1"
-              >
-                <span>{showAllSeasons ? 'Réduire' : `+${episodeCoverage.seasons.length - 6} saisons`}</span>
-                {showAllSeasons ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Barre d'Actions Unifiée : Ouvrir sur Plex + Lancer sur Apple TV + Compléter/Demander + Similaires */}

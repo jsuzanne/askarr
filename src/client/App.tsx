@@ -1689,9 +1689,62 @@ export function App() {
             </div>
           )}
 
-          {/* Droite : Pour User standard = uniquement le bouton ⚙️ Réglages (& Ambiance) • Pour Admin = accès rapide Régie + ⚙️ Réglages */}
+          {/* Droite :
+              - Sur Smartphone (< sm) : User standard = uniquement le bouton ⚙️ Réglages • Admin = bouton Régie + ⚙️ Réglages
+              - Sur Desktop (sm+) : Boutons directs Langue, Thème Clair/Sombre, Ambiance 35mm, Traces ON/OFF et Profil */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Accès rapide Régie / Salle Ciné sur mobile pour l'Admin uniquement */}
+            {/* Desktop (sm+) : Bascule Langue FR / EN */}
+            <button
+              type="button"
+              onClick={toggleLang}
+              className="hidden sm:inline-flex px-2.5 py-1.5 rounded-xl text-xs font-bold border whitespace-nowrap items-center gap-1 bg-stone-900/95 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-800 transition-all cursor-pointer"
+              title={lang === 'fr' ? t('switch_to_en') : t('switch_to_fr')}
+            >
+              <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
+            </button>
+
+            {/* Desktop (sm+) : Bascule Thème Clair / Sombre */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`hidden sm:inline-flex px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap items-center gap-1.5 transition-all cursor-pointer ${
+                theme === 'light'
+                  ? 'bg-amber-500/20 text-amber-950 border-amber-600/50 shadow-sm'
+                  : 'bg-stone-900/95 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-800'
+              }`}
+              title={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
+            >
+              {theme === 'dark' ? (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <span className="hidden md:inline">{t('theme_light')}</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <span className="hidden md:inline">{t('theme_dark')}</span>
+                </>
+              )}
+            </button>
+
+            {/* Desktop (sm+) : Bouton Traces ON/OFF pour l'Admin */}
+            {isAdmin && workspaceMode === 'user' && !isViewerPreview && (
+              <button
+                type="button"
+                onClick={() => setDebugOverlay((v) => !v)}
+                className={`hidden sm:inline-flex px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap items-center gap-1.5 transition-colors cursor-pointer ${
+                  debugOverlay
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-400/40'
+                    : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
+                }`}
+                title="Afficher / masquer les traces d'appels API directement sous chaque message et carte film"
+              >
+                <Bug className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden md:inline">{debugOverlay ? t('traces_on') : t('traces_off')}</span>
+              </button>
+            )}
+
+            {/* Accès rapide Régie / Salle Ciné sur mobile/tablette (< lg) pour l'Admin uniquement */}
             {isAdmin && !(isViewerPreview && viewerImmersiveHeader) && (
               <button
                 type="button"
@@ -1726,7 +1779,7 @@ export function App() {
               </button>
             )}
 
-            {/* Bouton Unique ⚙️ Réglages & Ambiance Sonore (ouvre le Bottom Sheet sur iPhone / Modal sur Desktop) */}
+            {/* Bouton ⚙️ Réglages sur iPhone (< sm) / 🔊 Ambiance Sonore sur Desktop (sm+) */}
             <div className="relative" ref={audioMenuRef}>
               <button
                 type="button"
@@ -1739,22 +1792,34 @@ export function App() {
                 aria-label="Réglages et ambiance sonore"
                 title="Réglages : Ambiance sonore 35mm, Thème Clair/Sombre, Langue FR/EN & Profil"
               >
-                <Settings className="w-4 h-4 text-amber-300 shrink-0" />
-                <span className="hidden sm:inline">{lang === 'en' ? 'Settings' : 'Réglages'}</span>
+                {/* Icône ⚙️ sur Smartphone (< sm) */}
+                <Settings className="w-4 h-4 text-amber-300 shrink-0 sm:hidden" />
                 {audioMode !== 'off' && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-400/20 text-amber-200 border border-amber-400/40 text-[10px] font-bold">
+                  <span className="sm:hidden inline-flex items-center px-1 py-0.5 rounded bg-amber-400/25 text-amber-200">
                     <Volume2 className="w-3 h-3 text-amber-300 animate-pulse shrink-0" />
-                    <span className="hidden md:inline">
-                      {audioMode === 'sfx_only'
+                  </span>
+                )}
+
+                {/* Libellé complet 🔊 Ambiance sur Desktop (sm+) */}
+                <span className="hidden sm:inline-flex items-center gap-1.5">
+                  {audioMode === 'off' ? (
+                    <VolumeX className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                  ) : (
+                    <Volume2 className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
+                  )}
+                  <span className="hidden xl:inline text-stone-300 font-normal">{t('ambiance')}</span>
+                  <span>
+                    {audioMode === 'off'
+                      ? t('audio_off')
+                      : audioMode === 'sfx_only'
                         ? t('audio_sfx_only')
                         : audioMode === 'projector'
                           ? t('audio_projector')
                           : audioMode === 'fip_jazz'
                             ? t('audio_fip_jazz')
                             : t('audio_grand_cine')}
-                    </span>
                   </span>
-                )}
+                </span>
               </button>
 
               {showAudioMenu && (
@@ -2132,7 +2197,10 @@ export function App() {
                     }`}
                   >
                     <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
-                    <span>{t('grand_ecran_cine_club')}</span>
+                    <span className="sm:hidden">{t('grand_ecran_cine_club')}</span>
+                    <span className="hidden sm:inline">
+                      {lang === 'en' ? 'Big Screen & Film Club' : 'Grand Écran & Ciné-Club'}
+                    </span>
                   </button>
 
                   <button
@@ -2145,7 +2213,10 @@ export function App() {
                     }`}
                   >
                     <Ticket className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
-                    <span>{t('mes_programmations')}</span>
+                    <span className="sm:hidden">{t('mes_programmations')}</span>
+                    <span className="hidden sm:inline">
+                      {lang === 'en' ? 'My Requests & Waiting List' : "Mes Programmations & Liste d'attente"}
+                    </span>
                     {myRequests && myRequests.length > 0 && (
                       <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-black/35 text-amber-200">
                         {myRequests.length}
@@ -2633,7 +2704,34 @@ export function App() {
                       )}
 
                       {msg.role === 'assistant' ? (
-                        <RichMarkdownText text={msg.content} />
+                        isWelcome && msg.id === 'welcome' ? (
+                          <>
+                            {/* Sur Smartphone (< sm) : Message d'accueil condensé en 2 lignes */}
+                            <div className="sm:hidden">
+                              <RichMarkdownText text={msg.content} />
+                            </div>
+                            {/* Sur Desktop (sm+) : Message d'accueil cinéma complet avec les 3 puces */}
+                            <div className="hidden sm:block">
+                              <RichMarkdownText
+                                text={
+                                  lang === 'en'
+                                    ? `**${t('welcome_title')}** 🍿\n` +
+                                      `${t('welcome_subtitle')}\n\n` +
+                                      `• **7th Art & Awards**: ${t('welcome_bullet_1')}\n` +
+                                      `• **Multi-Server Plex**: ${t('welcome_bullet_2')}\n` +
+                                      `• **2-Click Programming**: ${t('welcome_bullet_3')}`
+                                    : `**${t('welcome_title')}** 🍿\n` +
+                                      `${t('welcome_subtitle')}\n\n` +
+                                      `• **7e Art & Palmarès** : ${t('welcome_bullet_1')}\n` +
+                                      `• **Catalogue Plex Multi-Salles** : ${t('welcome_bullet_2')}\n` +
+                                      `• **Programmation en 2 clics** : ${t('welcome_bullet_3')}`
+                                }
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <RichMarkdownText text={msg.content} />
+                        )
                       ) : (
                         <div className="whitespace-pre-line">{msg.content}</div>
                       )}
@@ -3022,13 +3120,21 @@ export function App() {
                       {
                         id: 'waitlist',
                         label: `🟠 En attente (${
-                          myRequests.filter((r) => !r.evidence.plex.present).length
+                          myRequests.filter(
+                            (r) =>
+                              r.evidence.catalogPresence.state !== 'available_now' &&
+                              r.evidence.catalogPresence.state !== 'partially_available'
+                          ).length
                         })`
                       },
                       {
                         id: 'available',
                         label: `🟢 Disponibles (${
-                          myRequests.filter((r) => r.evidence.plex.present).length
+                          myRequests.filter(
+                            (r) =>
+                              r.evidence.catalogPresence.state === 'available_now' ||
+                              r.evidence.catalogPresence.state === 'partially_available'
+                          ).length
                         })`
                       }
                     ] as const
@@ -3057,8 +3163,11 @@ export function App() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
                   {myRequests
                     .filter((req) => {
-                      if (requestsFilter === 'waitlist') return !req.evidence.plex.present;
-                      if (requestsFilter === 'available') return req.evidence.plex.present;
+                      const isOnPlex =
+                        req.evidence.catalogPresence.state === 'available_now' ||
+                        req.evidence.catalogPresence.state === 'partially_available';
+                      if (requestsFilter === 'waitlist') return !isOnPlex;
+                      if (requestsFilter === 'available') return isOnPlex;
                       return true;
                     })
                     .map((req) => (
