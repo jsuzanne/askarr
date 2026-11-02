@@ -107,6 +107,14 @@ export interface MediaEvidence {
     estimatedAvailabilityReason: 'digital_release' | 'physical_release' | 'cinema_release' | 'estimated_from_cinema' | 'next_airing' | null;
     queueProgressPercent: number | null;
     queueTimeleft: string | null;
+    lastSearchAt?: string | null;
+    lastSearchSource?: 'initial_request' | 'manual_retrigger' | 'radarr_grab' | null;
+    lastSearchBy?: string | null;
+    manualSearchCount?: number;
+    lastGrabbedAt?: string | null;
+    lastGrabbedRelease?: string | null;
+    lastFailedAt?: string | null;
+    canRetriggerSearch?: boolean;
   };
 
   /** 5. Couverture par saison et épisode (Séries TV) */
@@ -212,7 +220,7 @@ export interface UserSessionInfo {
 
 export interface PreparedActionDTO {
   actionId: string;
-  actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV' | 'SONARR_EPISODE_SEARCH';
+  actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV' | 'SONARR_EPISODE_SEARCH' | 'RADARR_MOVIE_SEARCH';
   mediaType: MediaType;
   tmdbId: number;
   title: string;

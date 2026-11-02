@@ -22,6 +22,7 @@ import {
   validateAndNormalizeCriteria,
   type NormalizedDiscoveryCriteria
 } from '../connectors/mdblist-criteria.schema.js';
+import type { AskarrDatabase } from '../db/database.js';
 
 export type WatchHistoryVerificationStatus = 'verified' | 'unavailable' | 'not_requested';
 
@@ -68,7 +69,8 @@ export class MediaAggregatorService {
     private readonly sonarr: SonarrConnector,
     private readonly prowlarr: ProwlarrConnector,
     private mdblist?: MdblistConnector,
-    private recentYearsWindow: number = 3
+    private recentYearsWindow: number = 3,
+    private readonly db?: AskarrDatabase
   ) {}
 
   public setMdblistConnector(mdblist: MdblistConnector, recentYearsWindow?: number): void {
@@ -912,6 +914,72 @@ export class MediaAggregatorService {
       reqState = 'approved_processing';
     }
 
+    // 8b. Historique du workflow & éligibilité à une relance manuelle Radarr (uniquement films en attente)
+    let lastSearchAt: string | null = null;
+    let lastSearchSource: 'initial_request' | 'manual_retrigger' | 'radarr_grab' | null = null;
+    let lastSearchBy: string | null = null;
+    let manualSearchCount = 0;
+    let lastGrabbedAt: string | null = null;
+    let lastGrabbedRelease: string | null = null;
+    let lastFailedAt: string | null = null;
+    let canRetriggerSearch = false;
+
+    const workflowSummary =
+      this.db && typeof this.db.getMediaWorkflowSummary === 'function'
+        ? this.db.getMediaWorkflowSummary(osDetail.mediaType, osDetail.tmdbId)
+        : null;
+
+    const isFollowedByCurrentUser = Boolean(
+      params.currentUserEmail &&
+        workflowSummary?.followerEmails.includes(params.currentUserEmail.toLowerCase())
+    );
+    const effectiveRequestedByCurrentUser = requestedByCurrentUser || isFollowedByCurrentUser;
+
+    if (osDetail.mediaType === 'movie' && radarrMovie && !radarrMovie.hasFile && catalogState !== 'available_now') {
+      const initialSearchIso = overseerrRequestedAt || arrAddedAt || null;
+      if (initialSearchIso) {
+        lastSearchAt = initialSearchIso;
+        lastSearchSource = 'initial_request';
+        lastSearchBy = effectiveRequestedBy || (sourceOrigin === 'auto_list' ? 'Liste auto' : null);
+      }
+
+      if (typeof this.radarr.getMovieHistorySummary === 'function') {
+        const hist = await this.radarr.getMovieHistorySummary(radarrMovie.id);
+        lastGrabbedAt = hist.lastGrabbedAt;
+        lastGrabbedRelease = hist.lastGrabbedRelease;
+        lastFailedAt = hist.lastFailedAt;
+        if (hist.lastGrabbedAt && (!lastSearchAt || hist.lastGrabbedAt > lastSearchAt)) {
+          lastSearchAt = hist.lastGrabbedAt;
+          lastSearchSource = 'radarr_grab';
+        }
+      }
+
+      if (workflowSummary) {
+        manualSearchCount = workflowSummary.manualSearchCount;
+        if (
+          workflowSummary.lastManualSearchAt &&
+          (!lastSearchAt || workflowSummary.lastManualSearchAt >= lastSearchAt)
+        ) {
+          lastSearchAt = workflowSummary.lastManualSearchAt;
+          lastSearchSource = 'manual_retrigger';
+          lastSearchBy = workflowSummary.lastManualSearchBy;
+        }
+      }
+
+      const isReleasedAndWaiting =
+        acqState === 'monitored_searching' ||
+        acqState === 'unmonitored_no_file' ||
+        acqState === 'download_warning_or_error';
+
+      const recentCooldownMs = 10 * 60 * 1000;
+      const recentlyRetriggered = Boolean(
+        workflowSummary?.lastManualSearchAt &&
+          Date.now() - new Date(workflowSummary.lastManualSearchAt).getTime() < recentCooldownMs
+      );
+
+      canRetriggerSearch = isReleasedAndWaiting && !recentlyRetriggered;
+    }
+
     const actionability = this.computeUserFriendlyActionability({
       mediaType: osDetail.mediaType,
       catalogState,
@@ -987,7 +1055,7 @@ export class MediaAggregatorService {
         state: reqState,
         requestId: effectiveRequestId,
         requestedAt: effectiveRequestedAt,
-        requestedByCurrentUser,
+        requestedByCurrentUser: effectiveRequestedByCurrentUser,
         requestedByDisplayName: effectiveRequestedBy,
         sourceOrigin
       },
@@ -1000,7 +1068,15 @@ export class MediaAggregatorService {
         estimatedAvailabilityDate,
         estimatedAvailabilityReason,
         queueProgressPercent,
-        queueTimeleft
+        queueTimeleft,
+        lastSearchAt,
+        lastSearchSource,
+        lastSearchBy,
+        manualSearchCount,
+        lastGrabbedAt,
+        lastGrabbedRelease,
+        lastFailedAt,
+        canRetriggerSearch
       },
       episodeCoverage,
       indexerSearch,
@@ -1661,12 +1737,13 @@ export class MediaAggregatorService {
     onlyCurrentUser?: boolean;
     limit?: number;
   }): Promise<MediaEvidence[]> {
-    const limit = Math.min(8, Math.max(1, params.limit || 5));
+    const limit = Math.min(25, Math.max(1, params.limit || 8));
+    const takeCount = Math.max(limit + 8, 20);
 
     const [overseerrRes, radarrWaitingRes] = await Promise.allSettled([
-      this.overseerr.getRequests(params.onlyCurrentUser ? params.currentUserOverseerrId : undefined, 10),
+      this.overseerr.getRequests(params.onlyCurrentUser ? params.currentUserOverseerrId : undefined, takeCount),
       !params.onlyCurrentUser && typeof this.radarr.getRecentWaitingMovies === 'function'
-        ? this.radarr.getRecentWaitingMovies(10)
+        ? this.radarr.getRecentWaitingMovies(takeCount)
         : Promise.resolve({ movies: [] as RadarrMovieStatus[], latencyMs: 0 })
     ]);
 
@@ -1686,7 +1763,7 @@ export class MediaAggregatorService {
       }
     >();
 
-    if (radarrWaitingRes.status === 'fulfilled') {
+    if (!params.onlyCurrentUser && radarrWaitingRes.status === 'fulfilled') {
       for (const m of radarrWaitingRes.value.movies) {
         if (!m.tmdbId || m.tmdbId <= 0) continue;
         const key = `movie:${m.tmdbId}`;
@@ -1702,6 +1779,20 @@ export class MediaAggregatorService {
     if (overseerrRes.status === 'fulfilled') {
       for (const r of overseerrRes.value) {
         if (!r.tmdbId || r.tmdbId <= 0) continue;
+        if (params.onlyCurrentUser) {
+          const matchesId =
+            params.currentUserOverseerrId !== null &&
+            params.currentUserOverseerrId !== undefined &&
+            r.requestedByOverseerrId === params.currentUserOverseerrId;
+          const matchesEmail = Boolean(
+            params.currentUserEmail &&
+              r.requestedByEmail &&
+              r.requestedByEmail.toLowerCase() === params.currentUserEmail.toLowerCase()
+          );
+          if (!matchesId && !matchesEmail) {
+            continue;
+          }
+        }
         const key = `${r.mediaType}:${r.tmdbId}`;
         const existing = merged.get(key);
         const createdIso = r.createdAt ? r.createdAt.slice(0, 10) : '';
@@ -1724,6 +1815,30 @@ export class MediaAggregatorService {
           if (createdIso && (!existing.addedAt || createdIso > existing.addedAt)) {
             existing.addedAt = createdIso;
           }
+        }
+      }
+    }
+
+    if (
+      params.onlyCurrentUser &&
+      params.currentUserEmail &&
+      this.db &&
+      typeof this.db.getUserFollowedMedia === 'function'
+    ) {
+      const followed = this.db.getUserFollowedMedia(params.currentUserEmail, limit);
+      for (const f of followed) {
+        const key = `${f.mediaType}:${f.tmdbId}`;
+        const existing = merged.get(key);
+        const actionIso = f.lastActionAt ? f.lastActionAt.slice(0, 10) : '';
+        if (!existing) {
+          merged.set(key, {
+            tmdbId: f.tmdbId,
+            mediaType: f.mediaType,
+            addedAt: actionIso,
+            isWaitingHint: false
+          });
+        } else if (actionIso && (!existing.addedAt || actionIso > existing.addedAt)) {
+          existing.addedAt = actionIso;
         }
       }
     }

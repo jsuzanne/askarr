@@ -1185,7 +1185,12 @@ export class DeepSeekOrchestratorService {
       checkIndexers: false
     });
 
-    if (!evidence.actionability.canRequestNow) {
+    const isRadarrRetrigger =
+      params.mediaType === 'movie' &&
+      !evidence.actionability.canRequestNow &&
+      Boolean(evidence.acquisitionPipeline.canRetriggerSearch);
+
+    if (!evidence.actionability.canRequestNow && !isRadarrRetrigger) {
       throw new Error(
         `REQUEST_NOT_ELIGIBLE:${evidence.actionability.blockReason || 'ALREADY_HANDLED'}:${evidence.actionability.userFriendlyExplanationFr}`
       );
@@ -1213,8 +1218,9 @@ export class DeepSeekOrchestratorService {
       evidence.acquisitionPipeline.externalServiceId || evidence.identity.tvdbId
     );
 
-    const actionType: PreparedActionDTO['actionType'] =
-      hasSpecificEpisodes && isKnownInSonarr
+    const actionType: PreparedActionDTO['actionType'] = isRadarrRetrigger
+      ? 'RADARR_MOVIE_SEARCH'
+      : hasSpecificEpisodes && isKnownInSonarr
         ? 'SONARR_EPISODE_SEARCH'
         : params.mediaType === 'tv'
           ? 'OVERSEERR_REQUEST_TV'
@@ -1241,11 +1247,13 @@ export class DeepSeekOrchestratorService {
         : '';
 
     const summaryFr =
-      actionType === 'SONARR_EPISODE_SEARCH'
-        ? `Recherche directe dans Sonarr pour "${evidence.identity.titleFr}"${yearTxt}${episodesTxt}`
-        : isCompletingPartialSeason
-          ? `Compléter les épisodes manquants de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`
-          : `Demander l'ajout de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`;
+      actionType === 'RADARR_MOVIE_SEARCH'
+        ? `Relancer immédiatement la recherche Radarr pour "${evidence.identity.titleFr}"${yearTxt}`
+        : actionType === 'SONARR_EPISODE_SEARCH'
+          ? `Recherche directe dans Sonarr pour "${evidence.identity.titleFr}"${yearTxt}${episodesTxt}`
+          : isCompletingPartialSeason
+            ? `Compléter les épisodes manquants de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`
+            : `Demander l'ajout de "${evidence.identity.titleFr}"${yearTxt}${seasonsTxt} sur Plex`;
 
     const created = this.db.createPreparedAction({
       userEmail: params.userEmail,

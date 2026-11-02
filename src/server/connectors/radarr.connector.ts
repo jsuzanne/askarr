@@ -261,11 +261,96 @@ export class RadarrConnector {
         }),
         signal: controller.signal
       });
+      if (res.ok) {
+        this.catalogCache = null;
+      }
       return res.ok;
     } catch {
       return false;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  public async triggerMovieSearchCommand(radarrMovieId: number): Promise<{ commandId: number | null }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6500);
+    try {
+      const res = await this.fetchImpl(`${this.baseUrl}/api/v3/command`, {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          name: 'MoviesSearch',
+          movieIds: [radarrMovieId]
+        }),
+        signal: controller.signal
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Radarr MoviesSearch failed (${res.status}): ${txt.slice(0, 160)}`);
+      }
+      const data = (await res.json()) as Record<string, unknown>;
+      return {
+        commandId: typeof data.id === 'number' ? data.id : null
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  public async monitorAndSearchMovie(params: {
+    tmdbId: number;
+  }): Promise<{ radarrMovieId: number; commandId: number | null }> {
+    const { movie } = await this.getMovieByTmdbId(params.tmdbId);
+    if (!movie) {
+      throw new Error(`Film introuvable dans Radarr (TMDB ${params.tmdbId}).`);
+    }
+    if (!movie.monitored) {
+      await this.setMovieMonitored(movie.id, true);
+    }
+    const { commandId } = await this.triggerMovieSearchCommand(movie.id);
+    this.catalogCache = null;
+    return {
+      radarrMovieId: movie.id,
+      commandId
+    };
+  }
+
+  public async getMovieHistorySummary(radarrMovieId: number): Promise<{
+    lastGrabbedAt: string | null;
+    lastGrabbedRelease: string | null;
+    lastFailedAt: string | null;
+  }> {
+    try {
+      const items = await this.getJson<Array<Record<string, unknown>>>(
+        `/api/v3/history/movie?movieId=${encodeURIComponent(String(radarrMovieId))}`
+      );
+      if (!Array.isArray(items) || items.length === 0) {
+        return { lastGrabbedAt: null, lastGrabbedRelease: null, lastFailedAt: null };
+      }
+      let lastGrabbedAt: string | null = null;
+      let lastGrabbedRelease: string | null = null;
+      let lastFailedAt: string | null = null;
+
+      for (const item of items) {
+        const eventType = typeof item.eventType === 'string' ? item.eventType : '';
+        const date = typeof item.date === 'string' ? item.date : null;
+        if (!date) continue;
+        if (eventType === 'grabbed' && (!lastGrabbedAt || date > lastGrabbedAt)) {
+          lastGrabbedAt = date;
+          lastGrabbedRelease = typeof item.sourceTitle === 'string' ? item.sourceTitle : null;
+        } else if (eventType === 'downloadFailed' && (!lastFailedAt || date > lastFailedAt)) {
+          lastFailedAt = date;
+        }
+      }
+
+      return { lastGrabbedAt, lastGrabbedRelease, lastFailedAt };
+    } catch {
+      return { lastGrabbedAt: null, lastGrabbedRelease: null, lastFailedAt: null };
     }
   }
 }

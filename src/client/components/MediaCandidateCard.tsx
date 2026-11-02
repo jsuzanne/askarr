@@ -156,6 +156,9 @@ export const MediaCandidateCard: React.FC<Props> = ({
   };
 
   const handlePrepareRequest = async () => {
+    if (compactRowMode) {
+      setRowExpanded(true);
+    }
     setLoadingAction(true);
     setFeedbackMessage(null);
     try {
@@ -245,8 +248,29 @@ export const MediaCandidateCard: React.FC<Props> = ({
         ? 'auto_list'
         : null);
   const todayIso = new Date().toISOString().slice(0, 10);
+  const vodReleaseIso =
+    identity.releaseDates.estimatedVodOrDvdDate ||
+    identity.releaseDates.digitalRelease ||
+    identity.releaseDates.physicalRelease ||
+    null;
   const isVodFuture = Boolean(
     identity.releaseDates.estimatedVodOrDvdDate && identity.releaseDates.estimatedVodOrDvdDate > todayIso
+  );
+  const canRetriggerRadarr = Boolean(
+    !actionability.canRequestNow && acquisitionPipeline.canRetriggerSearch
+  );
+  const lastSearchIso =
+    acquisitionPipeline.lastSearchAt ||
+    localEvidence.requestState.requestedAt ||
+    acquisitionPipeline.addedAt ||
+    null;
+  const lastSearchDateFr = formatDate(lastSearchIso, lang);
+  const searchedBeforeVodRelease = Boolean(
+    !isVodFuture &&
+      vodReleaseIso &&
+      lastSearchIso &&
+      lastSearchIso.slice(0, 10) < vodReleaseIso.slice(0, 10) &&
+      (acquisitionPipeline.lastSearchSource === 'initial_request' || !acquisitionPipeline.lastSearchSource)
   );
 
   // Code visuel LED 3 états ultra-lisible en un clin d'œil :
@@ -652,6 +676,27 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 </button>
               )}
 
+              {canRetriggerRadarr && !preparedAction && (
+                <button
+                  type="button"
+                  disabled={loadingAction}
+                  onClick={handlePrepareRequest}
+                  className="inline-flex items-center gap-1 rounded-xl border border-amber-400/55 bg-amber-500/20 hover:bg-amber-500/35 px-2.5 py-1.5 text-xs font-bold text-amber-100 disabled:opacity-50 transition cursor-pointer whitespace-nowrap"
+                  title={
+                    lang === 'en'
+                      ? 'Movie is already released on VOD/DVD — Trigger a fresh Radarr search on indexers'
+                      : 'Film déjà sorti en VOD/DVD — Relancer une recherche immédiate dans Radarr'
+                  }
+                >
+                  {loadingAction ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                  )}
+                  <span>{lang === 'en' ? 'Re-search' : 'Relancer'}</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setRowExpanded((v) => !v)}
@@ -970,6 +1015,95 @@ export const MediaCandidateCard: React.FC<Props> = ({
               )}
             </div>
 
+            {/* Historique du workflow d'acquisition (affiché pour les œuvres en file d'attente) */}
+            {ledState === 'waitlist' && (
+              <div className="rounded-xl border border-amber-500/30 bg-stone-950/85 px-3 py-2.5 text-[11px] sm:text-xs text-stone-200 space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold uppercase tracking-wider text-[10px] text-amber-300/90">
+                    {lang === 'en' ? 'Acquisition Workflow History' : 'Historique du workflow'}
+                  </span>
+                  {searchedBeforeVodRelease && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 text-[10px] font-bold text-amber-200">
+                      ⚠️{' '}
+                      {lang === 'en'
+                        ? 'Searched before VOD release — Re-trigger available'
+                        : 'Cherché avant la sortie VOD — Relance dispo'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-0.5">
+                  <div className="rounded-lg bg-stone-900/90 border border-stone-800 px-2.5 py-1.5">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
+                      {lang === 'en' ? '1. Added / Requested' : '1. Demande / Ajout'}
+                    </div>
+                    <div className="font-semibold text-stone-100 mt-0.5">
+                      {requestedOrAddedDateFr || '—'}
+                    </div>
+                    <div className="text-[10px] text-amber-300/90 truncate">
+                      {requesterName
+                        ? lang === 'en'
+                          ? `By ${requesterName}`
+                          : `Par ${requesterName}`
+                        : sourceOrigin === 'auto_list'
+                          ? lang === 'en'
+                            ? 'Auto list'
+                            : 'Liste automatique'
+                          : 'Overseerr / Radarr'}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-stone-900/90 border border-stone-800 px-2.5 py-1.5">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
+                      {lang === 'en' ? '2. VOD / DVD Release' : '2. Sortie VOD / DVD'}
+                    </div>
+                    <div className="font-semibold text-stone-100 mt-0.5">
+                      {vodDateFr
+                        ? `${identity.releaseDates.isEstimatedDate && isVodFuture ? '~' : ''}${vodDateFr}`
+                        : lang === 'en'
+                          ? 'Already released'
+                          : 'Déjà sorti'}
+                    </div>
+                    <div
+                      className={`text-[10px] font-medium ${
+                        isVodFuture ? 'text-amber-300' : 'text-emerald-300'
+                      }`}
+                    >
+                      {isVodFuture
+                        ? lang === 'en'
+                          ? '⏳ Not released yet (Case 1)'
+                          : '⏳ Pas encore sorti (attente auto)'
+                        : lang === 'en'
+                          ? '✓ Released on VOD/DVD'
+                          : '✓ Déjà sorti en VOD/DVD'}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-stone-900/90 border border-stone-800 px-2.5 py-1.5">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
+                      {lang === 'en' ? '3. Last Radarr Search' : '3. Dernière recherche Radarr'}
+                    </div>
+                    <div className="font-semibold text-stone-100 mt-0.5">
+                      {lastSearchDateFr || '—'}
+                    </div>
+                    <div className="text-[10px] text-amber-300/90 truncate">
+                      {acquisitionPipeline.lastSearchSource === 'manual_retrigger'
+                        ? lang === 'en'
+                          ? `Re-triggered${acquisitionPipeline.lastSearchBy ? ` by ${acquisitionPipeline.lastSearchBy}` : ''}`
+                          : `Relancée${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''}`
+                        : acquisitionPipeline.lastSearchSource === 'radarr_grab'
+                          ? lang === 'en'
+                            ? 'Release grabbed by Radarr'
+                            : 'Release récupérée par Radarr'
+                          : lang === 'en'
+                            ? 'Initial search on request'
+                            : "Recherche initiale à l'ajout"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Synopsis FR inline sur Desktop (sm:block) ; sur Smartphone (< sm), accessible via le popup "ℹ️ Détails & Synopsis" */}
             {identity.overviewFr && (
               <div className="hidden sm:block pt-0.5">
@@ -1247,11 +1381,39 @@ export const MediaCandidateCard: React.FC<Props> = ({
                     ? lang === 'en'
                       ? 'Downloading...'
                       : 'En téléchargement...'
-                    : lang === 'en'
-                      ? 'Awaiting release'
-                      : 'En attente de sortie'}
+                    : isVodFuture
+                      ? lang === 'en'
+                        ? 'Awaiting VOD/DVD release'
+                        : 'En attente de sortie VOD/DVD'
+                      : lang === 'en'
+                        ? 'In waiting list'
+                        : "En liste d'attente"}
                 </span>
               </div>
+            )}
+
+            {/* Bouton de relance manuelle Radarr (Cas 2 : film déjà sorti en VOD/DVD mais bloqué en attente sans fichier) */}
+            {canRetriggerRadarr && !preparedAction && (
+              <button
+                type="button"
+                disabled={loadingAction}
+                onClick={handlePrepareRequest}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/60 bg-amber-500/20 hover:bg-amber-500/35 px-3.5 py-1.5 text-xs sm:text-sm font-bold text-amber-100 active:scale-[0.99] disabled:opacity-50 transition cursor-pointer"
+                title={
+                  lang === 'en'
+                    ? 'Trigger an immediate Radarr indexer search for this movie'
+                    : 'Forcer une nouvelle recherche immédiate de ce film dans Radarr sur tous les indexeurs'
+                }
+              >
+                {loadingAction ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                )}
+                <span>
+                  {lang === 'en' ? 'Re-trigger Radarr search' : 'Relancer la recherche Radarr'}
+                </span>
+              </button>
             )}
           </div>
 

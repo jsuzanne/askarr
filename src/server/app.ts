@@ -69,7 +69,8 @@ export async function createApp(deps: AppDependencies): Promise<{
     sonarr,
     prowlarr,
     mdblist,
-    config.mdblistRecentYearsWindow
+    config.mdblistRecentYearsWindow,
+    db
   );
   const orchestrator = new DeepSeekOrchestratorService(config, db, aggregator, overseerr, fetchImpl, tracearr);
   const smtpInvite = new SmtpInviteService(db, config.adminEmails[0] || '', apiTracer);
@@ -511,8 +512,8 @@ export async function createApp(deps: AppDependencies): Promise<{
       currentUserEmail: session.email,
       currentUserOverseerrId: session.overseerr.overseerrUserId,
       userAllowedServers: session.plexAccess?.askarrServerNames,
-      onlyCurrentUser: false,
-      limit: 8
+      onlyCurrentUser: true,
+      limit: 20
     });
 
     const result = {
@@ -630,6 +631,90 @@ export async function createApp(deps: AppDependencies): Promise<{
       includeSeasons: record.payload.mediaType === 'tv',
       checkIndexers: false
     });
+
+    if (record.actionType === 'RADARR_MOVIE_SEARCH') {
+      if (freshEvidence.catalogPresence.state === 'available_now' || !freshEvidence.acquisitionPipeline.canRetriggerSearch) {
+        db.completePreparedAction({
+          token: record.token,
+          status: 'SUPERSEDED',
+          externalResult: {
+            reason: freshEvidence.actionability.blockReason || 'NOT_ELIGIBLE_FOR_RETRIGGER',
+            explanationFr: freshEvidence.actionability.userFriendlyExplanationFr
+          }
+        });
+        return {
+          status: 'SUPERSEDED',
+          messageFr: freshEvidence.actionability.userFriendlyExplanationFr,
+          evidence: freshEvidence
+        };
+      }
+
+      try {
+        const radarrRes = await radarr.monitorAndSearchMovie({
+          tmdbId: record.payload.tmdbId
+        });
+
+        db.recordMediaWorkflowEvent({
+          mediaType: 'movie',
+          tmdbId: record.payload.tmdbId,
+          actorEmail: session.email,
+          actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
+          eventType: 'RADARR_SEARCH_TRIGGERED',
+          details: {
+            radarrMovieId: radarrRes.radarrMovieId,
+            commandId: radarrRes.commandId
+          }
+        });
+
+        db.completePreparedAction({
+          token: record.token,
+          status: 'EXECUTED',
+          externalResult: {
+            radarrMovieId: radarrRes.radarrMovieId,
+            commandId: radarrRes.commandId
+          }
+        });
+        waitingListCache.clear();
+
+        db.recordAuditLog({
+          actorEmail: session.email,
+          actorRole: session.role,
+          actionType: 'RADARR_MOVIE_SEARCH',
+          targetService: 'radarr',
+          actionToken: record.token,
+          summaryFr: `Relance manuelle de recherche Radarr confirmée : ${record.payload.summaryFr}`,
+          diffRedacted: {
+            tmdbId: record.payload.tmdbId,
+            mediaType: 'movie',
+            radarrMovieId: radarrRes.radarrMovieId,
+            commandId: radarrRes.commandId
+          },
+          status: 'SUCCESS'
+        });
+
+        const updatedEvidence = await aggregator.buildMediaEvidence({
+          tmdbId: record.payload.tmdbId,
+          mediaType: 'movie',
+          currentUserEmail: session.email,
+          currentUserOverseerrId: session.overseerr.overseerrUserId,
+          includeSeasons: false,
+          checkIndexers: false
+        });
+
+        return {
+          actionId: record.token,
+          status: 'EXECUTED',
+          messageFr: `La recherche immédiate dans Radarr pour "${record.payload.title}" a bien été relancée sur tous les indexeurs !`,
+          evidence: updatedEvidence
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Erreur lors de la relance dans Radarr.';
+        return reply.code(502).send({
+          error: 'RADARR_SEARCH_FAILED',
+          message: msg
+        });
+      }
+    }
 
     if (!freshEvidence.actionability.canRequestNow) {
       db.completePreparedAction({
@@ -808,6 +893,17 @@ export async function createApp(deps: AppDependencies): Promise<{
           reactivatedInArr,
           sonarrSearchedSeasons: sonarrSearchResult.searchedSeasons,
           sonarrMonitoredEpisodes: sonarrSearchResult.monitoredEpisodesCount
+        }
+      });
+      db.recordMediaWorkflowEvent({
+        mediaType: record.payload.mediaType,
+        tmdbId: record.payload.tmdbId,
+        actorEmail: session.email,
+        actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
+        eventType: 'OVERSEERR_REQUESTED',
+        details: {
+          overseerrRequestId: createdReq.requestId,
+          seasons: seasonsToRequest
         }
       });
       waitingListCache.clear();

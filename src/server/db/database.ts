@@ -184,6 +184,22 @@ export class AskarrDatabase {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS media_workflow_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_type TEXT NOT NULL,
+        tmdb_id INTEGER NOT NULL,
+        actor_email TEXT NOT NULL,
+        actor_display_name TEXT,
+        event_type TEXT NOT NULL,
+        details_json TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_media_workflow_events_lookup
+        ON media_workflow_events(media_type, tmdb_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_media_workflow_events_actor
+        ON media_workflow_events(actor_email, created_at DESC);
     `);
   }
 
@@ -287,7 +303,7 @@ export class AskarrDatabase {
   public createPreparedAction(params: {
     userEmail: string;
     overseerrUserId: number | null;
-    actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV' | 'SONARR_EPISODE_SEARCH';
+    actionType: 'OVERSEERR_REQUEST_MOVIE' | 'OVERSEERR_REQUEST_TV' | 'SONARR_EPISODE_SEARCH' | 'RADARR_MOVIE_SEARCH';
     payload: {
       mediaType: 'movie' | 'tv';
       tmdbId: number;
@@ -1220,6 +1236,94 @@ export class AskarrDatabase {
       averageRating: ratedCount > 0 ? Math.round((ratingSum / ratedCount) * 100) / 100 : 0,
       items
     };
+  }
+
+  public recordMediaWorkflowEvent(params: {
+    mediaType: 'movie' | 'tv';
+    tmdbId: number;
+    actorEmail: string;
+    actorDisplayName?: string | null;
+    eventType: 'RADARR_SEARCH_TRIGGERED' | 'SONARR_SEARCH_TRIGGERED' | 'OVERSEERR_REQUESTED';
+    details?: Record<string, unknown> | null;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO media_workflow_events (
+          media_type, tmdb_id, actor_email, actor_display_name, event_type, details_json, created_at
+        ) VALUES (?, ?, LOWER(?), ?, ?, ?, ?)`
+      )
+      .run(
+        params.mediaType,
+        params.tmdbId,
+        params.actorEmail,
+        params.actorDisplayName || params.actorEmail.split('@')[0] || params.actorEmail,
+        params.eventType,
+        params.details ? JSON.stringify(params.details) : null,
+        new Date().toISOString()
+      );
+  }
+
+  public getMediaWorkflowSummary(
+    mediaType: 'movie' | 'tv',
+    tmdbId: number
+  ): {
+    lastManualSearchAt: string | null;
+    lastManualSearchBy: string | null;
+    manualSearchCount: number;
+    followerEmails: string[];
+  } {
+    const rows = this.db
+      .prepare(
+        `SELECT actor_email, actor_display_name, event_type, created_at
+         FROM media_workflow_events
+         WHERE media_type = ? AND tmdb_id = ?
+         ORDER BY created_at DESC`
+      )
+      .all(mediaType, tmdbId) as Array<{
+      actor_email: string;
+      actor_display_name: string | null;
+      event_type: string;
+      created_at: string;
+    }>;
+
+    const searchEvents = rows.filter(
+      (r) => r.event_type === 'RADARR_SEARCH_TRIGGERED' || r.event_type === 'SONARR_SEARCH_TRIGGERED'
+    );
+    const followerEmails = Array.from(new Set(rows.map((r) => r.actor_email.toLowerCase())));
+
+    return {
+      lastManualSearchAt: searchEvents[0]?.created_at || null,
+      lastManualSearchBy:
+        searchEvents[0]?.actor_display_name || searchEvents[0]?.actor_email.split('@')[0] || null,
+      manualSearchCount: searchEvents.length,
+      followerEmails
+    };
+  }
+
+  public getUserFollowedMedia(
+    actorEmail: string,
+    limit = 20
+  ): Array<{ mediaType: 'movie' | 'tv'; tmdbId: number; lastActionAt: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT media_type, tmdb_id, MAX(created_at) AS last_action_at
+         FROM media_workflow_events
+         WHERE LOWER(actor_email) = LOWER(?)
+         GROUP BY media_type, tmdb_id
+         ORDER BY last_action_at DESC
+         LIMIT ?`
+      )
+      .all(actorEmail, limit) as Array<{
+      media_type: 'movie' | 'tv';
+      tmdb_id: number;
+      last_action_at: string;
+    }>;
+
+    return rows.map((r) => ({
+      mediaType: r.media_type === 'tv' ? 'tv' : 'movie',
+      tmdbId: r.tmdb_id,
+      lastActionAt: r.last_action_at
+    }));
   }
 
   public close(): void {

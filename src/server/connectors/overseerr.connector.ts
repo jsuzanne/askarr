@@ -629,6 +629,7 @@ export class OverseerrConnector {
       mediaType: MediaType;
       tmdbId: number;
       mediaStatus: number;
+      requestedByOverseerrId?: number | null;
       requestedByEmail: string | null;
       requestedByDisplayName: string;
       seasons: number[];
@@ -653,6 +654,7 @@ export class OverseerrConnector {
         mediaType: r.type === 'tv' ? 'tv' : 'movie',
         tmdbId: Number(media.tmdbId || 0),
         mediaStatus: Number(media.status || 1),
+        requestedByOverseerrId: typeof reqBy.id === 'number' ? reqBy.id : null,
         requestedByEmail: reqByEmail,
         requestedByDisplayName: String(
           reqBy.plexUsername || reqBy.displayName || reqBy.username || emailPrefix || 'Ami'
