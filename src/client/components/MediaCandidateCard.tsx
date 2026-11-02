@@ -476,7 +476,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 : 'Cliquer pour déplier la fiche complète'
           }
         >
-          <div className="flex flex-wrap items-center gap-2.5 md:grid md:grid-cols-[minmax(280px,1fr)_88px_150px_90px_118px] md:items-center md:gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 md:grid md:grid-cols-[minmax(260px,1fr)_88px_150px_90px_148px] md:items-center md:gap-3">
             {/* Colonne 1 : #Rang + Jaquette 2:3 agrandie + Titre complet (Année) + Durée & Réalisateur */}
             <div className="flex items-center gap-3 min-w-0 flex-1 md:flex-initial">
               {typeof rankNumber === 'number' && (

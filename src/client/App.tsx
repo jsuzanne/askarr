@@ -2957,7 +2957,7 @@ export function App() {
                               }
                             >
                               {layoutMode === 'compact' && (
-                                <div className="hidden md:grid md:grid-cols-[minmax(280px,1fr)_88px_150px_90px_118px] items-center gap-3 px-3.5 py-2 bg-stone-950/85 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400 select-none">
+                                <div className="hidden md:grid md:grid-cols-[minmax(260px,1fr)_88px_150px_90px_148px] items-center gap-3 px-3.5 py-2 bg-stone-950/85 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400 select-none">
                                   <button
                                     type="button"
                                     onClick={() => toggleSort('title')}
