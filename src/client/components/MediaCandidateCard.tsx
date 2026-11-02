@@ -254,10 +254,51 @@ export const MediaCandidateCard: React.FC<Props> = ({
       : 'missing';
 
   const statusLabelText = getLocalizedStatusLabel(actionability.userFriendlyStatusLabel, lang);
-  const statusAlreadyMentionsOrigin =
-    /liste auto|demandé par|requested by|auto list/i.test(statusLabelText);
-  const statusAlreadyMentionsVod = /vod|dvd/i.test(statusLabelText);
-  const statusAlreadyMentionsCinema = /sortie ciné|theatrical/i.test(statusLabelText);
+
+  // Formatage homogène et sans doublon pour que toutes les cartes aient exactement la même structure et hauteur
+  const availServers = catalogPresence.availableServers || [];
+  const compactServersLabel =
+    availServers.length === 0
+      ? ''
+      : availServers.length <= 2
+        ? ` (${availServers.join(', ')})`
+        : ` (${availServers.slice(0, 2).join(', ')} +${availServers.length - 2})`;
+
+  const statusPrimaryTitle =
+    ledState === 'available'
+      ? lang === 'en'
+        ? `Available on Plex${compactServersLabel}`
+        : `Disponible sur Plex${compactServersLabel}`
+      : ledState === 'waitlist'
+        ? isDownloadingNow
+          ? lang === 'en'
+            ? 'Downloading to Plex'
+            : 'Téléchargement en cours vers Plex'
+          : lang === 'en'
+            ? 'In Plex waiting list'
+            : "Dans la liste d'attente Plex"
+        : lang === 'en'
+          ? 'Not available on Plex'
+          : 'Non disponible sur Plex';
+
+  const originText = requesterName
+    ? `${t('requested_by', { name: requesterName })}${requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}`
+    : sourceOrigin === 'auto_list'
+      ? `${t('auto_list')}${requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}`
+      : null;
+
+  const statusSecondarySubtitle =
+    ledState === 'available'
+      ? originText || (lang === 'en' ? 'Ready to watch now on your Plex catalog' : 'Prêt à regarder immédiatement sur ton catalogue')
+      : ledState === 'waitlist'
+        ? originText
+          ? `${originText} • ${lang === 'en' ? 'Auto-added upon release' : 'Ajout auto sur Plex dès sortie'}`
+          : lang === 'en'
+            ? 'Monitored automatically • Added upon VOD/DVD release'
+            : 'Surveillé automatiquement • Ajouté dès la sortie VOD/DVD'
+        : lang === 'en'
+          ? 'Not on Plex yet — Available on request'
+          : 'Pas encore sur Plex — Disponible à la demande';
 
   const primaryPlexMatch = catalogPresence.matchedItems[0] || null;
   const plexWebUrl = primaryPlexMatch
@@ -448,176 +489,170 @@ export const MediaCandidateCard: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* En-tête, Note IMDb Or, Genres & Distribution */}
+          {/* En-tête, Note IMDb Or, Genres & Distribution — Grille homogène à hauteur de ligne fixe */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <h3 className="text-base sm:text-lg lg:text-xl font-bold text-white leading-tight break-words tracking-tight">
-                  {identity.titleFr}{' '}
-                  {identity.year ? (
-                    <span className="font-normal text-amber-300/90 text-sm sm:text-base">
-                      ({identity.year})
-                    </span>
-                  ) : null}
-                </h3>
-                {showOriginalTitle && (
-                  <p className="mt-0.5 text-xs italic text-stone-400 truncate">
-                    {lang === 'en' ? 'Original title:' : 'Titre original :'} {identity.originalTitle}
-                  </p>
-                )}
-              </div>
+            {/* Ligne 1 : Titre (1 ligne fixe) + Note IMDb */}
+            <div className="flex items-center justify-between gap-2 h-7">
+              <h3
+                className="text-base sm:text-lg font-bold text-white leading-tight truncate tracking-tight min-w-0"
+                title={`${identity.titleFr}${identity.year ? ` (${identity.year})` : ''}`}
+              >
+                {identity.titleFr}{' '}
+                {identity.year ? (
+                  <span className="font-normal text-amber-300/90 text-sm sm:text-base">
+                    ({identity.year})
+                  </span>
+                ) : null}
+              </h3>
 
-              {rating !== null && rating > 0 && (
+              {rating !== null && rating > 0 ? (
                 <div
-                  className="flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-br from-amber-500/25 to-yellow-600/10 border border-amber-400/50 px-2.5 py-1 text-xs sm:text-sm font-bold text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.18)]"
+                  className="flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-br from-amber-500/25 to-yellow-600/10 border border-amber-400/50 px-2.5 py-0.5 text-xs sm:text-sm font-bold text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.18)]"
                   title={lang === 'en' ? 'IMDb / Audience rating out of 10' : 'Note IMDb / Spectateurs sur 10'}
                 >
                   <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400 shrink-0" />
                   <span>{rating.toFixed(1)}</span>
                 </div>
+              ) : (
+                <div className="shrink-0 h-6" />
               )}
             </div>
 
-            {/* Genres & Durée */}
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-stone-200">
-              {identity.genres.slice(0, 4).map((g) => (
-                <span
-                  key={g}
-                  className="rounded-full bg-stone-900/90 border border-amber-500/25 px-2 py-0.5 text-[11px] font-medium text-amber-100/90"
-                >
-                  {g}
-                </span>
-              ))}
-              {formatDuration(identity.runtimeMinutes) && (
-                <span className="text-amber-300/80 text-xs font-medium ml-0.5">
-                  • {formatDuration(identity.runtimeMinutes)}
-                </span>
-              )}
+            {/* Ligne 2 : Titre original (toujours 1 ligne fixe pour aligner toutes les cartes) */}
+            <p
+              className="mt-0.5 text-xs italic text-stone-400 truncate h-[18px]"
+              title={identity.originalTitle || identity.titleFr}
+            >
+              {showOriginalTitle
+                ? `${lang === 'en' ? 'Original title:' : 'Titre original :'} ${identity.originalTitle}`
+                : `${lang === 'en' ? 'Original title:' : 'Titre original :'} ${identity.originalTitle || identity.titleFr} (VO)`}
+            </p>
+
+            {/* Ligne 3 : Genres (max 2) + Durée + Bouton Synopsis sur 1 seule ligne fixe */}
+            <div className="mt-1.5 flex items-center justify-between gap-1.5 h-6 text-xs text-stone-200 overflow-hidden whitespace-nowrap">
+              <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                {identity.genres.slice(0, 2).map((g) => (
+                  <span
+                    key={g}
+                    className="rounded-full bg-stone-900/90 border border-amber-500/25 px-2 py-0.5 text-[11px] font-medium text-amber-100/90 truncate"
+                  >
+                    {g}
+                  </span>
+                ))}
+                {formatDuration(identity.runtimeMinutes) && (
+                  <span className="text-amber-300/80 text-xs font-medium shrink-0">
+                    • {formatDuration(identity.runtimeMinutes)}
+                  </span>
+                )}
+              </div>
               {identity.overviewFr && compactSynopsis && (
                 <button
                   type="button"
                   onClick={() => setSynopsisExpanded((v) => !v)}
-                  className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-amber-300/90 hover:text-amber-200 underline decoration-amber-500/40 cursor-pointer"
+                  className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-amber-300/90 hover:text-amber-200 underline decoration-amber-500/40 cursor-pointer"
                 >
                   <span>{synopsisExpanded ? (lang === 'en' ? 'Hide synopsis' : 'Masquer synopsis') : '+ Synopsis'}</span>
                 </button>
               )}
             </div>
 
-            {/* Réalisateur & Casting */}
-            {(identity.directorOrCreator || identity.topCast.length > 0) && (
-              <div className="mt-1.5 space-y-0.5 text-xs sm:text-[13px] text-stone-300 leading-snug">
-                {identity.directorOrCreator && (
-                  <p className="line-clamp-1">
-                    <strong className="text-amber-200/95 font-semibold">
-                      {identity.mediaType === 'movie' ? t('director') : t('creator')}
-                    </strong>{' '}
-                    <span className="text-white font-medium">{identity.directorOrCreator}</span>
-                  </p>
-                )}
-                {identity.topCast.length > 0 && (
-                  <p className="line-clamp-1">
-                    <strong className="text-amber-200/95 font-semibold">{t('cast')}</strong>{' '}
-                    <span>{identity.topCast.slice(0, 4).join(', ')}</span>
-                  </p>
-                )}
-              </div>
-            )}
+            {/* Lignes 4 & 5 : Réalisateur & Casting (toujours 2 lignes fixes alignées) */}
+            <div className="mt-1.5 space-y-0.5 text-xs sm:text-[13px] text-stone-300 leading-snug">
+              <p className="truncate h-[19px]" title={identity.directorOrCreator || undefined}>
+                <strong className="text-amber-200/95 font-semibold">
+                  {identity.mediaType === 'movie' ? t('director') : t('creator')}
+                </strong>{' '}
+                <span className="text-white font-medium">{identity.directorOrCreator || '—'}</span>
+              </p>
+              <p className="truncate h-[19px]" title={identity.topCast.join(', ') || undefined}>
+                <strong className="text-amber-200/95 font-semibold">{t('cast')}</strong>{' '}
+                <span>{identity.topCast.length > 0 ? identity.topCast.slice(0, 4).join(', ') : '—'}</span>
+              </p>
+            </div>
 
-            {/* Ligne unifiée de Statut Plex (Code LED 3 États : Vert Dispo / Orange Liste d'attente / Gris-Rouge Non dispo) + Explication détaillée */}
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-              {/* Badge LED d'état principal immédiat */}
+            {/* Ligne 6 : Bloc de Statut Plex Unifié (1 seul encadré homogène de 2 lignes avec LED, zéro doublon) */}
+            <div className="mt-2.5">
               {ledState === 'available' ? (
-                primaryPlexHref ? (
-                  <a
-                    href={primaryPlexHref}
-                    target={isMobileDevice ? undefined : '_blank'}
-                    rel={isMobileDevice ? undefined : 'noopener noreferrer'}
-                    title={lang === 'en' ? 'Click to open directly in Plex' : 'Cliquer pour ouvrir directement dans Plex'}
-                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 px-2.5 py-1 text-xs font-bold text-emerald-100 shadow-[0_0_15px_rgba(16,185,129,0.18)] hover:brightness-110 transition cursor-pointer"
-                  >
+                <div
+                  onClick={() => {
+                    if (primaryPlexHref) {
+                      window.open(primaryPlexHref, isMobileDevice ? '_self' : '_blank', 'noopener,noreferrer');
+                    }
+                  }}
+                  title={statusLabelText}
+                  className={`rounded-xl border border-emerald-500/45 bg-emerald-500/15 px-3 py-1.5 shadow-[0_0_15px_rgba(16,185,129,0.12)] transition ${
+                    primaryPlexHref ? ' hover:brightness-110 cursor-pointer' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-100 truncate">
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
-                    <span>{statusLabelText}</span>
-                  </a>
-                ) : (
-                  <span className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 px-2.5 py-1 text-xs font-bold text-emerald-100 shadow-[0_0_15px_rgba(16,185,129,0.18)]">
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
-                    <span>{statusLabelText}</span>
-                  </span>
-                )
+                    <span className="truncate">{statusPrimaryTitle}</span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-emerald-200/90 truncate">
+                    <Clock className="h-3 w-3 text-emerald-300 shrink-0" />
+                    <span className="truncate">{statusSecondarySubtitle}</span>
+                  </div>
+                </div>
               ) : ledState === 'waitlist' ? (
-                <>
-                  <span className="inline-flex items-center gap-2 rounded-lg border border-amber-400/60 bg-amber-500/25 px-2.5 py-1 text-xs font-bold text-amber-100 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                <div
+                  title={statusLabelText}
+                  className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-1.5 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
+                >
+                  <div className="flex items-center gap-2 text-xs font-bold text-amber-100 truncate">
                     <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
-                    <span>
-                      {isDownloadingNow
-                        ? lang === 'en'
-                          ? 'Downloading now'
-                          : 'Téléchargement en cours'
-                        : lang === 'en'
-                          ? 'In waiting list'
-                          : "Dans la liste d'attente"}
-                    </span>
-                  </span>
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${toneBadgeClasses[actionability.statusTone]}`}
-                  >
+                    <span className="truncate">{statusPrimaryTitle}</span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-amber-200/90 truncate">
                     {isDownloadingNow ? (
-                      <Download className="h-3.5 w-3.5 shrink-0 animate-bounce text-amber-300" />
+                      <Download className="h-3 w-3 text-amber-300 animate-bounce shrink-0" />
                     ) : (
-                      <Clock className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+                      <Clock className="h-3 w-3 text-amber-300 shrink-0" />
                     )}
-                    <span>{statusLabelText}</span>
-                  </span>
-                </>
+                    <span className="truncate">{statusSecondarySubtitle}</span>
+                  </div>
+                </div>
               ) : (
-                <>
-                  <span className="inline-flex items-center gap-2 rounded-lg border border-stone-600/70 bg-stone-900/90 px-2.5 py-1 text-xs font-semibold text-stone-300">
+                <div
+                  title={statusLabelText}
+                  className="rounded-xl border border-stone-600/60 bg-stone-900/90 px-3 py-1.5"
+                >
+                  <div className="flex items-center gap-2 text-xs font-bold text-stone-200 truncate">
                     <span className="h-2.5 w-2.5 rounded-full bg-rose-500/85 shadow-[0_0_8px_rgba(244,63,94,0.6)] shrink-0" />
-                    <span>{lang === 'en' ? 'Not on Plex' : 'Non disponible sur Plex'}</span>
-                  </span>
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${toneBadgeClasses[actionability.statusTone]}`}
-                  >
-                    <span>{statusLabelText}</span>
-                  </span>
-                </>
+                    <span className="truncate">{statusPrimaryTitle}</span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-stone-300 truncate">
+                    <Clock className="h-3 w-3 text-stone-400 shrink-0" />
+                    <span className="truncate">{statusSecondarySubtitle}</span>
+                  </div>
+                </div>
               )}
+            </div>
 
-              {!statusAlreadyMentionsOrigin && requesterName ? (
-                <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-amber-500/25 px-2 py-1 text-[11px] text-amber-200/90">
-                  <Clock className="h-3 w-3 text-amber-400 shrink-0" />
-                  <span>
-                    {t('requested_by', { name: requesterName })}
-                    {requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}
-                  </span>
+            {/* Ligne 7 : Dates de Sortie Cinéma & VOD/DVD (toujours 1 seule ligne alignée au même endroit sur toutes les cartes) */}
+            <div className="mt-1.5 flex items-center gap-1.5 h-[26px] overflow-hidden whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300 truncate">
+                <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
+                <span className="truncate">
+                  {t('theatrical_release', {
+                    date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
+                  })}
                 </span>
-              ) : !statusAlreadyMentionsOrigin && sourceOrigin === 'auto_list' ? (
-                <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
-                  <Clock className="h-3 w-3 text-amber-400/80 shrink-0" />
-                  <span>
-                    {t('auto_list')}{requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}
-                  </span>
-                </span>
-              ) : null}
+              </span>
 
-              {catalogPresence.state !== 'available_now' && !statusAlreadyMentionsCinema && cinemaDateFr && (
-                <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
-                  <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
-                  <span>{t('theatrical_release', { date: cinemaDateFr })}</span>
-                </span>
-              )}
-
-              {catalogPresence.state !== 'available_now' && !statusAlreadyMentionsVod && vodDateFr && (
+              {vodDateFr && (
                 <span
-                  className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2 py-1 text-[11px] ${
-                    isVodFuture
+                  className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2 py-1 text-[11px] truncate ${
+                    isVodFuture && ledState !== 'available'
                       ? 'border-amber-500/35 text-amber-200 font-medium'
                       : 'border-stone-700/80 text-stone-300'
                   }`}
                 >
-                  <Disc className={`h-3 w-3 shrink-0 ${isVodFuture ? 'text-amber-400' : 'text-stone-400'}`} />
-                  <span>
+                  <Disc
+                    className={`h-3 w-3 shrink-0 ${
+                      isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
+                    }`}
+                  />
+                  <span className="truncate">
                     {t('vod_release', {
                       date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
                     })}
@@ -900,11 +935,11 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 <span>
                   {isDownloadingNow
                     ? lang === 'en'
-                      ? 'Downloading to Plex...'
-                      : 'Téléchargement en cours...'
+                      ? 'Downloading...'
+                      : 'En téléchargement...'
                     : lang === 'en'
-                      ? 'In Plex waiting list'
-                      : "Dans la liste d'attente Plex"}
+                      ? 'Awaiting release'
+                      : 'En attente de sortie'}
                 </span>
               </div>
             )}
