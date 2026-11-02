@@ -36,7 +36,8 @@ import {
   VolumeX,
   Tv,
   Sun,
-  Moon
+  Moon,
+  X
 } from 'lucide-react';
 import type {
   AdminInteractionEntryDTO,
@@ -419,17 +420,15 @@ export function App() {
   const [configDiscovering, setConfigDiscovering] = useState(false);
   const [configBanner, setConfigBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [myRequests, setMyRequests] = useState<MyRequestItem[] | null>(null);
+  const [requestsFilter, setRequestsFilter] = useState<'all' | 'waitlist' | 'available'>('all');
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<UiMessage[]>([
     {
       id: 'welcome',
       role: 'assistant',
       content:
-        'Bienvenue dans ta salle **Askarr — Grand Cinéma & Séries** !\n\n' +
-        'Installe-toi dans ton fauteuil, je m’occupe de la séance :\n' +
-        '• **Retrouver un film ou une série** à partir d’un **réalisateur** (*Klapisch, Villeneuve...*), d’un **acteur** (*Pierre Niney...*), d’une **année**, d’un **souvenir d’intrigue** ou d’un **palmarès** (*Festival de Cannes / Palme d’Or, César, Oscars*).\n' +
-        '• Vérifier **instantanément** s’il est à l’affiche sur nos serveurs **Plex** (*NucVillers* & *NucBuntu Cinéphile*) avec les **notes IMDb**.\n' +
-        '• Regarder sa **date de sortie VOD / DVD** ou **le programmer sur Plex en 2 clics**.',
+        '**Quelle séance cherches-tu ce soir ?** 🍿\n' +
+        'Décris un **film**, une **série**, un **réalisateur**, un **acteur**, un **souvenir d’intrigue** ou un **palmarès** : je vérifie nos serveurs **Plex** en direct ou je le programme en 2 clics.',
       createdAt: new Date().toISOString()
     }
   ]);
@@ -1551,16 +1550,10 @@ export function App() {
             role: 'assistant',
             content:
               lang === 'en'
-                ? 'Welcome to your **Askarr — Grand Cinema & Series** screening room!\n\n' +
-                  'Take your seat, I will take care of the screening:\n' +
-                  '• **Find any movie or series** by **director** (*Nolan, Villeneuve...*), **actor**, **year**, **plot memory**, or **festival award** (*Cannes Palme d’Or, Oscars, BAFTAs*).\n' +
-                  '• **Instantly check** if it is showing on our **Plex** servers with **live IMDb ratings**.\n' +
-                  '• View its **theatrical & digital VOD/DVD release dates** or **request it on Plex in 2 clicks**.'
-                : 'Bienvenue dans ta salle **Askarr — Grand Cinéma & Séries** !\n\n' +
-                  'Installe-toi dans ton fauteuil, je m’occupe de la séance :\n' +
-                  '• **Retrouver un film ou une série** à partir d’un **réalisateur** (*Klapisch, Villeneuve...*), d’un **acteur** (*Pierre Niney...*), d’une **année**, d’un **souvenir d’intrigue** ou d’un **palmarès** (*Festival de Cannes / Palme d’Or, César, Oscars*).\n' +
-                  '• Vérifier **instantanément** s’il est à l’affiche sur nos serveurs **Plex** avec les **notes IMDb**.\n' +
-                  '• Regarder sa **date de sortie VOD / DVD** ou **le programmer sur Plex en 2 clics**.',
+                ? '**What would you like to watch tonight?** 🍿\n' +
+                  'Describe a **movie**, **series**, **director**, **actor**, **plot memory**, or **award**: I will check our **Plex** servers live or request it in 2 clicks.'
+                : '**Quelle séance cherches-tu ce soir ?** 🍿\n' +
+                  'Décris un **film**, une **série**, un **réalisateur**, un **acteur**, un **souvenir d’intrigue** ou un **palmarès** : je vérifie nos serveurs **Plex** en direct ou je le programme en 2 clics.',
             createdAt: prev[0].createdAt
           }
         ];
@@ -1578,16 +1571,16 @@ export function App() {
     const handleFirstGesture = () => {
       cinemaAudio.unlockOnUserGesture();
     };
-    const handleClickOutside = (ev: MouseEvent) => {
-      if (audioMenuRef.current && !audioMenuRef.current.contains(ev.target as Node)) {
+    const handleKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
         setShowAudioMenu(false);
       }
     };
     window.addEventListener('pointerdown', handleFirstGesture, { once: true, passive: true });
-    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('pointerdown', handleFirstGesture);
-      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
@@ -1611,11 +1604,11 @@ export function App() {
         {/* Rampe lumineuse d'ampoules de cinéma (Marquee Bulbs) */}
         <div className="h-1.5 w-full bg-gradient-to-r from-red-950 via-amber-500/30 to-red-950 cinema-marquee-bulbs opacity-90" />
 
-        {/* NIVEAU 1 : Identité de la Salle (Gauche) • Sélecteur Salle Ciné / Régie (Centre) • Profil & Traces (Droite) */}
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 lg:gap-3">
-          {/* Gauche : Logo & Marque (shrink-0 empêche tout chevauchement avec le sélecteur central) */}
-          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-red-600 via-red-800 to-amber-600 p-[1px] shadow-[0_0_20px_rgba(220,38,38,0.4)] shrink-0">
+        {/* NIVEAU 1 : Identité de la Salle (Gauche) • Sélecteur Admin (Centre Desktop) • Bouton Réglages ⚙️ & Régie (Droite) */}
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-2">
+          {/* Gauche : Logo & Marque */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-red-600 via-red-800 to-amber-600 p-[1px] shadow-[0_0_20px_rgba(220,38,38,0.4)] shrink-0">
               <div className="w-full h-full rounded-xl bg-[#140a0e] flex items-center justify-center">
                 <Clapperboard className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]" />
               </div>
@@ -1626,26 +1619,22 @@ export function App() {
                 ASKARR
               </h1>
               <span
-                className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded bg-stone-900/90 text-amber-300/90 border border-amber-500/30 whitespace-nowrap"
+                className="hidden sm:inline-flex text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded bg-stone-900/90 text-amber-300/90 border border-amber-500/30 whitespace-nowrap"
                 title={`Askarr v${APP_VERSION} — Sortie du ${APP_RELEASE_DATE}`}
               >
                 v{APP_VERSION}
               </span>
               <span
-                className={`${
-                  isAdmin && !(isViewerPreview && viewerImmersiveHeader)
-                    ? 'hidden 2xl:inline-flex'
-                    : 'hidden sm:inline-flex'
-                } font-cinema tracking-widest text-xs px-2.5 py-0.5 rounded-md bg-gradient-to-r from-red-900/90 to-red-800/80 text-amber-200 border border-amber-400/40 shadow-sm whitespace-nowrap`}
+                className="hidden xl:inline-flex font-cinema tracking-widest text-xs px-2.5 py-0.5 rounded-md bg-gradient-to-r from-red-900/90 to-red-800/80 text-amber-200 border border-amber-400/40 shadow-sm whitespace-nowrap"
               >
                 {workspaceMode === 'user' ? t('grand_cinema_badge') : t('regie_admin_badge')}
               </span>
             </div>
           </div>
 
-          {/* Centre : Bascule Principale "Salle Ciné (Admin)" vs "👁️ Vue User" vs "Régie Admin" */}
+          {/* Centre (Desktop lg+) : Bascule Principale "Salle Ciné (Admin)" vs "👁️ Vue User" vs "Régie Admin" */}
           {isAdmin && !(isViewerPreview && viewerImmersiveHeader) && (
-            <div className="flex items-center bg-stone-950/95 p-1 rounded-xl border border-amber-500/30 shadow-inner shrink-0">
+            <div className="hidden lg:flex items-center bg-stone-950/95 p-1 rounded-xl border border-amber-500/30 shadow-inner shrink-0">
               <button
                 type="button"
                 onClick={() => {
@@ -1653,7 +1642,7 @@ export function App() {
                   setViewerUserMode(false);
                   setConversationId(undefined);
                 }}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'user' && !viewerUserMode
                     ? 'cinema-velvet-pill text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
@@ -1671,7 +1660,7 @@ export function App() {
                   setViewerImmersiveHeader(false);
                   setConversationId(undefined);
                 }}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'user' && viewerUserMode
                     ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]'
                     : 'text-emerald-300/85 hover:text-emerald-200 hover:bg-emerald-950/40'
@@ -1688,7 +1677,7 @@ export function App() {
                   setViewerUserMode(false);
                   setViewerImmersiveHeader(false);
                 }}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'admin'
                     ? 'bg-amber-600 text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
@@ -1700,212 +1689,400 @@ export function App() {
             </div>
           )}
 
-          {/* Droite : Sélecteur Langue FR/EN + Thème + Ambiance Sonore + Bouton Traces + Profil Utilisateur */}
+          {/* Droite : Pour User standard = uniquement le bouton ⚙️ Réglages (& Ambiance) • Pour Admin = accès rapide Régie + ⚙️ Réglages */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Sélecteur de Langue (FR / EN) */}
-            <button
-              type="button"
-              onClick={toggleLang}
-              className="px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
-              title={lang === 'fr' ? t('switch_to_en') : t('switch_to_fr')}
-            >
-              <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
-            </button>
+            {/* Accès rapide Régie / Salle Ciné sur mobile pour l'Admin uniquement */}
+            {isAdmin && !(isViewerPreview && viewerImmersiveHeader) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (workspaceMode === 'admin') {
+                    setWorkspaceMode('user');
+                    setViewerUserMode(false);
+                  } else {
+                    setWorkspaceMode('admin');
+                    setViewerUserMode(false);
+                    setViewerImmersiveHeader(false);
+                  }
+                }}
+                className={`lg:hidden px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
+                  workspaceMode === 'admin'
+                    ? 'bg-amber-600 text-white border-amber-400/60 shadow-sm'
+                    : 'bg-stone-900/90 text-amber-200 border-amber-500/35 hover:bg-stone-800'
+                }`}
+                title={workspaceMode === 'admin' ? 'Retourner dans la Salle Ciné' : 'Ouvrir la Régie Admin'}
+              >
+                {workspaceMode === 'admin' ? (
+                  <>
+                    <Clapperboard className="w-3.5 h-3.5 text-amber-200 shrink-0" />
+                    <span>{t('salle_cine')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Server className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                    <span>{t('regie_admin')}</span>
+                  </>
+                )}
+              </button>
+            )}
 
-            {/* Sélecteur de Thème Clair / Sombre (Matinée vs Salle Obscure) */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
-              title={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
-            >
-              {theme === 'dark' ? (
-                <>
-                  <Sun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                  <span className="hidden md:inline">{t('theme_light')}</span>
-                </>
-              ) : (
-                <>
-                  <Moon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="hidden md:inline">{t('theme_dark')}</span>
-                </>
-              )}
-            </button>
-
-            {/* Sélecteur Ambiance Sonore Cinéma (Web Audio 0 Mo / 0% ralentissement) */}
+            {/* Bouton Unique ⚙️ Réglages & Ambiance Sonore (ouvre le Bottom Sheet sur iPhone / Modal sur Desktop) */}
             <div className="relative" ref={audioMenuRef}>
               <button
                 type="button"
                 onClick={() => setShowAudioMenu((v) => !v)}
-                className={`px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
-                  audioMode !== 'off'
-                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/50 shadow-[0_0_15px_rgba(245,158,11,0.18)]'
-                    : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200 hover:border-stone-700'
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
+                  showAudioMenu || audioMode !== 'off'
+                    ? 'bg-amber-500/20 text-amber-100 border-amber-400/55 shadow-[0_0_15px_rgba(245,158,11,0.18)]'
+                    : 'bg-stone-900/95 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-800'
                 }`}
-                title={t('ambiance_title')}
+                aria-label="Réglages et ambiance sonore"
+                title="Réglages : Ambiance sonore 35mm, Thème Clair/Sombre, Langue FR/EN & Profil"
               >
-                {audioMode !== 'off' ? (
-                  <Volume2 className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
-                ) : (
-                  <VolumeX className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                <Settings className="w-4 h-4 text-amber-300 shrink-0" />
+                <span className="hidden sm:inline">{lang === 'en' ? 'Settings' : 'Réglages'}</span>
+                {audioMode !== 'off' && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-400/20 text-amber-200 border border-amber-400/40 text-[10px] font-bold">
+                    <Volume2 className="w-3 h-3 text-amber-300 animate-pulse shrink-0" />
+                    <span className="hidden md:inline">
+                      {audioMode === 'sfx_only'
+                        ? t('audio_sfx_only')
+                        : audioMode === 'projector'
+                          ? t('audio_projector')
+                          : audioMode === 'fip_jazz'
+                            ? t('audio_fip_jazz')
+                            : t('audio_grand_cine')}
+                    </span>
+                  </span>
                 )}
-                <span className="hidden xl:inline">{t('ambiance')}</span>
-                <span className="font-bold">
-                  {audioMode === 'off'
-                    ? t('audio_off')
-                    : audioMode === 'sfx_only'
-                      ? t('audio_sfx_only')
-                      : audioMode === 'projector'
-                        ? t('audio_projector')
-                        : audioMode === 'fip_jazz'
-                          ? t('audio_fip_jazz')
-                          : t('audio_grand_cine')}
-                </span>
               </button>
 
               {showAudioMenu && (
-                <div className="absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl bg-[#140a0e]/98 border border-amber-500/40 shadow-[0_20px_50px_rgba(0,0,0,0.95)] backdrop-blur-xl p-3.5 z-50 text-left">
-                  <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-amber-500/20">
-                    <div>
-                      <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                <div
+                  className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+                  onClick={() => setShowAudioMenu(false)}
+                >
+                  <div
+                    className="w-full sm:max-w-md bg-[#140a0e] border-t sm:border border-amber-500/40 rounded-t-3xl sm:rounded-2xl shadow-[0_-15px_50px_rgba(0,0,0,0.95)] p-4 sm:p-5 max-h-[88dvh] overflow-y-auto text-left pb-[max(1.25rem,env(safe-area-inset-bottom))]"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Poignée mobile */}
+                    <div className="w-10 h-1 bg-stone-700 rounded-full mx-auto mb-3 sm:hidden" />
+
+                    {/* En-tête du Bottom Sheet Réglages */}
+                    <div className="flex items-center justify-between gap-2 pb-3 mb-3.5 border-b border-amber-500/20">
+                      <div>
+                        <div className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                          <Settings className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>{lang === 'en' ? 'Settings & Soundscape' : 'Réglages & Ambiance'}</span>
+                        </div>
+                        <p className="text-[11px] text-stone-400 mt-0.5">
+                          Askarr v{APP_VERSION} • {APP_RELEASE_DATE}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowAudioMenu(false)}
+                        className="p-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 cursor-pointer"
+                        aria-label="Fermer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* 1. Profil Spectateur & Serveurs Plex connectés */}
+                    {session && (
+                      <div className="mb-3.5 p-3 rounded-xl bg-stone-950/90 border border-amber-500/20">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] shrink-0" />
+                            <span className="text-xs sm:text-sm font-bold text-amber-100 truncate">
+                              {isViewerPreview && activeViewerSim
+                                ? activeViewerSim.plexUsername
+                                : session.overseerr.plexUsername || session.email.split('@')[0]}
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-200 border border-amber-500/30 shrink-0">
+                            {isViewerPreview
+                              ? 'Membre Ciné-Club'
+                              : isAdmin
+                                ? 'Administrateur'
+                                : session.overseerr.linked
+                                  ? 'Membre Ciné-Club'
+                                  : 'Spectateur Invité'}
+                          </span>
+                        </div>
+                        {(() => {
+                          const visibleServers =
+                            isViewerPreview && activeViewerSim
+                              ? activeViewerSim.askarrServerNames
+                              : session.plexAccess?.askarrServerNames || [];
+                          if (visibleServers.length === 0) return null;
+                          return (
+                            <div className="mt-2 pt-2 border-t border-stone-800/80 flex flex-wrap items-center gap-1.5 text-[11px]">
+                              <span className="text-stone-400">{t('plex_servers_label')}</span>
+                              {visibleServers.map((srv) => (
+                                <span
+                                  key={srv}
+                                  className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-medium"
+                                >
+                                  {srv}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* 2. Apparence (Thème Clair / Sombre) & Langue (FR / EN) */}
+                    <div className="grid grid-cols-2 gap-2 mb-4">
+                      <button
+                        type="button"
+                        onClick={toggleTheme}
+                        className="p-2.5 rounded-xl bg-stone-900/90 hover:bg-stone-800 border border-amber-500/25 text-left transition-all cursor-pointer flex items-center justify-between gap-2"
+                      >
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-stone-400 font-semibold">
+                            {lang === 'en' ? 'Theme' : 'Thème'}
+                          </div>
+                          <div className="text-xs font-bold text-amber-100 mt-0.5 flex items-center gap-1.5">
+                            {theme === 'dark' ? (
+                              <>
+                                <Moon className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                                <span>{lang === 'en' ? 'Dark Room' : 'Salle Obscure'}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span>{lang === 'en' ? 'Matinée Light' : 'Matinée Clair'}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={toggleLang}
+                        className="p-2.5 rounded-xl bg-stone-900/90 hover:bg-stone-800 border border-amber-500/25 text-left transition-all cursor-pointer flex items-center justify-between gap-2"
+                      >
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-stone-400 font-semibold">
+                            {lang === 'en' ? 'Language' : 'Langue'}
+                          </div>
+                          <div className="text-xs font-bold text-amber-100 mt-0.5">
+                            {lang === 'fr' ? '🇫🇷 Français' : '🇬🇧 English'}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* 3. Ambiance Sonore Cinéma (Cabine 35mm & Bruitages) */}
+                    <div className="mb-3.5">
+                      <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5 mb-2">
                         <Volume2 className="w-3.5 h-3.5" />
                         <span>{t('soundscape_title')}</span>
                       </div>
-                      <p className="text-[10px] text-stone-400 mt-0.5">
-                        {t('soundscape_subtitle')}
-                      </p>
-                    </div>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                      0% CPU
-                    </span>
-                  </div>
 
-                  <div className="space-y-1.5">
-                    {(
-                      [
-                        {
-                          id: 'off',
-                          title: '🔇 Muet (Désactivé)',
-                          desc: 'Aucun son ni bruitage, moteur audio en veille totale'
-                        },
-                        {
-                          id: 'sfx_only',
-                          title: '📽️ Projecteur Rétro à la recherche + SFX',
-                          desc: 'Le projecteur 35mm tourne pendant que l’IA cherche la réponse + ouverture rideau & billet'
-                        },
-                        {
-                          id: 'projector',
-                          title: '📽️ Cabine 35mm + SFX',
-                          desc: 'Doux ronronnement feutré de projecteur 35mm + bruitages'
-                        },
-                        {
-                          id: 'grand_cinema',
-                          title: '🍿 Prélude Grand Cinéma + 35mm',
-                          desc: 'Nappe harmonique chaude avant-séance + projecteur 35mm + SFX'
-                        },
-                        {
-                          id: 'fip_jazz',
-                          title: '🎷 Radio FIP Jazz (Foyer Ciné-Club)',
-                          desc: 'Flux direct FIP Autour du Jazz (s’atténue automatiquement quand le projecteur tourne)'
-                        }
-                      ] as Array<{ id: CinemaAudioMode; title: string; desc: string }>
-                    ).map((opt) => {
-                      const active = audioMode === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => handleSelectAudioMode(opt.id)}
-                          className={`w-full text-left p-2 rounded-xl border transition-all cursor-pointer ${
-                            active
-                              ? 'bg-amber-500/20 border-amber-400/60 text-amber-100 shadow-sm'
-                              : 'bg-stone-900/70 border-stone-800/80 text-stone-300 hover:bg-stone-900 hover:border-stone-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between text-xs font-semibold">
-                            <span>{opt.title}</span>
-                            {active && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-200 border border-amber-400/40">
-                                Actif
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-stone-400 mt-0.5 leading-snug">{opt.desc}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                      <div className="space-y-1.5">
+                        {(
+                          [
+                            {
+                              id: 'off',
+                              title: '🔇 Muet (Désactivé)',
+                              desc: 'Aucun son ni bruitage'
+                            },
+                            {
+                              id: 'sfx_only',
+                              title: '📽️ Projecteur Rétro à la recherche + SFX',
+                              desc: 'Projecteur 35mm pendant la recherche IA + rideau & billet'
+                            },
+                            {
+                              id: 'projector',
+                              title: '📽️ Cabine 35mm + SFX',
+                              desc: 'Doux ronronnement continu de projecteur 35mm + bruitages'
+                            },
+                            {
+                              id: 'grand_cinema',
+                              title: '🍿 Prélude Grand Cinéma + 35mm',
+                              desc: 'Nappe harmonique avant-séance + projecteur 35mm + SFX'
+                            },
+                            {
+                              id: 'fip_jazz',
+                              title: '🎷 Radio FIP Jazz (Foyer Ciné-Club)',
+                              desc: 'Flux direct FIP Autour du Jazz en salle d’attente'
+                            }
+                          ] as Array<{ id: CinemaAudioMode; title: string; desc: string }>
+                        ).map((opt) => {
+                          const active = audioMode === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => handleSelectAudioMode(opt.id)}
+                              className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                                active
+                                  ? 'bg-amber-500/20 border-amber-400/60 text-amber-100 shadow-sm'
+                                  : 'bg-stone-900/70 border-stone-800/80 text-stone-300 hover:bg-stone-900 hover:border-stone-700'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                                <span>{opt.title}</span>
+                                {active && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-200 border border-amber-400/40 shrink-0">
+                                    ✓ Actif
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-stone-400 mt-0.5 leading-snug">{opt.desc}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
 
-                  <div className="mt-3 pt-2.5 border-t border-amber-500/20">
-                    <div className="flex items-center justify-between text-[11px] text-stone-300 mb-1">
-                      <span>Volume de la salle</span>
-                      <span className="font-mono text-amber-300">{Math.round(audioVolume * 100)}%</span>
+                      <div className="mt-3 pt-2.5 border-t border-amber-500/20">
+                        <div className="flex items-center justify-between text-[11px] text-stone-300 mb-1">
+                          <span>Volume de la salle</span>
+                          <span className="font-mono text-amber-300">{Math.round(audioVolume * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0.05}
+                          max={1}
+                          step={0.05}
+                          value={audioVolume}
+                          onChange={(e) => handleAudioVolumeChange(Number(e.target.value))}
+                          className="w-full accent-amber-400 cursor-pointer h-1.5 bg-stone-800 rounded-lg"
+                        />
+                        <div className="mt-2 flex items-center justify-between gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (audioMode === 'off') handleSelectAudioMode('sfx_only');
+                              cinemaAudio.startRetroProjectorSpin(2200);
+                            }}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
+                          >
+                            📽️ Projecteur (2s)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (audioMode === 'off') handleSelectAudioMode('sfx_only');
+                              cinemaAudio.playCurtainChimeSfx();
+                            }}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
+                          >
+                            ✨ Tester Rideau
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (audioMode === 'off') handleSelectAudioMode('sfx_only');
+                              cinemaAudio.playTicketPunchSfx();
+                            }}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
+                          >
+                            🎟️ Tester Billet
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min={0.05}
-                      max={1}
-                      step={0.05}
-                      value={audioVolume}
-                      onChange={(e) => handleAudioVolumeChange(Number(e.target.value))}
-                      className="w-full accent-amber-400 cursor-pointer h-1.5 bg-stone-800 rounded-lg"
-                    />
-                    <div className="mt-2 flex items-center justify-between gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (audioMode === 'off') handleSelectAudioMode('sfx_only');
-                          cinemaAudio.startRetroProjectorSpin(2200);
-                        }}
-                        className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
-                      >
-                        📽️ Projecteur (2s)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (audioMode === 'off') handleSelectAudioMode('sfx_only');
-                          cinemaAudio.playCurtainChimeSfx();
-                        }}
-                        className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
-                      >
-                        ✨ Tester Rideau
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (audioMode === 'off') handleSelectAudioMode('sfx_only');
-                          cinemaAudio.playTicketPunchSfx();
-                        }}
-                        className="flex-1 py-1 px-2 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-700 text-[10px] text-stone-300 cursor-pointer transition-colors"
-                      >
-                        🎟️ Tester Billet
-                      </button>
-                    </div>
+
+                    {/* 4. Outils Administrateur & Régie (Uniquement visible pour un Admin) */}
+                    {isAdmin && (
+                      <div className="pt-3 border-t border-amber-500/25 space-y-2.5">
+                        <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                          <Server className="w-3.5 h-3.5" />
+                          <span>Régie & Outils Administrateur</span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspaceMode('user');
+                              setViewerUserMode(false);
+                              setConversationId(undefined);
+                              setShowAudioMenu(false);
+                            }}
+                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                              workspaceMode === 'user' && !viewerUserMode
+                                ? 'cinema-velvet-pill text-white border-amber-400/50'
+                                : 'bg-stone-900/80 text-stone-300 border-stone-800 hover:text-white'
+                            }`}
+                          >
+                            <Clapperboard className="w-4 h-4" />
+                            <span>{t('salle_cine')}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspaceMode('user');
+                              setViewerUserMode(true);
+                              setViewerImmersiveHeader(false);
+                              setConversationId(undefined);
+                              setShowAudioMenu(false);
+                            }}
+                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                              workspaceMode === 'user' && viewerUserMode
+                                ? 'bg-emerald-600 text-white border-emerald-400'
+                                : 'bg-stone-900/80 text-emerald-300 border-stone-800 hover:bg-emerald-950/40'
+                            }`}
+                          >
+                            <Eye className="w-4 h-4" />
+                            <span>{t('vue_user')}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspaceMode('admin');
+                              setViewerUserMode(false);
+                              setViewerImmersiveHeader(false);
+                              setShowAudioMenu(false);
+                            }}
+                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                              workspaceMode === 'admin'
+                                ? 'bg-amber-600 text-white border-amber-400'
+                                : 'bg-stone-900/80 text-amber-200 border-stone-800 hover:text-white'
+                            }`}
+                          >
+                            <Server className="w-4 h-4" />
+                            <span>{t('regie_admin')}</span>
+                          </button>
+                        </div>
+
+                        {workspaceMode === 'user' && !isViewerPreview && (
+                          <button
+                            type="button"
+                            onClick={() => setDebugOverlay((v) => !v)}
+                            className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border flex items-center justify-between transition-colors cursor-pointer ${
+                              debugOverlay
+                                ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
+                                : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Bug className="w-4 h-4 text-amber-400 shrink-0" />
+                              <span>Traces techniques sous les cartes</span>
+                            </span>
+                            <span className="font-mono font-bold px-2 py-0.5 rounded bg-black/40">
+                              {debugOverlay ? 'ON' : 'OFF'}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </div>
 
-            {isAdmin && workspaceMode === 'user' && !isViewerPreview && (
-              <button
-                type="button"
-                onClick={() => setDebugOverlay((v) => !v)}
-                className={`px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-colors cursor-pointer ${
-                  debugOverlay
-                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
-                    : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
-                }`}
-                title="Afficher ou masquer les traces techniques sous les réponses du chat"
-              >
-                <Bug className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span className="hidden xl:inline">Traces :</span>
-                <span className="font-bold">{debugOverlay ? 'ON' : 'OFF'}</span>
-              </button>
-            )}
-
             {session && (
-              <div className="hidden sm:flex items-center pl-3 border-l border-amber-500/20">
+              <div className="hidden md:flex items-center pl-3 border-l border-amber-500/20">
                 <div className="text-right">
                   <div className="flex items-center justify-end gap-1.5 text-xs sm:text-sm font-semibold text-amber-100 leading-tight">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] shrink-0" />
@@ -1941,49 +2118,55 @@ export function App() {
 
         {/* NIVEAU 2 : Barre de Sous-Navigation Pleine Largeur (Zéro troncature, tous les onglets visibles d'un coup d'œil) */}
         <div className="border-t border-amber-500/15 bg-black/55">
-          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-1.5 flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-1.5 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
             {workspaceMode === 'user' ? (
               <>
                 <nav className="flex items-center gap-1.5 w-full sm:w-auto">
                   <button
                     type="button"
                     onClick={() => setUserTab('chat')}
-                    className={`flex-1 sm:flex-initial justify-center px-3.5 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
+                    className={`flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                       userTab === 'chat'
                         ? 'cinema-velvet-pill text-white shadow-sm'
                         : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900/60'
                     }`}
                   >
-                    <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+                    <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
                     <span>{t('grand_ecran_cine_club')}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setUserTab('requests')}
-                    className={`flex-1 sm:flex-initial justify-center px-3.5 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
+                    className={`flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                       userTab === 'requests'
                         ? 'cinema-velvet-pill text-white shadow-sm'
                         : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900/60'
                     }`}
                   >
-                    <Ticket className="w-4 h-4 text-amber-300 shrink-0" />
+                    <Ticket className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
                     <span>{t('mes_programmations')}</span>
+                    {myRequests && myRequests.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-black/35 text-amber-200">
+                        {myRequests.length}
+                      </span>
+                    )}
                   </button>
 
                   {userTab === 'chat' && (
                     <button
                       type="button"
                       onClick={startNewConversation}
-                      className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer border ${
+                      className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer border shrink-0 ${
                         messages.length > 1
                           ? 'bg-red-950/60 hover:bg-red-900/70 text-amber-200 hover:text-white border-amber-500/30'
-                          : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900/60 border-transparent'
+                          : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900/60 border-stone-800/80'
                       }`}
-                      title={lang === 'en' ? 'Reset current screening to start a new discussion' : 'Réinitialiser la discussion en cours et repartir sur un nouveau sujet'}
+                      title={lang === 'en' ? 'Reset current screening to start a new discussion' : 'Nouvelle discussion'}
+                      aria-label={t('nouvelle_discussion')}
                     >
                       <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>{t('nouvelle_discussion')}</span>
+                      <span className="hidden sm:inline">{t('nouvelle_discussion')}</span>
                     </button>
                   )}
                 </nav>
@@ -2756,30 +2939,44 @@ export function App() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Guichet de Recherche en bas de l'écran (Dock opaque jusqu'en bas pour masquer le scroll dessous) */}
-            <div className="sticky bottom-0 z-30 -mx-3 px-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-5 pb-3 sm:pb-4 bg-gradient-to-t from-[#080507] via-[#080507] via-80% to-transparent pointer-events-none">
+            {/* Guichet de Recherche en bas de l'écran (Dock opaque avec Safe Area iOS Safari) */}
+            <div className="sticky bottom-0 z-30 -mx-3 px-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[#080507] via-[#080507] via-85% to-transparent pointer-events-none">
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
                   void sendMessage();
                 }}
-                className="pointer-events-auto bg-[#120a0d] border border-amber-500/35 rounded-2xl p-2 sm:p-2.5 shadow-[0_-8px_30px_rgba(0,0,0,0.85),0_10px_40px_rgba(0,0,0,0.95)] flex items-center gap-2 sm:gap-3"
+                className="pointer-events-auto bg-[#120a0d] border border-amber-500/35 rounded-2xl p-1.5 sm:p-2.5 shadow-[0_-8px_30px_rgba(0,0,0,0.85),0_10px_40px_rgba(0,0,0,0.95)] flex items-end gap-2 sm:gap-3"
               >
-                <div className="pl-3 text-amber-400 hidden sm:block">
+                <div className="pl-2.5 pb-2.5 text-amber-400 hidden sm:block">
                   <Clapperboard className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
-                <input
-                  type="text"
+                <textarea
+                  rows={1}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    e.currentTarget.style.height = 'auto';
+                    e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 112)}px`;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!loading && input.trim()) {
+                        e.currentTarget.style.height = 'auto';
+                        void sendMessage();
+                      }
+                    }
+                  }}
                   placeholder={t('input_placeholder')}
-                  className="flex-1 bg-transparent text-base lg:text-lg text-white placeholder-stone-400 focus:outline-none py-2.5 sm:py-3 px-2.5"
+                  className="flex-1 bg-transparent text-base lg:text-lg text-white placeholder-stone-400 focus:outline-none py-2 sm:py-2.5 px-2.5 resize-none max-h-28 overflow-y-auto leading-snug"
                   disabled={loading}
                 />
                 <button
                   type="submit"
                   disabled={loading || !input.trim()}
-                  className="cinema-velvet-pill hover:brightness-110 active:scale-95 disabled:opacity-40 text-white font-bold text-sm sm:text-base px-4 sm:px-6 py-3 rounded-xl transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+                  className="cinema-velvet-pill hover:brightness-110 active:scale-95 disabled:opacity-40 text-white font-bold text-sm sm:text-base px-3.5 sm:px-5 py-2.5 sm:py-3 rounded-xl transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+                  aria-label={t('start_session')}
                 >
                   <span className="hidden sm:inline">{t('start_session')}</span>
                   <Send className="w-4 h-4 sm:w-5 sm:h-5 text-amber-200" />
@@ -2790,46 +2987,93 @@ export function App() {
         )}
 
         {workspaceMode === 'user' && userTab === 'requests' && (
-          <div className="space-y-6">
-            <div className="cinema-screen-card rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-5">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2.5">
-                    <Ticket className="w-6 h-6 text-amber-400" />
-                    <span>Mes Programmations & Liste d’attente Salle Plex</span>
+          <div className="space-y-4 sm:space-y-6">
+            <div className="cinema-screen-card rounded-2xl p-4 sm:p-6">
+              <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3.5">
+                <div className="min-w-0">
+                  <h2 className="text-lg sm:text-2xl font-bold text-white flex items-center gap-2">
+                    <Ticket className="w-5 h-5 sm:w-6 sm:h-6 text-amber-400 shrink-0" />
+                    <span>{t('mes_programmations')}</span>
+                    {myRequests && (
+                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        {myRequests.length}
+                      </span>
+                    )}
                   </h2>
-                  <p className="text-sm text-stone-300 mt-1">
-                    Retrouve ici les films et séries récemment programmés et leur statut de téléchargement en temps réel.
+                  <p className="text-xs sm:text-sm text-stone-300 mt-0.5">
+                    Suivi en direct de tes films et séries demandés sur Plex.
                   </p>
                 </div>
                 <button
                   onClick={() => void fetchMyRequests(true)}
-                  className="text-xs sm:text-sm bg-stone-900 hover:bg-stone-800 border border-amber-500/30 text-amber-200 px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer font-semibold"
+                  className="text-xs sm:text-sm bg-stone-900 hover:bg-stone-800 border border-amber-500/30 text-amber-200 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer font-semibold shrink-0"
                 >
-                  <RefreshCw className="w-4 h-4" />
+                  <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   <span>Actualiser</span>
                 </button>
               </div>
 
+              {/* Filtres rapides par statut LED */}
+              {myRequests && myRequests.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mb-4 pb-3 border-b border-amber-500/15">
+                  {(
+                    [
+                      { id: 'all', label: `Toutes (${myRequests.length})` },
+                      {
+                        id: 'waitlist',
+                        label: `🟠 En attente (${
+                          myRequests.filter((r) => !r.evidence.plex.present).length
+                        })`
+                      },
+                      {
+                        id: 'available',
+                        label: `🟢 Disponibles (${
+                          myRequests.filter((r) => r.evidence.plex.present).length
+                        })`
+                      }
+                    ] as const
+                  ).map((flt) => (
+                    <button
+                      key={flt.id}
+                      type="button"
+                      onClick={() => setRequestsFilter(flt.id)}
+                      className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                        requestsFilter === flt.id
+                          ? 'bg-amber-500/20 text-amber-100 border-amber-400/60 shadow-sm'
+                          : 'bg-stone-900/80 text-stone-400 border-stone-800 hover:text-stone-200'
+                      }`}
+                    >
+                      {flt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {!myRequests ? (
-                <p className="text-sm sm:text-base text-stone-400">Chargement des programmations...</p>
+                <p className="text-sm sm:text-base text-stone-400">Chargement des demandes...</p>
               ) : myRequests.length === 0 ? (
                 <p className="text-sm sm:text-base text-stone-400">Aucune demande récente trouvée.</p>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                  {myRequests.map((req) => (
-                    <MediaCandidateCard
-                      key={req.requestId}
-                      evidence={req.evidence}
-                      onAskSimilar={handleAskSimilar}
-                      showTechnicalTrace={showInlineDebug}
-                      plexPlayers={plexPlayers}
-                      selectedPlayerId={selectedPlayerId}
-                      onSelectPlayerId={handleSelectPlayerId}
-                      onRefreshPlayers={fetchPlexPlayers}
-                      scanningPlayers={scanningPlayers}
-                    />
-                  ))}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
+                  {myRequests
+                    .filter((req) => {
+                      if (requestsFilter === 'waitlist') return !req.evidence.plex.present;
+                      if (requestsFilter === 'available') return req.evidence.plex.present;
+                      return true;
+                    })
+                    .map((req) => (
+                      <MediaCandidateCard
+                        key={req.requestId}
+                        evidence={req.evidence}
+                        onAskSimilar={handleAskSimilar}
+                        showTechnicalTrace={showInlineDebug}
+                        plexPlayers={plexPlayers}
+                        selectedPlayerId={selectedPlayerId}
+                        onSelectPlayerId={handleSelectPlayerId}
+                        onRefreshPlayers={fetchPlexPlayers}
+                        scanningPlayers={scanningPlayers}
+                      />
+                    ))}
                 </div>
               )}
             </div>

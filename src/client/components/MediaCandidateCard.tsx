@@ -22,7 +22,9 @@ import {
   Square,
   RefreshCw,
   ExternalLink,
-  Smartphone
+  Smartphone,
+  Info,
+  X
 } from 'lucide-react';
 import type {
   MediaEvidence,
@@ -110,6 +112,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
   const [localEvidence, setLocalEvidence] = useState<MediaEvidence>(evidence);
   const [showAllSeasons, setShowAllSeasons] = useState(false);
   const [synopsisExpanded, setSynopsisExpanded] = useState(!compactSynopsis);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>(evidence.actionability.requestableSeasons);
   const [preparedAction, setPreparedAction] = useState<PreparedActionDTO | null>(initialPreparedAction);
 
@@ -118,6 +121,17 @@ export const MediaCandidateCard: React.FC<Props> = ({
       setPreparedAction(initialPreparedAction);
     }
   }, [initialPreparedAction]);
+
+  useEffect(() => {
+    if (!showDetailsModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowDetailsModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showDetailsModal]);
   const [loadingAction, setLoadingAction] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -433,73 +447,52 @@ export const MediaCandidateCard: React.FC<Props> = ({
       <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400/50 to-transparent opacity-75 group-hover:opacity-100 transition-opacity" />
 
       <div>
-        {/* Partie haute : Affiche de Cinéma + Métadonnées Grand Écran */}
+        {/* Partie haute : Jaquette 2:3 entière non tronquée + Identité complète sans troncature */}
         <div className="flex flex-row items-start gap-3.5 sm:gap-4">
-          {/* Affiche Encadrée (cliquable vers Plex si disponible) */}
-          <div
-            className={`relative shrink-0 overflow-hidden rounded-xl bg-stone-900 border border-amber-500/30 shadow-[0_10px_25px_rgba(0,0,0,0.85)] ${
+          {/* Jaquette 2:3 entière (object-contain, aucun badge par-dessus pour ne jamais masquer l'affiche) */}
+          <button
+            type="button"
+            onClick={() => setShowDetailsModal(true)}
+            title={
+              lang === 'en'
+                ? `View full details & poster for "${identity.titleFr}"`
+                : `Voir la fiche complète et l'affiche entière de « ${identity.titleFr} »`
+            }
+            className={`relative shrink-0 aspect-[2/3] overflow-hidden rounded-xl bg-stone-950 border border-amber-500/35 shadow-[0_10px_25px_rgba(0,0,0,0.85)] group/poster cursor-pointer text-left ${
               embeddedInChat
-                ? 'h-32 w-22 sm:h-40 sm:w-28 lg:h-44 lg:w-30'
-                : 'h-32 w-22 sm:h-48 sm:w-32 lg:h-52 lg:w-36'
+                ? 'w-24 sm:w-28 lg:w-32'
+                : 'w-28 sm:w-32 lg:w-36'
             }`}
           >
-            {primaryPlexHref ? (
-              <a
-                href={primaryPlexHref}
-                target={isMobileDevice ? undefined : '_blank'}
-                rel={isMobileDevice ? undefined : 'noopener noreferrer'}
-                title={`Ouvrir « ${identity.titleFr} » directement dans Plex`}
-                className="block h-full w-full relative group/poster cursor-pointer"
-              >
-                {identity.posterUrl ? (
-                  <img
-                    src={identity.posterUrl}
-                    alt={identity.titleFr}
-                    className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-amber-500/50 p-2 text-center bg-gradient-to-b from-stone-900 to-black">
-                    {identity.mediaType === 'movie' ? <Film className="h-8 w-8" /> : <Tv className="h-8 w-8" />}
-                    <span className="text-xs font-medium line-clamp-3 text-stone-400">{identity.titleFr}</span>
-                  </div>
-                )}
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/poster:opacity-100 transition-opacity flex items-center justify-center">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-black shadow-lg">
-                    <Play className="h-3.5 w-3.5 fill-black" />
-                    Plex
-                  </span>
-                </div>
-              </a>
-            ) : identity.posterUrl ? (
+            {identity.posterUrl ? (
               <img
                 src={identity.posterUrl}
                 alt={identity.titleFr}
-                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                className="h-full w-full object-contain bg-stone-950 transition-transform duration-500 group-hover/poster:scale-[1.03]"
                 loading="lazy"
               />
             ) : (
               <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-amber-500/50 p-2 text-center bg-gradient-to-b from-stone-900 to-black">
                 {identity.mediaType === 'movie' ? <Film className="h-8 w-8" /> : <Tv className="h-8 w-8" />}
-                <span className="text-xs font-medium line-clamp-3 text-stone-400">{identity.titleFr}</span>
+                <span className="text-xs font-medium text-stone-400">{identity.titleFr}</span>
               </div>
             )}
-            <div className="pointer-events-none absolute top-1.5 left-1.5 rounded-md bg-black/85 backdrop-blur-md px-1.5 py-0.5 text-[10px] font-cinema tracking-wider uppercase text-amber-300 border border-amber-500/40 shadow">
-              {identity.mediaType === 'movie' ? (lang === 'en' ? '🎬 MOVIE' : '🎬 FILM') : (lang === 'en' ? '📺 TV SHOW' : '📺 SÉRIE')}
+            <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/poster:opacity-100 transition-opacity flex items-center justify-center">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-black shadow-lg">
+                <Info className="h-3.5 w-3.5" />
+                <span>{lang === 'en' ? 'Details' : 'Fiche'}</span>
+              </span>
             </div>
-          </div>
+          </button>
 
-          {/* En-tête, Note IMDb Or, Genres & Distribution — Grille homogène à hauteur de ligne fixe */}
+          {/* Identité du film/série : Zéro troncature, retour à la ligne naturel */}
           <div className="flex-1 min-w-0">
-            {/* Ligne 1 : Titre (1 ligne fixe) + Note IMDb */}
-            <div className="flex items-center justify-between gap-2 h-7">
-              <h3
-                className="text-base sm:text-lg font-bold text-white leading-tight truncate tracking-tight min-w-0"
-                title={`${identity.titleFr}${identity.year ? ` (${identity.year})` : ''}`}
-              >
+            {/* Ligne 1 : Titre complet + Année + Note avec source réelle */}
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="text-base sm:text-lg font-bold text-white leading-snug tracking-tight min-w-0 break-words">
                 {identity.titleFr}{' '}
                 {identity.year ? (
-                  <span className="font-normal text-amber-300/90 text-sm sm:text-base">
+                  <span className="font-normal text-amber-300/90 text-sm sm:text-base whitespace-nowrap">
                     ({identity.year})
                   </span>
                 ) : null}
@@ -507,165 +500,173 @@ export const MediaCandidateCard: React.FC<Props> = ({
 
               {rating !== null && rating > 0 ? (
                 <div
-                  className="flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-br from-amber-500/25 to-yellow-600/10 border border-amber-400/50 px-2.5 py-0.5 text-xs sm:text-sm font-bold text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.18)]"
-                  title={lang === 'en' ? 'IMDb / Audience rating out of 10' : 'Note IMDb / Spectateurs sur 10'}
+                  className="flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-br from-amber-500/25 to-yellow-600/10 border border-amber-400/50 px-2 py-0.5 text-xs sm:text-sm font-bold text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.18)]"
+                  title={
+                    identity.ratings.imdbOrAudienceRating !== null
+                      ? lang === 'en'
+                        ? 'IMDb / Audience rating out of 10'
+                        : 'Note IMDb / Spectateurs sur 10'
+                      : lang === 'en'
+                        ? 'TMDB rating out of 10'
+                        : 'Note TMDB sur 10'
+                  }
                 >
                   <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400 shrink-0" />
                   <span>{rating.toFixed(1)}</span>
-                </div>
-              ) : (
-                <div className="shrink-0 h-6" />
-              )}
-            </div>
-
-            {/* Ligne 2 : Titre original (toujours 1 ligne fixe pour aligner toutes les cartes) */}
-            <p
-              className="mt-0.5 text-xs italic text-stone-400 truncate h-[18px]"
-              title={identity.originalTitle || identity.titleFr}
-            >
-              {showOriginalTitle
-                ? `${lang === 'en' ? 'Original title:' : 'Titre original :'} ${identity.originalTitle}`
-                : `${lang === 'en' ? 'Original title:' : 'Titre original :'} ${identity.originalTitle || identity.titleFr} (VO)`}
-            </p>
-
-            {/* Ligne 3 : Genres (max 2) + Durée + Bouton Synopsis sur 1 seule ligne fixe */}
-            <div className="mt-1.5 flex items-center justify-between gap-1.5 h-6 text-xs text-stone-200 overflow-hidden whitespace-nowrap">
-              <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-                {identity.genres.slice(0, 2).map((g) => (
-                  <span
-                    key={g}
-                    className="rounded-full bg-stone-900/90 border border-amber-500/25 px-2 py-0.5 text-[11px] font-medium text-amber-100/90 truncate"
-                  >
-                    {g}
+                  <span className="text-[10px] font-semibold text-amber-300/80 uppercase">
+                    {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
                   </span>
-                ))}
-                {formatDuration(identity.runtimeMinutes) && (
-                  <span className="text-amber-300/80 text-xs font-medium shrink-0">
-                    • {formatDuration(identity.runtimeMinutes)}
-                  </span>
-                )}
-              </div>
-              {identity.overviewFr && compactSynopsis && (
-                <button
-                  type="button"
-                  onClick={() => setSynopsisExpanded((v) => !v)}
-                  className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-amber-300/90 hover:text-amber-200 underline decoration-amber-500/40 cursor-pointer"
-                >
-                  <span>{synopsisExpanded ? (lang === 'en' ? 'Hide synopsis' : 'Masquer synopsis') : '+ Synopsis'}</span>
-                </button>
-              )}
+                </div>
+              ) : null}
             </div>
 
-            {/* Lignes 4 & 5 : Réalisateur & Casting (toujours 2 lignes fixes alignées) */}
-            <div className="mt-1.5 space-y-0.5 text-xs sm:text-[13px] text-stone-300 leading-snug">
-              <p className="truncate h-[19px]" title={identity.directorOrCreator || undefined}>
-                <strong className="text-amber-200/95 font-semibold">
-                  {identity.mediaType === 'movie' ? t('director') : t('creator')}
-                </strong>{' '}
-                <span className="text-white font-medium">{identity.directorOrCreator || '—'}</span>
+            {/* Ligne 2 : Titre original (affiché uniquement s'il diffère du titre FR, sans troncature) */}
+            {showOriginalTitle && (
+              <p className="mt-0.5 text-xs italic text-stone-400 leading-snug break-words">
+                {lang === 'en' ? 'Original title:' : 'Titre original :'} {identity.originalTitle}
               </p>
-              <p className="truncate h-[19px]" title={identity.topCast.join(', ') || undefined}>
-                <strong className="text-amber-200/95 font-semibold">{t('cast')}</strong>{' '}
-                <span>{identity.topCast.length > 0 ? identity.topCast.slice(0, 4).join(', ') : '—'}</span>
-              </p>
-            </div>
+            )}
 
-            {/* Ligne 6 : Bloc de Statut Plex Unifié (1 seul encadré homogène de 2 lignes avec LED, zéro doublon) */}
-            <div className="mt-2.5">
-              {ledState === 'available' ? (
-                <div
-                  onClick={() => {
-                    if (primaryPlexHref) {
-                      window.open(primaryPlexHref, isMobileDevice ? '_self' : '_blank', 'noopener,noreferrer');
-                    }
-                  }}
-                  title={statusLabelText}
-                  className={`rounded-xl border border-emerald-500/45 bg-emerald-500/15 px-3 py-1.5 shadow-[0_0_15px_rgba(16,185,129,0.12)] transition ${
-                    primaryPlexHref ? ' hover:brightness-110 cursor-pointer' : ''
-                  }`}
-                >
-                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-100 truncate">
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
-                    <span className="truncate">{statusPrimaryTitle}</span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-emerald-200/90 truncate">
-                    <Clock className="h-3 w-3 text-emerald-300 shrink-0" />
-                    <span className="truncate">{statusSecondarySubtitle}</span>
-                  </div>
-                </div>
-              ) : ledState === 'waitlist' ? (
-                <div
-                  title={statusLabelText}
-                  className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-1.5 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
-                >
-                  <div className="flex items-center gap-2 text-xs font-bold text-amber-100 truncate">
-                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
-                    <span className="truncate">{statusPrimaryTitle}</span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-amber-200/90 truncate">
-                    {isDownloadingNow ? (
-                      <Download className="h-3 w-3 text-amber-300 animate-bounce shrink-0" />
-                    ) : (
-                      <Clock className="h-3 w-3 text-amber-300 shrink-0" />
-                    )}
-                    <span className="truncate">{statusSecondarySubtitle}</span>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  title={statusLabelText}
-                  className="rounded-xl border border-stone-600/60 bg-stone-900/90 px-3 py-1.5"
-                >
-                  <div className="flex items-center gap-2 text-xs font-bold text-stone-200 truncate">
-                    <span className="h-2.5 w-2.5 rounded-full bg-rose-500/85 shadow-[0_0_8px_rgba(244,63,94,0.6)] shrink-0" />
-                    <span className="truncate">{statusPrimaryTitle}</span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-stone-300 truncate">
-                    <Clock className="h-3 w-3 text-stone-400 shrink-0" />
-                    <span className="truncate">{statusSecondarySubtitle}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Ligne 7 : Dates de Sortie Cinéma & VOD/DVD (toujours 1 seule ligne alignée au même endroit sur toutes les cartes) */}
-            <div className="mt-1.5 flex items-center gap-1.5 h-[26px] overflow-hidden whitespace-nowrap">
-              <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300 truncate">
-                <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
-                <span className="truncate">
-                  {t('theatrical_release', {
-                    date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
-                  })}
-                </span>
+            {/* Ligne 3 : Type + Durée + TOUS les Genres (flex-wrap, zéro troncature "( M... )") */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-stone-200">
+              <span className="rounded-md bg-amber-500/15 border border-amber-500/35 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                {identity.mediaType === 'movie'
+                  ? lang === 'en'
+                    ? '🎬 Movie'
+                    : '🎬 Film'
+                  : lang === 'en'
+                    ? '📺 Series'
+                    : '📺 Série'}
               </span>
-
-              {vodDateFr && (
-                <span
-                  className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2 py-1 text-[11px] truncate ${
-                    isVodFuture && ledState !== 'available'
-                      ? 'border-amber-500/35 text-amber-200 font-medium'
-                      : 'border-stone-700/80 text-stone-300'
-                  }`}
-                >
-                  <Disc
-                    className={`h-3 w-3 shrink-0 ${
-                      isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
-                    }`}
-                  />
-                  <span className="truncate">
-                    {t('vod_release', {
-                      date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
-                    })}
-                  </span>
+              {formatDuration(identity.runtimeMinutes) && (
+                <span className="text-amber-300/90 text-xs font-semibold">
+                  • {formatDuration(identity.runtimeMinutes)}
                 </span>
+              )}
+              {identity.genres.map((g) => (
+                <span
+                  key={g}
+                  className="rounded-full bg-stone-900/90 border border-amber-500/25 px-2 py-0.5 text-[11px] font-medium text-amber-100/95"
+                >
+                  {g}
+                </span>
+              ))}
+            </div>
+
+            {/* Lignes 4 & 5 : Réalisateur & Casting (sans troncature, retour à la ligne propre) */}
+            <div className="mt-2 space-y-1 text-xs sm:text-[13px] text-stone-300 leading-snug">
+              {identity.directorOrCreator && (
+                <p className="break-words">
+                  <strong className="text-amber-200/95 font-semibold">
+                    {identity.mediaType === 'movie' ? t('director') : t('creator')}
+                  </strong>{' '}
+                  <span className="text-white font-medium">{identity.directorOrCreator}</span>
+                </p>
+              )}
+              {identity.topCast.length > 0 && (
+                <p className="break-words">
+                  <strong className="text-amber-200/95 font-semibold">{t('cast')}</strong>{' '}
+                  <span>{identity.topCast.slice(0, 4).join(', ')}</span>
+                </p>
               )}
             </div>
           </div>
         </div>
 
-        {/* Synopsis FR (affiché si déplié ou en mode multi-cartes) */}
+        {/* Partie basse Pleine Largeur (100% de la carte) : Statut LED Plex complet (zéro troncature) + Dates de sortie */}
+        <div className="mt-3 space-y-2">
+          {ledState === 'available' ? (
+            <div
+              onClick={() => {
+                if (primaryPlexHref) {
+                  window.open(primaryPlexHref, isMobileDevice ? '_self' : '_blank', 'noopener,noreferrer');
+                }
+              }}
+              title={statusLabelText}
+              className={`rounded-xl border border-emerald-500/45 bg-emerald-500/15 px-3 py-2 shadow-[0_0_15px_rgba(16,185,129,0.12)] transition ${
+                primaryPlexHref ? ' hover:brightness-110 cursor-pointer' : ''
+              }`}
+            >
+              <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-emerald-100 leading-snug">
+                <span className="mt-1 h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
+                <span className="break-words">{statusPrimaryTitle}</span>
+              </div>
+              <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-emerald-200/90 leading-snug">
+                <Clock className="mt-0.5 h-3 w-3 text-emerald-300 shrink-0" />
+                <span className="break-words">{statusSecondarySubtitle}</span>
+              </div>
+            </div>
+          ) : ledState === 'waitlist' ? (
+            <div
+              title={statusLabelText}
+              className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
+            >
+              <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-amber-100 leading-snug">
+                <span className="mt-1 h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
+                <span className="break-words">{statusPrimaryTitle}</span>
+              </div>
+              <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-amber-200/90 leading-snug">
+                {isDownloadingNow ? (
+                  <Download className="mt-0.5 h-3 w-3 text-amber-300 animate-bounce shrink-0" />
+                ) : (
+                  <Clock className="mt-0.5 h-3 w-3 text-amber-300 shrink-0" />
+                )}
+                <span className="break-words">{statusSecondarySubtitle}</span>
+              </div>
+            </div>
+          ) : (
+            <div
+              title={statusLabelText}
+              className="rounded-xl border border-stone-600/60 bg-stone-900/90 px-3 py-2"
+            >
+              <div className="flex items-start gap-2 text-xs sm:text-[13px] font-bold text-stone-200 leading-snug">
+                <span className="mt-1 h-2.5 w-2.5 rounded-full bg-rose-500/85 shadow-[0_0_8px_rgba(244,63,94,0.6)] shrink-0" />
+                <span className="break-words">{statusPrimaryTitle}</span>
+              </div>
+              <div className="mt-0.5 flex items-start gap-1.5 text-[11px] sm:text-xs text-stone-300 leading-snug">
+                <Clock className="mt-0.5 h-3 w-3 text-stone-400 shrink-0" />
+                <span className="break-words">{statusSecondarySubtitle}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Dates de Sortie Cinéma & VOD/DVD en pleine largeur (flex-wrap, zéro troncature) */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2.5 py-1 text-[11px] text-stone-300">
+              <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
+              <span>
+                {t('theatrical_release', {
+                  date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
+                })}
+              </span>
+            </span>
+
+            {vodDateFr && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2.5 py-1 text-[11px] ${
+                  isVodFuture && ledState !== 'available'
+                    ? 'border-amber-500/35 text-amber-200 font-medium'
+                    : 'border-stone-700/80 text-stone-300'
+                }`}
+              >
+                <Disc
+                  className={`h-3 w-3 shrink-0 ${
+                    isVodFuture && ledState !== 'available' ? 'text-amber-400' : 'text-stone-400'
+                  }`}
+                />
+                <span>
+                  {t('vod_release', {
+                    date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                  })}
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Synopsis FR (affiché en entier si déplié) */}
         {identity.overviewFr && synopsisExpanded && (
-          <p className="mt-2.5 text-xs sm:text-[13px] leading-relaxed text-stone-200/90 line-clamp-2 sm:line-clamp-3">
+          <p className="mt-2.5 text-xs sm:text-[13px] leading-relaxed text-stone-200/95">
             {identity.overviewFr}
           </p>
         )}
@@ -945,16 +946,33 @@ export const MediaCandidateCard: React.FC<Props> = ({
             )}
           </div>
 
-          {evidence.identity.tmdbId > 0 && onAskSimilar && (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Bouton Fiche Complète / Synopsis (Popup / Bottom Sheet) */}
             <button
               type="button"
-              onClick={() => onAskSimilar(evidence)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-xs sm:text-sm font-semibold text-amber-200 hover:bg-amber-500/20 hover:border-amber-400/60 active:scale-[0.99] transition cursor-pointer"
+              onClick={() => setShowDetailsModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/35 bg-stone-900/90 px-3 py-1.5 text-xs sm:text-sm font-semibold text-amber-100 hover:bg-stone-800 hover:border-amber-400/60 active:scale-[0.99] transition cursor-pointer"
+              title={
+                lang === 'en'
+                  ? 'Open full movie sheet with large uncropped poster & complete synopsis'
+                  : 'Ouvrir la fiche complète (jaquette grand format, synopsis intégral et détails)'
+              }
             >
-              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              <span>{identity.mediaType === 'tv' ? t('similar_series') : t('similar_movies')}</span>
+              <Info className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span>{lang === 'en' ? 'Details & Synopsis' : 'Détails & Synopsis'}</span>
             </button>
-          )}
+
+            {evidence.identity.tmdbId > 0 && onAskSimilar && (
+              <button
+                type="button"
+                onClick={() => onAskSimilar(evidence)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-xs sm:text-sm font-semibold text-amber-200 hover:bg-amber-500/20 hover:border-amber-400/60 active:scale-[0.99] transition cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                <span>{identity.mediaType === 'tv' ? t('similar_series') : t('similar_movies')}</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Bandeau Retour Cast & Télécommande Directe Plex Player */}
@@ -1139,6 +1157,219 @@ export const MediaCandidateCard: React.FC<Props> = ({
           </div>
         )}
       </div>
+
+      {/* Popup / Bottom Sheet : Fiche Complète (Jaquette Grand Format entière + Synopsis Intégral + Métadonnées) */}
+      {showDetailsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4"
+          onClick={() => setShowDetailsModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={identity.titleFr}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-2xl max-h-[88dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl bg-[#130a0e] border-t sm:border border-amber-500/45 shadow-[0_-15px_50px_rgba(0,0,0,0.95)] p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-left space-y-4"
+          >
+            {/* Poignée visuelle mobile + barre de titre et bouton Fermer */}
+            <div className="w-12 h-1.5 rounded-full bg-amber-500/35 mx-auto sm:hidden mb-1" />
+
+            <div className="flex items-start justify-between gap-3 border-b border-amber-500/20 pb-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                    {identity.mediaType === 'movie'
+                      ? lang === 'en'
+                        ? '🎬 Movie Sheet'
+                        : '🎬 Fiche Film'
+                      : lang === 'en'
+                        ? '📺 Series Sheet'
+                        : '📺 Fiche Série'}
+                  </span>
+                  {rating !== null && rating > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 text-xs font-bold text-amber-200">
+                      <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                      <span>{rating.toFixed(1)}/10</span>
+                      <span className="text-[10px] uppercase text-amber-300/80">
+                        {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                <h3 className="mt-1.5 text-lg sm:text-xl font-bold text-white leading-snug break-words">
+                  {identity.titleFr}{' '}
+                  {identity.year && (
+                    <span className="font-normal text-amber-300">({identity.year})</span>
+                  )}
+                </h3>
+                {showOriginalTitle && (
+                  <p className="text-xs sm:text-sm italic text-stone-400 mt-0.5 break-words">
+                    {lang === 'en' ? 'Original title:' : 'Titre original :'} {identity.originalTitle}
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowDetailsModal(false)}
+                className="shrink-0 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700 p-2 text-stone-300 hover:text-white cursor-pointer"
+                aria-label={lang === 'en' ? 'Close' : 'Fermer'}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Jaquette Grand Format 2:3 entière (non tronquée) + Infos clés */}
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+              <div className="w-40 sm:w-44 aspect-[2/3] shrink-0 rounded-xl overflow-hidden bg-stone-950 border border-amber-500/40 shadow-[0_12px_30px_rgba(0,0,0,0.9)]">
+                {identity.posterUrl ? (
+                  <img
+                    src={identity.posterUrl}
+                    alt={identity.titleFr}
+                    className="h-full w-full object-contain bg-stone-950"
+                  />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-amber-500/50 p-3 text-center">
+                    {identity.mediaType === 'movie' ? <Film className="h-10 w-10" /> : <Tv className="h-10 w-10" />}
+                    <span className="text-xs text-stone-400">{identity.titleFr}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 space-y-3 w-full">
+                {/* Genres + Durée */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {formatDuration(identity.runtimeMinutes) && (
+                    <span className="rounded-lg bg-amber-500/15 border border-amber-500/35 px-2.5 py-0.5 text-xs font-semibold text-amber-200">
+                      ⏱️ {formatDuration(identity.runtimeMinutes)}
+                    </span>
+                  )}
+                  {identity.genres.map((g) => (
+                    <span
+                      key={g}
+                      className="rounded-full bg-stone-900 border border-amber-500/30 px-2.5 py-0.5 text-xs font-medium text-amber-100"
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </div>
+
+                {/* Synopsis complet sans aucune coupure */}
+                <div className="rounded-xl bg-black/55 border border-amber-500/20 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
+                    {t('synopsis')}
+                  </div>
+                  <p className="text-xs sm:text-sm leading-relaxed text-stone-200 whitespace-pre-line">
+                    {identity.overviewFr ||
+                      (lang === 'en' ? 'No synopsis available.' : 'Aucun synopsis renseigné pour ce titre.')}
+                  </p>
+                </div>
+
+                {/* Réalisation & Distribution complète */}
+                <div className="space-y-1.5 text-xs sm:text-sm text-stone-300 bg-stone-950/80 border border-stone-800 rounded-xl p-3">
+                  <p className="break-words">
+                    <strong className="text-amber-300 font-semibold">
+                      {identity.mediaType === 'movie' ? t('director') : t('creator')}
+                    </strong>{' '}
+                    <span className="text-white font-medium">{identity.directorOrCreator || '—'}</span>
+                  </p>
+                  <p className="break-words">
+                    <strong className="text-amber-300 font-semibold">{t('cast')}</strong>{' '}
+                    <span className="text-stone-100">
+                      {identity.topCast.length > 0 ? identity.topCast.join(', ') : '—'}
+                    </span>
+                  </p>
+                </div>
+
+                {/* Dates de sortie & Disponibilité */}
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 border border-stone-700 px-2.5 py-1 text-stone-200">
+                    <Clapperboard className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                    <span>
+                      {t('theatrical_release', {
+                        date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
+                      })}
+                    </span>
+                  </span>
+                  {vodDateFr && (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 border border-amber-500/35 px-2.5 py-1 text-amber-200">
+                      <Disc className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                      <span>
+                        {t('vod_release', {
+                          date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                        })}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Pied de la fiche : Statut + Actions directes */}
+            <div className="pt-3 border-t border-amber-500/20 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
+                <span
+                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                    ledState === 'available'
+                      ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
+                      : ledState === 'waitlist'
+                        ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
+                        : 'bg-rose-500'
+                  }`}
+                />
+                <span
+                  className={
+                    ledState === 'available'
+                      ? 'text-emerald-200'
+                      : ledState === 'waitlist'
+                        ? 'text-amber-200'
+                        : 'text-stone-300'
+                  }
+                >
+                  {statusPrimaryTitle}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {plexWebUrl && (
+                  <a
+                    href={primaryPlexHref || plexWebUrl}
+                    target={isMobileDevice ? undefined : '_blank'}
+                    rel={isMobileDevice ? undefined : 'noopener noreferrer'}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-2 text-xs sm:text-sm font-bold text-stone-950 shadow-md hover:from-amber-400 hover:to-yellow-400 cursor-pointer"
+                  >
+                    <Play className="h-3.5 w-3.5 fill-stone-950 text-stone-950 shrink-0" />
+                    <span>{isMobileDevice ? t('open_plex_app') : t('open_in_plex')}</span>
+                  </a>
+                )}
+
+                {actionability.canRequestNow && !preparedAction && (
+                  <button
+                    type="button"
+                    disabled={loadingAction || (identity.mediaType === 'tv' && selectedSeasons.length === 0)}
+                    onClick={() => {
+                      setShowDetailsModal(false);
+                      void handlePrepareRequest();
+                    }}
+                    className="cinema-velvet-pill inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs sm:text-sm font-bold text-white cursor-pointer"
+                  >
+                    <PlusCircle className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                    <span>{requestButtonLabel}</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowDetailsModal(false)}
+                  className="rounded-xl border border-stone-700 bg-stone-900 hover:bg-stone-800 px-3.5 py-2 text-xs sm:text-sm font-semibold text-stone-300 cursor-pointer"
+                >
+                  {lang === 'en' ? 'Close' : 'Fermer'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
