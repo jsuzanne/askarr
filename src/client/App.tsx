@@ -1627,7 +1627,14 @@ export function App() {
         {/* NIVEAU 1 : Identité de la Salle (Gauche) • Sélecteur Admin (Centre Desktop) • Bouton Réglages ⚙️ & Régie (Droite) */}
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-2">
           {/* Gauche : Logo & Marque */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div
+            onClick={() => {
+              setWorkspaceMode('user');
+              setUserTab('chat');
+            }}
+            className="flex items-center gap-2 sm:gap-3 shrink-0 cursor-pointer"
+            title="Retour à la Salle Ciné"
+          >
             <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-red-600 via-red-800 to-amber-600 p-[1px] shadow-[0_0_20px_rgba(220,38,38,0.4)] shrink-0">
               <div className="w-full h-full rounded-xl bg-[#140a0e] flex items-center justify-center">
                 <Clapperboard className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]" />
@@ -1852,33 +1859,37 @@ export function App() {
                   aria-modal="true"
                 >
                   <div
-                    className="w-full sm:max-w-lg bg-[#140a0e] border-t sm:border border-amber-500/40 rounded-t-3xl sm:rounded-2xl shadow-[0_-15px_50px_rgba(0,0,0,0.95)] p-4 sm:p-6 max-h-[88dvh] overflow-y-auto text-left flex flex-col pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+                    className="w-full sm:max-w-lg bg-[#140a0e] border-t sm:border border-amber-500/40 rounded-t-3xl sm:rounded-2xl shadow-[0_-15px_50px_rgba(0,0,0,0.95)] max-h-[88dvh] overflow-hidden text-left flex flex-col"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {/* Poignée mobile */}
-                    <div className="w-12 h-1.5 bg-amber-500/35 rounded-full mx-auto mb-3 sm:hidden" />
+                    {/* En-tête fixe du Bottom Sheet Réglages (zéro débordement au scroll) */}
+                    <div className="shrink-0 px-4 pt-3 pb-3 sm:px-6 sm:pt-5 bg-[#140a0e] border-b border-amber-500/20 z-10">
+                      {/* Poignée mobile */}
+                      <div className="w-12 h-1.5 bg-amber-500/35 rounded-full mx-auto mb-2.5 sm:hidden" />
 
-                    {/* En-tête du Bottom Sheet Réglages */}
-                    <div className="sticky top-0 bg-[#140a0e]/95 backdrop-blur-sm pt-1 pb-3 mb-3.5 border-b border-amber-500/20 flex items-center justify-between gap-2 z-10">
-                      <div>
-                        <div className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
-                          <Settings className="w-4 h-4 text-amber-400 shrink-0" />
-                          <span>{lang === 'en' ? 'Settings & Soundscape' : 'Réglages & Ambiance'}</span>
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                            <Settings className="w-4 h-4 text-amber-400 shrink-0" />
+                            <span>{lang === 'en' ? 'Settings & Soundscape' : 'Réglages & Ambiance'}</span>
+                          </div>
+                          <p className="text-[11px] text-stone-400 mt-0.5">
+                            Askarr v{APP_VERSION} • {APP_RELEASE_DATE}
+                          </p>
                         </div>
-                        <p className="text-[11px] text-stone-400 mt-0.5">
-                          Askarr v{APP_VERSION} • {APP_RELEASE_DATE}
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowAudioMenu(false)}
+                          className="p-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 cursor-pointer"
+                          aria-label="Fermer"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowAudioMenu(false)}
-                        className="p-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 cursor-pointer"
-                        aria-label="Fermer"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
                     </div>
 
+                    {/* Corps défilant des réglages */}
+                    <div className="flex-1 overflow-y-auto px-4 py-3.5 sm:px-6 sm:py-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
                     {/* 1. Outils Administrateur & Régie (si Admin, placé en tête pour bascule instantanée) */}
                     {isAdmin && (
                       <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
@@ -2102,7 +2113,7 @@ export function App() {
                               key={opt.id}
                               type="button"
                               onClick={() => handleSelectAudioMode(opt.id)}
-                              className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                              className={`w-full text-left px-3 py-2 rounded-xl border transition-all cursor-pointer ${
                                 active
                                   ? 'bg-amber-500/20 border-amber-400/60 text-amber-100 shadow-sm'
                                   : 'bg-stone-900/70 border-stone-800/80 text-stone-300 hover:bg-stone-900 hover:border-stone-700'
@@ -2169,6 +2180,7 @@ export function App() {
                           </button>
                         </div>
                       </div>
+                    </div>
                     </div>
                   </div>
                 </div>,
@@ -2429,6 +2441,19 @@ export function App() {
               <nav className="flex items-center gap-1.5 sm:gap-2 w-full">
                 <button
                   type="button"
+                  onClick={() => {
+                    setWorkspaceMode('user');
+                    setViewerUserMode(false);
+                  }}
+                  className="lg:hidden px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer cinema-velvet-pill text-white shadow-sm shrink-0"
+                  title="Retourner dans la Salle Ciné"
+                >
+                  <Clapperboard className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <span>{t('salle_cine')}</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setAdminTab('cloudflare')}
                   className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
                     adminTab === 'cloudflare'
@@ -2555,7 +2580,7 @@ export function App() {
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 max-w-full">
               <label className="text-emerald-200/90 font-medium hidden sm:inline">
                 Profil simulé :
               </label>
@@ -2565,7 +2590,7 @@ export function App() {
                   setViewerProfilePreset(e.target.value);
                   setConversationId(undefined);
                 }}
-                className="rounded-lg bg-black/80 border border-emerald-500/50 px-2.5 py-1 text-emerald-100 font-medium text-xs focus:outline-none focus:border-emerald-300"
+                className="max-w-full truncate rounded-lg bg-black/80 border border-emerald-500/50 px-2.5 py-1 text-emerald-100 font-medium text-xs focus:outline-none focus:border-emerald-300"
               >
                 <option value="cinephile_2salles">
                   🎬 Membre Cinéphile (NucVillers + NucBuntu — 2 serveurs Plex)
@@ -5259,7 +5284,7 @@ export function App() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-stone-400">Emails autorisés dans la règle :</span>
-                        <span className="font-mono text-emerald-300">{cfStatus.emails.length}</span>
+                        <span className="font-mono text-emerald-300">{(cfStatus.emails ?? []).length}</span>
                       </div>
                     </div>
 
@@ -5286,7 +5311,7 @@ export function App() {
                         <option value="">
                           -- Si son email Google diffère de Plex, associer à ce compte Plex --
                         </option>
-                        {cfStatus.plexUsers.map((pu) => (
+                        {(cfStatus.plexUsers ?? []).map((pu) => (
                           <option key={pu.id} value={pu.id}>
                             {pu.displayName} ({pu.email}) — Ami Plex #{pu.id}
                           </option>
@@ -5323,12 +5348,12 @@ export function App() {
                   <div className="space-y-4">
                     <div className="p-4 rounded-xl bg-black/65 border border-stone-800 max-h-64 overflow-y-auto space-y-2">
                       <div className="font-semibold text-stone-200 mb-2">
-                        Emails actuellement autorisés dans Cloudflare ({cfStatus.emails.length})
+                        Emails actuellement autorisés dans Cloudflare ({(cfStatus.emails ?? []).length})
                       </div>
-                      {cfStatus.emails.length === 0 ? (
+                      {(cfStatus.emails ?? []).length === 0 ? (
                         <div className="text-stone-500">Aucun email configuré dans cette règle.</div>
                       ) : (
-                        cfStatus.emails.map((email) => (
+                        (cfStatus.emails ?? []).map((email) => (
                           <div
                             key={email}
                             className="flex items-center justify-between gap-2 py-1.5 px-3 rounded-lg bg-stone-900/90 border border-stone-800"
@@ -5360,12 +5385,12 @@ export function App() {
                       )}
                     </div>
 
-                    {cfStatus.revisions.length > 0 && (
+                    {(cfStatus.revisions ?? []).length > 0 && (
                       <div className="p-4 rounded-xl bg-black/65 border border-stone-800 max-h-44 overflow-y-auto space-y-2">
                         <div className="font-semibold text-stone-200 mb-1">
                           Historique & Rollback instantané SQLite
                         </div>
-                        {cfStatus.revisions.slice(0, 5).map((rev) => (
+                        {(cfStatus.revisions ?? []).slice(0, 5).map((rev) => (
                           <div
                             key={rev.id}
                             className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-stone-900/90 border border-stone-800"

@@ -691,7 +691,8 @@ export const MediaCandidateCard: React.FC<Props> = ({
             )}
 
             {/* Alerte uniquement si l'utilisateur n'a PAS accès au serveur où se trouve le média */}
-            {catalogPresence.accessibleToCurrentUser === false && (
+            {catalogPresence.accessibleToCurrentUser === false &&
+              (catalogPresence.availableServers?.length ?? 0) > 0 && (
               <div className="inline-flex items-center gap-2 rounded-lg bg-amber-950/70 border border-amber-500/50 px-3 py-1.5 text-xs text-amber-200">
                 <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
                 <span>
@@ -1190,144 +1191,149 @@ export const MediaCandidateCard: React.FC<Props> = ({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-2xl max-h-[88dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl bg-[#130a0e] border-t sm:border border-amber-500/45 shadow-[0_-15px_50px_rgba(0,0,0,0.95)] p-4 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-left space-y-4"
+            className="w-full sm:max-w-2xl max-h-[88dvh] overflow-hidden rounded-t-3xl sm:rounded-2xl bg-[#130a0e] border-t sm:border border-amber-500/45 shadow-[0_-15px_50px_rgba(0,0,0,0.95)] text-left flex flex-col"
           >
-            {/* Poignée visuelle mobile + barre de titre et bouton Fermer */}
-            <div className="w-12 h-1.5 rounded-full bg-amber-500/35 mx-auto sm:hidden mb-1" />
+            {/* En-tête fixe de la Fiche Film (zéro débordement au scroll) */}
+            <div className="shrink-0 px-4 pt-3 pb-3 sm:px-6 sm:pt-5 bg-[#130a0e] border-b border-amber-500/20 z-10">
+              {/* Poignée visuelle mobile */}
+              <div className="w-12 h-1.5 rounded-full bg-amber-500/35 mx-auto sm:hidden mb-2.5" />
 
-            <div className="flex items-start justify-between gap-3 border-b border-amber-500/20 pb-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
-                    {identity.mediaType === 'movie'
-                      ? lang === 'en'
-                        ? '🎬 Movie Sheet'
-                        : '🎬 Fiche Film'
-                      : lang === 'en'
-                        ? '📺 Series Sheet'
-                        : '📺 Fiche Série'}
-                  </span>
-                  {rating !== null && rating > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 text-xs font-bold text-amber-200">
-                      <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                      <span>{rating.toFixed(1)}/10</span>
-                      <span className="text-[10px] uppercase text-amber-300/80">
-                        {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
-                      </span>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-md bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                      {identity.mediaType === 'movie'
+                        ? lang === 'en'
+                          ? '🎬 Movie Sheet'
+                          : '🎬 Fiche Film'
+                        : lang === 'en'
+                          ? '📺 Series Sheet'
+                          : '📺 Fiche Série'}
                     </span>
+                    {rating !== null && rating > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 text-xs font-bold text-amber-200">
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                        <span>{rating.toFixed(1)}/10</span>
+                        <span className="text-[10px] uppercase text-amber-300/80">
+                          {identity.ratings.imdbOrAudienceRating !== null ? 'IMDb' : 'TMDB'}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="mt-1.5 text-lg sm:text-xl font-bold text-white leading-snug break-words">
+                    {identity.titleFr}{' '}
+                    {identity.year && (
+                      <span className="font-normal text-amber-300">({identity.year})</span>
+                    )}
+                  </h3>
+                  {showOriginalTitle && (
+                    <p className="text-xs sm:text-sm italic text-stone-400 mt-0.5 break-words">
+                      {lang === 'en' ? 'Original title:' : 'Titre original :'} {identity.originalTitle}
+                    </p>
                   )}
                 </div>
-                <h3 className="mt-1.5 text-lg sm:text-xl font-bold text-white leading-snug break-words">
-                  {identity.titleFr}{' '}
-                  {identity.year && (
-                    <span className="font-normal text-amber-300">({identity.year})</span>
-                  )}
-                </h3>
-                {showOriginalTitle && (
-                  <p className="text-xs sm:text-sm italic text-stone-400 mt-0.5 break-words">
-                    {lang === 'en' ? 'Original title:' : 'Titre original :'} {identity.originalTitle}
-                  </p>
-                )}
-              </div>
 
-              <button
-                type="button"
-                onClick={() => setShowDetailsModal(false)}
-                className="shrink-0 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700 p-2 text-stone-300 hover:text-white cursor-pointer"
-                aria-label={lang === 'en' ? 'Close' : 'Fermer'}
-              >
-                <X className="h-5 w-5" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDetailsModal(false)}
+                  className="shrink-0 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700 p-2 text-stone-300 hover:text-white cursor-pointer"
+                  aria-label={lang === 'en' ? 'Close' : 'Fermer'}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
-            {/* Jaquette Grand Format 2:3 entière (non tronquée) + Infos clés */}
-            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
-              <div className="w-40 sm:w-44 aspect-[2/3] shrink-0 rounded-xl overflow-hidden bg-stone-950 border border-amber-500/40 shadow-[0_12px_30px_rgba(0,0,0,0.9)]">
-                {identity.posterUrl ? (
-                  <img
-                    src={identity.posterUrl}
-                    alt={identity.titleFr}
-                    className="h-full w-full object-contain bg-stone-950"
-                  />
-                ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-amber-500/50 p-3 text-center">
-                    {identity.mediaType === 'movie' ? <Film className="h-10 w-10" /> : <Tv className="h-10 w-10" />}
-                    <span className="text-xs text-stone-400">{identity.titleFr}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex-1 min-w-0 space-y-3 w-full">
-                {/* Genres + Durée */}
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {formatDuration(identity.runtimeMinutes) && (
-                    <span className="rounded-lg bg-amber-500/15 border border-amber-500/35 px-2.5 py-0.5 text-xs font-semibold text-amber-200">
-                      ⏱️ {formatDuration(identity.runtimeMinutes)}
-                    </span>
+            {/* Corps défilant : Jaquette Grand Format 2:3 entière (non tronquée) + Infos clés */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 space-y-4">
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+                <div className="w-40 sm:w-44 aspect-[2/3] shrink-0 rounded-xl overflow-hidden bg-stone-950 border border-amber-500/40 shadow-[0_12px_30px_rgba(0,0,0,0.45)]">
+                  {identity.posterUrl ? (
+                    <img
+                      src={identity.posterUrl}
+                      alt={identity.titleFr}
+                      className="h-full w-full object-contain bg-stone-950"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-amber-500/50 p-3 text-center">
+                      {identity.mediaType === 'movie' ? <Film className="h-10 w-10" /> : <Tv className="h-10 w-10" />}
+                      <span className="text-xs text-stone-400">{identity.titleFr}</span>
+                    </div>
                   )}
-                  {identity.genres.map((g) => (
-                    <span
-                      key={g}
-                      className="rounded-full bg-stone-900 border border-amber-500/30 px-2.5 py-0.5 text-xs font-medium text-amber-100"
-                    >
-                      {g}
-                    </span>
-                  ))}
                 </div>
 
-                {/* Synopsis complet sans aucune coupure */}
-                <div className="rounded-xl bg-black/55 border border-amber-500/20 p-3">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
-                    {t('synopsis')}
+                <div className="flex-1 min-w-0 space-y-3 w-full">
+                  {/* Genres + Durée */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {formatDuration(identity.runtimeMinutes) && (
+                      <span className="rounded-lg bg-amber-500/15 border border-amber-500/35 px-2.5 py-0.5 text-xs font-semibold text-amber-200">
+                        ⏱️ {formatDuration(identity.runtimeMinutes)}
+                      </span>
+                    )}
+                    {identity.genres.map((g) => (
+                      <span
+                        key={g}
+                        className="rounded-full bg-stone-900 border border-amber-500/30 px-2.5 py-0.5 text-xs font-medium text-amber-100"
+                      >
+                        {g}
+                      </span>
+                    ))}
                   </div>
-                  <p className="text-xs sm:text-sm leading-relaxed text-stone-200 whitespace-pre-line">
-                    {identity.overviewFr ||
-                      (lang === 'en' ? 'No synopsis available.' : 'Aucun synopsis renseigné pour ce titre.')}
-                  </p>
-                </div>
 
-                {/* Réalisation & Distribution complète */}
-                <div className="space-y-1.5 text-xs sm:text-sm text-stone-300 bg-stone-950/80 border border-stone-800 rounded-xl p-3">
-                  <p className="break-words">
-                    <strong className="text-amber-300 font-semibold">
-                      {identity.mediaType === 'movie' ? t('director') : t('creator')}
-                    </strong>{' '}
-                    <span className="text-white font-medium">{identity.directorOrCreator || '—'}</span>
-                  </p>
-                  <p className="break-words">
-                    <strong className="text-amber-300 font-semibold">{t('cast')}</strong>{' '}
-                    <span className="text-stone-100">
-                      {identity.topCast.length > 0 ? identity.topCast.join(', ') : '—'}
-                    </span>
-                  </p>
-                </div>
+                  {/* Synopsis complet sans aucune coupure */}
+                  <div className="rounded-xl bg-black/55 border border-amber-500/20 p-3">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300 mb-1">
+                      {t('synopsis')}
+                    </div>
+                    <p className="text-xs sm:text-sm leading-relaxed text-stone-200 whitespace-pre-line">
+                      {identity.overviewFr ||
+                        (lang === 'en' ? 'No synopsis available.' : 'Aucun synopsis renseigné pour ce titre.')}
+                    </p>
+                  </div>
 
-                {/* Dates de sortie & Disponibilité */}
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 border border-stone-700 px-2.5 py-1 text-stone-200">
-                    <Clapperboard className="h-3.5 w-3.5 text-red-400 shrink-0" />
-                    <span>
-                      {t('theatrical_release', {
-                        date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
-                      })}
-                    </span>
-                  </span>
-                  {vodDateFr && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 border border-amber-500/35 px-2.5 py-1 text-amber-200">
-                      <Disc className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                  {/* Réalisation & Distribution complète */}
+                  <div className="space-y-1.5 text-xs sm:text-sm text-stone-300 bg-stone-950/80 border border-stone-800 rounded-xl p-3">
+                    <p className="break-words">
+                      <strong className="text-amber-300 font-semibold">
+                        {identity.mediaType === 'movie' ? t('director') : t('creator')}
+                      </strong>{' '}
+                      <span className="text-white font-medium">{identity.directorOrCreator || '—'}</span>
+                    </p>
+                    <p className="break-words">
+                      <strong className="text-amber-300 font-semibold">{t('cast')}</strong>{' '}
+                      <span className="text-stone-100">
+                        {identity.topCast.length > 0 ? identity.topCast.join(', ') : '—'}
+                      </span>
+                    </p>
+                  </div>
+
+                  {/* Dates de sortie & Disponibilité */}
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 border border-stone-700 px-2.5 py-1 text-stone-200">
+                      <Clapperboard className="h-3.5 w-3.5 text-red-400 shrink-0" />
                       <span>
-                        {t('vod_release', {
-                          date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                        {t('theatrical_release', {
+                          date: cinemaDateFr || (identity.year ? String(identity.year) : '—')
                         })}
                       </span>
                     </span>
-                  )}
+                    {vodDateFr && (
+                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 border border-amber-500/35 px-2.5 py-1 text-amber-200">
+                        <Disc className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                        <span>
+                          {t('vod_release', {
+                            date: identity.releaseDates.isEstimatedDate && isVodFuture ? `~${vodDateFr}` : vodDateFr
+                          })}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Pied de la fiche : Statut + Actions directes */}
-            <div className="pt-3 border-t border-amber-500/20 flex flex-wrap items-center justify-between gap-2.5">
+            {/* Pied fixe de la fiche : Statut + Actions directes */}
+            <div className="shrink-0 px-4 py-3 sm:px-6 pb-[max(1rem,env(safe-area-inset-bottom))] bg-[#130a0e] border-t border-amber-500/20 flex flex-wrap items-center justify-between gap-2.5">
               <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
                 <span
                   className={`h-2.5 w-2.5 rounded-full shrink-0 ${

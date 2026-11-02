@@ -208,6 +208,10 @@ html[data-theme="light"] .cinema-poster-card:hover {
     0 0 20px -6px rgba(185, 28, 28, 0.12);
 }
 
+html[data-theme="light"] .cinema-marquee-bulbs {
+  background-image: radial-gradient(circle, rgba(217, 119, 6, 0.65) 1.75px, transparent 2.5px);
+}
+
 /* Surfaces sombres arbitraires converties en Ivoire / Verre Dépoli en mode Clair */
 html[data-theme="light"] .bg-\[\#0c070a\]\/95 {
   background-color: rgba(252, 249, 242, 0.95) !important;
@@ -262,6 +266,7 @@ html[data-theme="light"] .bg-black\/60,
 html[data-theme="light"] .bg-black\/65,
 html[data-theme="light"] .bg-black\/70,
 html[data-theme="light"] .bg-black\/75,
+html[data-theme="light"] .bg-black\/80:not(.fixed),
 html[data-theme="light"] .bg-black\/85,
 html[data-theme="light"] .bg-black\/90,
 html[data-theme="light"] .bg-black {
@@ -296,6 +301,18 @@ html[data-theme="light"] textarea::placeholder {
   color: #8c7b65 !important;
 }
 
-html[data-theme="light"] .cinema-velvet-pill .text-amber-200 {
+html[data-theme="light"] .cinema-velvet-pill .text-amber-100,
+html[data-theme="light"] .cinema-velvet-pill .text-amber-200,
+html[data-theme="light"] .cinema-velvet-pill .text-amber-300,
+html[data-theme="light"] .cinema-velvet-pill .text-amber-400 {
   color: #fde68a !important;
+}
+
+html[data-theme="light"] .cinema-velvet-pill .bg-black\/35,
+html[data-theme="light"] .cinema-velvet-pill .bg-black\/30,
+html[data-theme="light"] .bg-amber-600 .bg-black\/30,
+html[data-theme="light"] .bg-emerald-600 .bg-black\/30 {
+  background-color: rgba(0, 0, 0, 0.32) !important;
+  color: #fef3c7 !important;
+  box-shadow: none !important;
 }
