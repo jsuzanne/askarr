@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sparkles,
   Search,
@@ -280,6 +281,18 @@ export function App() {
   const [audioVolume, setAudioVolume] = useState<number>(() => cinemaAudio.getVolume());
   const [showAudioMenu, setShowAudioMenu] = useState<boolean>(false);
   const audioMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Fermeture du Bottom Sheet Réglages avec la touche Échap
+  useEffect(() => {
+    if (!showAudioMenu) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowAudioMenu(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showAudioMenu]);
   // Thème visuel : 'dark' (Salle Obscure) vs 'light' (Matinée / Foyer Lumineux)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     try {
@@ -1744,7 +1757,7 @@ export function App() {
               </button>
             )}
 
-            {/* Accès rapide Régie / Salle Ciné sur mobile/tablette (< lg) pour l'Admin uniquement */}
+            {/* Accès rapide Régie / Salle Ciné sur tablette (sm à lg) pour l'Admin uniquement. Sur mobile (< sm), accessible dans Réglages */}
             {isAdmin && !(isViewerPreview && viewerImmersiveHeader) && (
               <button
                 type="button"
@@ -1758,7 +1771,7 @@ export function App() {
                     setViewerImmersiveHeader(false);
                   }
                 }}
-                className={`lg:hidden px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`hidden sm:flex lg:hidden px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap items-center gap-1.5 transition-all cursor-pointer ${
                   workspaceMode === 'admin'
                     ? 'bg-amber-600 text-white border-amber-400/60 shadow-sm'
                     : 'bg-stone-900/90 text-amber-200 border-amber-500/35 hover:bg-stone-800'
@@ -1779,26 +1792,26 @@ export function App() {
               </button>
             )}
 
-            {/* Bouton ⚙️ Réglages sur iPhone (< sm) / 🔊 Ambiance Sonore sur Desktop (sm+) */}
+            {/* Bouton ⚙️ Réglages sur Smartphone (< sm) / 🔊 Ambiance Sonore sur Desktop (sm+) */}
             <div className="relative" ref={audioMenuRef}>
               <button
                 type="button"
                 onClick={() => setShowAudioMenu((v) => !v)}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`p-2 sm:px-3 sm:py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center justify-center gap-1.5 transition-all cursor-pointer relative min-h-[38px] min-w-[38px] ${
                   showAudioMenu || audioMode !== 'off'
                     ? 'bg-amber-500/20 text-amber-100 border-amber-400/55 shadow-[0_0_15px_rgba(245,158,11,0.18)]'
                     : 'bg-stone-900/95 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-800'
                 }`}
                 aria-label="Réglages et ambiance sonore"
-                title="Réglages : Ambiance sonore 35mm, Thème Clair/Sombre, Langue FR/EN & Profil"
+                title="Réglages : Espace Régie, Ambiance sonore 35mm, Thème Clair/Sombre, Langue FR/EN & Profil"
               >
-                {/* Icône ⚙️ sur Smartphone (< sm) */}
-                <Settings className="w-4 h-4 text-amber-300 shrink-0 sm:hidden" />
-                {audioMode !== 'off' && (
-                  <span className="sm:hidden inline-flex items-center px-1 py-0.5 rounded bg-amber-400/25 text-amber-200">
-                    <Volume2 className="w-3 h-3 text-amber-300 animate-pulse shrink-0" />
-                  </span>
-                )}
+                {/* Icône ⚙️ sur Smartphone (< sm) avec point lumineux si ambiance sonore active */}
+                <span className="sm:hidden relative inline-flex items-center justify-center">
+                  <Settings className="w-4 h-4 text-amber-300 shrink-0" />
+                  {audioMode !== 'off' && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)] animate-pulse" />
+                  )}
+                </span>
 
                 {/* Libellé complet 🔊 Ambiance sur Desktop (sm+) */}
                 <span className="hidden sm:inline-flex items-center gap-1.5">
@@ -1822,20 +1835,23 @@ export function App() {
                 </span>
               </button>
 
-              {showAudioMenu && (
+              {/* Bottom Sheet Réglages iOS native (téléporté dans document.body via createPortal pour éviter le bug de stacking context Safari WebKit) */}
+              {showAudioMenu && typeof document !== 'undefined' && createPortal(
                 <div
-                  className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+                  className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
                   onClick={() => setShowAudioMenu(false)}
+                  role="dialog"
+                  aria-modal="true"
                 >
                   <div
-                    className="w-full sm:max-w-md bg-[#140a0e] border-t sm:border border-amber-500/40 rounded-t-3xl sm:rounded-2xl shadow-[0_-15px_50px_rgba(0,0,0,0.95)] p-4 sm:p-5 max-h-[88dvh] overflow-y-auto text-left pb-[max(1.25rem,env(safe-area-inset-bottom))]"
+                    className="w-full sm:max-w-lg bg-[#140a0e] border-t sm:border border-amber-500/40 rounded-t-3xl sm:rounded-2xl shadow-[0_-15px_50px_rgba(0,0,0,0.95)] p-4 sm:p-6 max-h-[88dvh] overflow-y-auto text-left flex flex-col pb-[max(1.5rem,env(safe-area-inset-bottom))]"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {/* Poignée mobile */}
-                    <div className="w-10 h-1 bg-stone-700 rounded-full mx-auto mb-3 sm:hidden" />
+                    <div className="w-12 h-1.5 bg-amber-500/35 rounded-full mx-auto mb-3 sm:hidden" />
 
                     {/* En-tête du Bottom Sheet Réglages */}
-                    <div className="flex items-center justify-between gap-2 pb-3 mb-3.5 border-b border-amber-500/20">
+                    <div className="sticky top-0 bg-[#140a0e]/95 backdrop-blur-sm pt-1 pb-3 mb-3.5 border-b border-amber-500/20 flex items-center justify-between gap-2 z-10">
                       <div>
                         <div className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
                           <Settings className="w-4 h-4 text-amber-400 shrink-0" />
@@ -1848,14 +1864,106 @@ export function App() {
                       <button
                         type="button"
                         onClick={() => setShowAudioMenu(false)}
-                        className="p-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 cursor-pointer"
+                        className="p-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 cursor-pointer"
                         aria-label="Fermer"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
 
-                    {/* 1. Profil Spectateur & Serveurs Plex connectés */}
+                    {/* 1. Outils Administrateur & Régie (si Admin, placé en tête pour bascule instantanée) */}
+                    {isAdmin && (
+                      <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
+                        <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Server className="w-3.5 h-3.5" />
+                            <span>Espace de travail</span>
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40 font-mono">
+                            Admin
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspaceMode('user');
+                              setViewerUserMode(false);
+                              setConversationId(undefined);
+                              setShowAudioMenu(false);
+                            }}
+                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                              workspaceMode === 'user' && !viewerUserMode
+                                ? 'cinema-velvet-pill text-white border-amber-400/50 shadow-sm'
+                                : 'bg-stone-900/80 text-stone-300 border-stone-800 hover:text-white'
+                            }`}
+                          >
+                            <Clapperboard className="w-4 h-4" />
+                            <span className="truncate">{t('salle_cine')}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspaceMode('user');
+                              setViewerUserMode(true);
+                              setViewerImmersiveHeader(false);
+                              setConversationId(undefined);
+                              setShowAudioMenu(false);
+                            }}
+                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                              workspaceMode === 'user' && viewerUserMode
+                                ? 'bg-emerald-600 text-white border-emerald-400 shadow-sm'
+                                : 'bg-stone-900/80 text-emerald-300 border-stone-800 hover:bg-emerald-950/40'
+                            }`}
+                          >
+                            <Eye className="w-4 h-4" />
+                            <span className="truncate">{t('vue_user')}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkspaceMode('admin');
+                              setViewerUserMode(false);
+                              setViewerImmersiveHeader(false);
+                              setShowAudioMenu(false);
+                            }}
+                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                              workspaceMode === 'admin'
+                                ? 'bg-amber-600 text-white border-amber-400 shadow-sm'
+                                : 'bg-stone-900/80 text-amber-200 border-stone-800 hover:text-white'
+                            }`}
+                          >
+                            <Server className="w-4 h-4" />
+                            <span className="truncate">{t('regie_admin')}</span>
+                          </button>
+                        </div>
+
+                        {workspaceMode === 'user' && !isViewerPreview && (
+                          <button
+                            type="button"
+                            onClick={() => setDebugOverlay((v) => !v)}
+                            className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border flex items-center justify-between transition-colors cursor-pointer ${
+                              debugOverlay
+                                ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
+                                : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Bug className="w-4 h-4 text-amber-400 shrink-0" />
+                              <span>Traces techniques sous les cartes</span>
+                            </span>
+                            <span className="font-mono font-bold px-2 py-0.5 rounded bg-black/40">
+                              {debugOverlay ? 'ON' : 'OFF'}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 2. Profil Spectateur & Serveurs Plex connectés */}
                     {session && (
                       <div className="mb-3.5 p-3 rounded-xl bg-stone-950/90 border border-amber-500/20">
                         <div className="flex items-center justify-between gap-2">
@@ -1900,7 +2008,7 @@ export function App() {
                       </div>
                     )}
 
-                    {/* 2. Apparence (Thème Clair / Sombre) & Langue (FR / EN) */}
+                    {/* 3. Apparence (Thème Clair / Sombre) & Langue (FR / EN) */}
                     <div className="grid grid-cols-2 gap-2 mb-4">
                       <button
                         type="button"
@@ -1943,8 +2051,8 @@ export function App() {
                       </button>
                     </div>
 
-                    {/* 3. Ambiance Sonore Cinéma (Cabine 35mm & Bruitages) */}
-                    <div className="mb-3.5">
+                    {/* 4. Ambiance Sonore Cinéma (Cabine 35mm & Bruitages) */}
+                    <div className="mb-2">
                       <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5 mb-2">
                         <Volume2 className="w-3.5 h-3.5" />
                         <span>{t('soundscape_title')}</span>
@@ -2054,95 +2162,9 @@ export function App() {
                         </div>
                       </div>
                     </div>
-
-                    {/* 4. Outils Administrateur & Régie (Uniquement visible pour un Admin) */}
-                    {isAdmin && (
-                      <div className="pt-3 border-t border-amber-500/25 space-y-2.5">
-                        <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                          <Server className="w-3.5 h-3.5" />
-                          <span>Régie & Outils Administrateur</span>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setWorkspaceMode('user');
-                              setViewerUserMode(false);
-                              setConversationId(undefined);
-                              setShowAudioMenu(false);
-                            }}
-                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
-                              workspaceMode === 'user' && !viewerUserMode
-                                ? 'cinema-velvet-pill text-white border-amber-400/50'
-                                : 'bg-stone-900/80 text-stone-300 border-stone-800 hover:text-white'
-                            }`}
-                          >
-                            <Clapperboard className="w-4 h-4" />
-                            <span>{t('salle_cine')}</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setWorkspaceMode('user');
-                              setViewerUserMode(true);
-                              setViewerImmersiveHeader(false);
-                              setConversationId(undefined);
-                              setShowAudioMenu(false);
-                            }}
-                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
-                              workspaceMode === 'user' && viewerUserMode
-                                ? 'bg-emerald-600 text-white border-emerald-400'
-                                : 'bg-stone-900/80 text-emerald-300 border-stone-800 hover:bg-emerald-950/40'
-                            }`}
-                          >
-                            <Eye className="w-4 h-4" />
-                            <span>{t('vue_user')}</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setWorkspaceMode('admin');
-                              setViewerUserMode(false);
-                              setViewerImmersiveHeader(false);
-                              setShowAudioMenu(false);
-                            }}
-                            className={`p-2 rounded-xl text-xs font-semibold border flex flex-col items-center gap-1 cursor-pointer transition-all ${
-                              workspaceMode === 'admin'
-                                ? 'bg-amber-600 text-white border-amber-400'
-                                : 'bg-stone-900/80 text-amber-200 border-stone-800 hover:text-white'
-                            }`}
-                          >
-                            <Server className="w-4 h-4" />
-                            <span>{t('regie_admin')}</span>
-                          </button>
-                        </div>
-
-                        {workspaceMode === 'user' && !isViewerPreview && (
-                          <button
-                            type="button"
-                            onClick={() => setDebugOverlay((v) => !v)}
-                            className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border flex items-center justify-between transition-colors cursor-pointer ${
-                              debugOverlay
-                                ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
-                                : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
-                            }`}
-                          >
-                            <span className="flex items-center gap-2">
-                              <Bug className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Traces techniques sous les cartes</span>
-                            </span>
-                            <span className="font-mono font-bold px-2 py-0.5 rounded bg-black/40">
-                              {debugOverlay ? 'ON' : 'OFF'}
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
 
