@@ -1612,16 +1612,16 @@ export function App() {
         <div className="h-1.5 w-full bg-gradient-to-r from-red-950 via-amber-500/30 to-red-950 cinema-marquee-bulbs opacity-90" />
 
         {/* NIVEAU 1 : Identité de la Salle (Gauche) • Sélecteur Salle Ciné / Régie (Centre) • Profil & Traces (Droite) */}
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-3">
-          {/* Gauche : Logo & Marque */}
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 lg:gap-3">
+          {/* Gauche : Logo & Marque (shrink-0 empêche tout chevauchement avec le sélecteur central) */}
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-red-600 via-red-800 to-amber-600 p-[1px] shadow-[0_0_20px_rgba(220,38,38,0.4)] shrink-0">
               <div className="w-full h-full rounded-xl bg-[#140a0e] flex items-center justify-center">
                 <Clapperboard className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]" />
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="flex items-center gap-2 shrink-0">
               <h1 className="font-cinema text-2xl sm:text-3xl tracking-wider bg-gradient-to-b from-amber-100 via-amber-300 to-amber-500 bg-clip-text text-transparent leading-none">
                 ASKARR
               </h1>
@@ -1631,7 +1631,13 @@ export function App() {
               >
                 v{APP_VERSION}
               </span>
-              <span className="hidden md:inline-flex font-cinema tracking-widest text-xs px-2.5 py-0.5 rounded-md bg-gradient-to-r from-red-900/90 to-red-800/80 text-amber-200 border border-amber-400/40 shadow-sm whitespace-nowrap">
+              <span
+                className={`${
+                  isAdmin && !(isViewerPreview && viewerImmersiveHeader)
+                    ? 'hidden 2xl:inline-flex'
+                    : 'hidden sm:inline-flex'
+                } font-cinema tracking-widest text-xs px-2.5 py-0.5 rounded-md bg-gradient-to-r from-red-900/90 to-red-800/80 text-amber-200 border border-amber-400/40 shadow-sm whitespace-nowrap`}
+              >
                 {workspaceMode === 'user' ? t('grand_cinema_badge') : t('regie_admin_badge')}
               </span>
             </div>
@@ -1639,7 +1645,7 @@ export function App() {
 
           {/* Centre : Bascule Principale "Salle Ciné (Admin)" vs "👁️ Vue User" vs "Régie Admin" */}
           {isAdmin && !(isViewerPreview && viewerImmersiveHeader) && (
-            <div className="flex items-center bg-stone-950/95 p-1 rounded-xl border border-amber-500/30 shadow-inner">
+            <div className="flex items-center bg-stone-950/95 p-1 rounded-xl border border-amber-500/30 shadow-inner shrink-0">
               <button
                 type="button"
                 onClick={() => {
@@ -1647,14 +1653,14 @@ export function App() {
                   setViewerUserMode(false);
                   setConversationId(undefined);
                 }}
-                className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'user' && !viewerUserMode
                     ? 'cinema-velvet-pill text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
                 }`}
                 title={t('salle_cine_tooltip')}
               >
-                <Clapperboard className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <Clapperboard className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                 <span>{t('salle_cine')}</span>
               </button>
               <button
@@ -1665,14 +1671,14 @@ export function App() {
                   setViewerImmersiveHeader(false);
                   setConversationId(undefined);
                 }}
-                className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'user' && viewerUserMode
                     ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]'
                     : 'text-emerald-300/85 hover:text-emerald-200 hover:bg-emerald-950/40'
                 }`}
                 title={t('vue_user_tooltip')}
               >
-                <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                 <span>{t('vue_user')}</span>
               </button>
               <button
@@ -1682,25 +1688,25 @@ export function App() {
                   setViewerUserMode(false);
                   setViewerImmersiveHeader(false);
                 }}
-                className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all ${
                   workspaceMode === 'admin'
                     ? 'bg-amber-600 text-white shadow-sm'
                     : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
-                <Server className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <Server className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                 <span>{t('regie_admin')}</span>
               </button>
             </div>
           )}
 
-          {/* Droite : Sélecteur Langue FR/EN + Ambiance Sonore + Bouton Traces (en Salle Ciné) + Profil Utilisateur */}
-          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          {/* Droite : Sélecteur Langue FR/EN + Thème + Ambiance Sonore + Bouton Traces + Profil Utilisateur */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Sélecteur de Langue (FR / EN) */}
             <button
               type="button"
               onClick={toggleLang}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
+              className="px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
               title={lang === 'fr' ? t('switch_to_en') : t('switch_to_fr')}
             >
               <span>{lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}</span>
@@ -1710,18 +1716,18 @@ export function App() {
             <button
               type="button"
               onClick={toggleTheme}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
+              className="px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer bg-stone-900/90 text-amber-200 border-amber-500/30 hover:border-amber-400/60 hover:bg-stone-850 shadow-sm"
               title={theme === 'dark' ? t('switch_to_light') : t('switch_to_dark')}
             >
               {theme === 'dark' ? (
                 <>
                   <Sun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                  <span className="hidden sm:inline">{t('theme_light')}</span>
+                  <span className="hidden md:inline">{t('theme_light')}</span>
                 </>
               ) : (
                 <>
                   <Moon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="hidden sm:inline">{t('theme_dark')}</span>
+                  <span className="hidden md:inline">{t('theme_dark')}</span>
                 </>
               )}
             </button>
@@ -1731,7 +1737,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setShowAudioMenu((v) => !v)}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer ${
                   audioMode !== 'off'
                     ? 'bg-amber-500/20 text-amber-200 border-amber-400/50 shadow-[0_0_15px_rgba(245,158,11,0.18)]'
                     : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200 hover:border-stone-700'
@@ -1743,7 +1749,7 @@ export function App() {
                 ) : (
                   <VolumeX className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                 )}
-                <span className="hidden md:inline">{t('ambiance')}</span>
+                <span className="hidden xl:inline">{t('ambiance')}</span>
                 <span className="font-bold">
                   {audioMode === 'off'
                     ? t('audio_off')
@@ -1885,7 +1891,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setDebugOverlay((v) => !v)}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-colors cursor-pointer ${
+                className={`px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium border whitespace-nowrap flex items-center gap-1.5 transition-colors cursor-pointer ${
                   debugOverlay
                     ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
                     : 'bg-stone-900/90 text-stone-400 border-stone-800 hover:text-stone-200'
@@ -1893,7 +1899,7 @@ export function App() {
                 title="Afficher ou masquer les traces techniques sous les réponses du chat"
               >
                 <Bug className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span className="hidden sm:inline">Traces :</span>
+                <span className="hidden xl:inline">Traces :</span>
                 <span className="font-bold">{debugOverlay ? 'ON' : 'OFF'}</span>
               </button>
             )}

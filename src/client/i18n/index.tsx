@@ -284,16 +284,13 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'askarr_ui_language';
+const STORAGE_KEY = 'askarr_ui_language_fr';
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<SupportedLanguage>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored === 'fr' || stored === 'en') return stored;
-      if (typeof navigator !== 'undefined' && navigator.language) {
-        return navigator.language.toLowerCase().startsWith('fr') ? 'fr' : 'en';
-      }
     } catch {
       // Fallback in environments without localStorage
     }

@@ -230,6 +230,35 @@ export const MediaCandidateCard: React.FC<Props> = ({
     identity.releaseDates.estimatedVodOrDvdDate && identity.releaseDates.estimatedVodOrDvdDate > todayIso
   );
 
+  // Code visuel LED 3 états ultra-lisible en un clin d'œil :
+  // 1) 'available' (LED Verte) : Disponible sur Plex
+  // 2) 'waitlist'  (LED Orange) : Dans la liste d'attente / En téléchargement (Radarr/Sonarr/Overseerr)
+  // 3) 'missing'   (LED Grise/Rouge discrète) : Non disponible sur Plex (demandable)
+  const isAvailableOnPlex =
+    catalogPresence.state === 'available_now' && catalogPresence.accessibleToCurrentUser !== false;
+  const isDownloadingNow = !isAvailableOnPlex && acquisitionPipeline.state === 'downloading';
+  const isInWaitingList =
+    !isAvailableOnPlex &&
+    (isDownloadingNow ||
+      acquisitionPipeline.state === 'monitored_waiting_release' ||
+      acquisitionPipeline.state === 'monitored_searching' ||
+      acquisitionPipeline.state === 'imported_on_disk' ||
+      localEvidence.requestState.state === 'pending_approval' ||
+      localEvidence.requestState.state === 'approved_processing' ||
+      sourceOrigin === 'auto_list' ||
+      !actionability.canRequestNow);
+  const ledState: 'available' | 'waitlist' | 'missing' = isAvailableOnPlex
+    ? 'available'
+    : isInWaitingList
+      ? 'waitlist'
+      : 'missing';
+
+  const statusLabelText = getLocalizedStatusLabel(actionability.userFriendlyStatusLabel, lang);
+  const statusAlreadyMentionsOrigin =
+    /liste auto|demandé par|requested by|auto list/i.test(statusLabelText);
+  const statusAlreadyMentionsVod = /vod|dvd/i.test(statusLabelText);
+  const statusAlreadyMentionsCinema = /sortie ciné|theatrical/i.test(statusLabelText);
+
   const primaryPlexMatch = catalogPresence.matchedItems[0] || null;
   const plexWebUrl = primaryPlexMatch
     ? primaryPlexMatch.plexWebUrl ||
@@ -495,35 +524,67 @@ export const MediaCandidateCard: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Ligne unifiée de Statut Plex + Salle/Serveurs + Origine/Dates (remplace les 4 blocs empilés) */}
+            {/* Ligne unifiée de Statut Plex (Code LED 3 États : Vert Dispo / Orange Liste d'attente / Gris-Rouge Non dispo) + Explication détaillée */}
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-              {primaryPlexHref ? (
-                <a
-                  href={primaryPlexHref}
-                  target={isMobileDevice ? undefined : '_blank'}
-                  rel={isMobileDevice ? undefined : 'noopener noreferrer'}
-                  title={lang === 'en' ? 'Click to open directly in Plex' : 'Cliquer pour ouvrir directement dans Plex'}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold hover:brightness-110 transition cursor-pointer ${toneBadgeClasses[actionability.statusTone]}`}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                  <span>{getLocalizedStatusLabel(actionability.userFriendlyStatusLabel, lang)}</span>
-                </a>
+              {/* Badge LED d'état principal immédiat */}
+              {ledState === 'available' ? (
+                primaryPlexHref ? (
+                  <a
+                    href={primaryPlexHref}
+                    target={isMobileDevice ? undefined : '_blank'}
+                    rel={isMobileDevice ? undefined : 'noopener noreferrer'}
+                    title={lang === 'en' ? 'Click to open directly in Plex' : 'Cliquer pour ouvrir directement dans Plex'}
+                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 px-2.5 py-1 text-xs font-bold text-emerald-100 shadow-[0_0_15px_rgba(16,185,129,0.18)] hover:brightness-110 transition cursor-pointer"
+                  >
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
+                    <span>{statusLabelText}</span>
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/50 bg-emerald-500/20 px-2.5 py-1 text-xs font-bold text-emerald-100 shadow-[0_0_15px_rgba(16,185,129,0.18)]">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.95)] shrink-0" />
+                    <span>{statusLabelText}</span>
+                  </span>
+                )
+              ) : ledState === 'waitlist' ? (
+                <>
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-amber-400/60 bg-amber-500/25 px-2.5 py-1 text-xs font-bold text-amber-100 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
+                    <span>
+                      {isDownloadingNow
+                        ? lang === 'en'
+                          ? 'Downloading now'
+                          : 'Téléchargement en cours'
+                        : lang === 'en'
+                          ? 'In waiting list'
+                          : "Dans la liste d'attente"}
+                    </span>
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${toneBadgeClasses[actionability.statusTone]}`}
+                  >
+                    {isDownloadingNow ? (
+                      <Download className="h-3.5 w-3.5 shrink-0 animate-bounce text-amber-300" />
+                    ) : (
+                      <Clock className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+                    )}
+                    <span>{statusLabelText}</span>
+                  </span>
+                </>
               ) : (
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${toneBadgeClasses[actionability.statusTone]}`}
-                >
-                  {catalogPresence.state === 'available_now' ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                  ) : acquisitionPipeline.state === 'downloading' ? (
-                    <Download className="h-3.5 w-3.5 shrink-0 animate-bounce" />
-                  ) : (
-                    <Clock className="h-3.5 w-3.5 shrink-0" />
-                  )}
-                  <span>{getLocalizedStatusLabel(actionability.userFriendlyStatusLabel, lang)}</span>
-                </span>
+                <>
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-stone-600/70 bg-stone-900/90 px-2.5 py-1 text-xs font-semibold text-stone-300">
+                    <span className="h-2.5 w-2.5 rounded-full bg-rose-500/85 shadow-[0_0_8px_rgba(244,63,94,0.6)] shrink-0" />
+                    <span>{lang === 'en' ? 'Not on Plex' : 'Non disponible sur Plex'}</span>
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${toneBadgeClasses[actionability.statusTone]}`}
+                  >
+                    <span>{statusLabelText}</span>
+                  </span>
+                </>
               )}
 
-              {requesterName ? (
+              {!statusAlreadyMentionsOrigin && requesterName ? (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-amber-500/25 px-2 py-1 text-[11px] text-amber-200/90">
                   <Clock className="h-3 w-3 text-amber-400 shrink-0" />
                   <span>
@@ -531,7 +592,7 @@ export const MediaCandidateCard: React.FC<Props> = ({
                     {requestedOrAddedDateFr ? ` (${requestedOrAddedDateFr})` : ''}
                   </span>
                 </span>
-              ) : sourceOrigin === 'auto_list' ? (
+              ) : !statusAlreadyMentionsOrigin && sourceOrigin === 'auto_list' ? (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
                   <Clock className="h-3 w-3 text-amber-400/80 shrink-0" />
                   <span>
@@ -540,14 +601,14 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 </span>
               ) : null}
 
-              {catalogPresence.state !== 'available_now' && cinemaDateFr && (
+              {catalogPresence.state !== 'available_now' && !statusAlreadyMentionsCinema && cinemaDateFr && (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-stone-700/80 px-2 py-1 text-[11px] text-stone-300">
                   <Clapperboard className="h-3 w-3 text-red-400 shrink-0" />
                   <span>{t('theatrical_release', { date: cinemaDateFr })}</span>
                 </span>
               )}
 
-              {catalogPresence.state !== 'available_now' && vodDateFr && (
+              {catalogPresence.state !== 'available_now' && !statusAlreadyMentionsVod && vodDateFr && (
                 <span
                   className={`inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border px-2 py-1 text-[11px] ${
                     isVodFuture
@@ -827,6 +888,25 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 )}
                 <span>{requestButtonLabel}</span>
               </button>
+            )}
+
+            {/* Statut LED Orange en bas à gauche si le film est dans la liste d'attente (symétrie visuelle avec Ouvrir / Demander sur Plex) */}
+            {!plexWebUrl && !actionability.canRequestNow && ledState === 'waitlist' && (
+              <div
+                className="inline-flex items-center gap-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-1.5 text-xs sm:text-sm font-bold text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.12)]"
+                title={actionability.userFriendlyExplanationFr || statusLabelText}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse shrink-0" />
+                <span>
+                  {isDownloadingNow
+                    ? lang === 'en'
+                      ? 'Downloading to Plex...'
+                      : 'Téléchargement en cours...'
+                    : lang === 'en'
+                      ? 'In Plex waiting list'
+                      : "Dans la liste d'attente Plex"}
+                </span>
+              </div>
             )}
           </div>
 
