@@ -286,6 +286,9 @@ export function App() {
   // Toggle for Admin to see inline technical traces inside the User Chat & Media Cards
   const [debugOverlay, setDebugOverlay] = useState<boolean>(true);
   const [listLayoutByMsgId, setListLayoutByMsgId] = useState<Record<string, 'compact' | 'grid'>>({});
+  const [listSortByMsgId, setListSortByMsgId] = useState<
+    Record<string, { field: 'default' | 'title' | 'rating' | 'plex'; dir: 'asc' | 'desc' }>
+  >({});
   // Mode Viewer (User) for Admin: preview exact non-admin user UI & simulate Plex server permissions without creating a separate account
   const [viewerUserMode, setViewerUserMode] = useState<boolean>(false);
   const [viewerImmersiveHeader, setViewerImmersiveHeader] = useState<boolean>(false);
@@ -2819,6 +2822,76 @@ export function App() {
                             c.catalogPresence.accessibleToCurrentUser !== false
                         ).length;
 
+                        const sortConf = listSortByMsgId[msg.id] || {
+                          field: 'default',
+                          dir: 'desc'
+                        };
+                        const toggleSort = (field: 'title' | 'rating' | 'plex') => {
+                          setListSortByMsgId((prev) => {
+                            const cur = prev[msg.id];
+                            if (!cur || cur.field !== field) {
+                              return {
+                                ...prev,
+                                [msg.id]: {
+                                  field,
+                                  dir: field === 'title' ? 'asc' : 'desc'
+                                }
+                              };
+                            }
+                            if (
+                              (field === 'title' && cur.dir === 'asc') ||
+                              (field !== 'title' && cur.dir === 'desc')
+                            ) {
+                              return {
+                                ...prev,
+                                [msg.id]: {
+                                  field,
+                                  dir: cur.dir === 'asc' ? 'desc' : 'asc'
+                                }
+                              };
+                            }
+                            return {
+                              ...prev,
+                              [msg.id]: { field: 'default', dir: 'desc' }
+                            };
+                          });
+                        };
+
+                        const sortedCards = [...msg.mediaCards];
+                        if (sortConf.field === 'rating') {
+                          sortedCards.sort((a, b) => {
+                            const rA =
+                              a.identity.ratings.imdbOrAudienceRating ??
+                              a.identity.ratings.tmdbVoteAverage ??
+                              0;
+                            const rB =
+                              b.identity.ratings.imdbOrAudienceRating ??
+                              b.identity.ratings.tmdbVoteAverage ??
+                              0;
+                            return sortConf.dir === 'desc' ? rB - rA : rA - rB;
+                          });
+                        } else if (sortConf.field === 'title') {
+                          sortedCards.sort((a, b) => {
+                            const cmp = a.identity.titleFr.localeCompare(b.identity.titleFr, 'fr');
+                            return sortConf.dir === 'asc' ? cmp : -cmp;
+                          });
+                        } else if (sortConf.field === 'plex') {
+                          const scorePlex = (c: MediaEvidence) =>
+                            c.catalogPresence.state === 'available_now' &&
+                            c.catalogPresence.accessibleToCurrentUser !== false
+                              ? 2
+                              : c.requestState.state !== 'not_requested' ||
+                                  c.acquisitionPipeline.state.startsWith('monitored') ||
+                                  c.acquisitionPipeline.state === 'downloading'
+                                ? 1
+                                : 0;
+                          sortedCards.sort((a, b) =>
+                            sortConf.dir === 'desc'
+                              ? scorePlex(b) - scorePlex(a)
+                              : scorePlex(a) - scorePlex(b)
+                          );
+                        }
+
                         return (
                           <div className="mt-4 pt-3.5 border-t border-amber-500/20 w-full space-y-3">
                             {isMultiList && (
@@ -2841,8 +2914,8 @@ export function App() {
                                     <span className="hidden md:inline text-[11px] text-stone-400">
                                       •{' '}
                                       {lang === 'en'
-                                        ? 'Click a row to expand its full card'
-                                        : 'Clique sur une ligne pour déplier sa fiche complète'}
+                                        ? 'Click a row to expand/collapse its full sheet'
+                                        : 'Clique sur une ligne pour déplier / replier sa fiche'}
                                     </span>
                                   )}
                                 </div>
@@ -2894,21 +2967,63 @@ export function App() {
                               }
                             >
                               {layoutMode === 'compact' && (
-                                <div className="hidden md:grid md:grid-cols-[minmax(195px,2.1fr)_84px_minmax(115px,1.1fr)_minmax(180px,1.5fr)_auto] items-center gap-3 px-3.5 py-2 bg-stone-950/85 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400">
-                                  <div className="pl-1">
-                                    {lang === 'en' ? '# • Title / Director' : '# • Film / Réalisateur'}
-                                  </div>
-                                  <div>{lang === 'en' ? 'Rating' : 'Note'}</div>
+                                <div className="hidden md:grid md:grid-cols-[minmax(280px,1fr)_88px_150px_90px_118px] items-center gap-3 px-3.5 py-2 bg-stone-950/85 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-400 select-none">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSort('title')}
+                                    className="text-left pl-1 hover:text-amber-300 transition cursor-pointer inline-flex items-center gap-1"
+                                    title="Trier par titre"
+                                  >
+                                    <span>
+                                      {lang === 'en'
+                                        ? '# • Title / Director'
+                                        : '# • Film / Réalisateur'}
+                                    </span>
+                                    <span className="text-amber-400/80">
+                                      {sortConf.field === 'title'
+                                        ? sortConf.dir === 'asc'
+                                          ? '↑'
+                                          : '↓'
+                                        : '↕'}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSort('rating')}
+                                    className="text-left hover:text-amber-300 transition cursor-pointer inline-flex items-center gap-1"
+                                    title="Trier par note IMDb / TMDB"
+                                  >
+                                    <span>{lang === 'en' ? 'Rating' : 'Note'}</span>
+                                    <span className="text-amber-400/80">
+                                      {sortConf.field === 'rating'
+                                        ? sortConf.dir === 'desc'
+                                          ? '↓'
+                                          : '↑'
+                                        : '↕'}
+                                    </span>
+                                  </button>
                                   <div>{lang === 'en' ? 'Genres' : 'Genres'}</div>
-                                  <div>
-                                    {lang === 'en' ? 'Status / Availability' : 'Statut / Disponibilité'}
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSort('plex')}
+                                    className="text-center justify-center hover:text-amber-300 transition cursor-pointer inline-flex items-center gap-1"
+                                    title="Trier par disponibilité Plex"
+                                  >
+                                    <span>Plex</span>
+                                    <span className="text-amber-400/80">
+                                      {sortConf.field === 'plex'
+                                        ? sortConf.dir === 'desc'
+                                          ? '↓'
+                                          : '↑'
+                                        : '↕'}
+                                    </span>
+                                  </button>
                                   <div className="text-right pr-1">
-                                    {lang === 'en' ? 'Direct Actions' : 'Actions directes'}
+                                    {lang === 'en' ? 'Actions' : 'Actions'}
                                   </div>
                                 </div>
                               )}
-                              {msg.mediaCards.map((cand, idx) => (
+                              {sortedCards.map((cand, idx) => (
                                 <MediaCandidateCard
                                   key={`${cand.identity.mediaType}-${cand.identity.tmdbId}-${cand.identity.titleFr}`}
                                   evidence={cand}
