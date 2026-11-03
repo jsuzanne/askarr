@@ -918,7 +918,12 @@ export class PlexMultiServerConnector {
   public async discoverOnPlex(params: {
     mediaType: 'movie' | 'tv' | 'auto';
     genre?: string;
+    genres?: string[];
+    genreOperator?: 'and' | 'or';
     minRating?: number;
+    maxRating?: number;
+    minRuntimeMinutes?: number | null;
+    maxRuntimeMinutes?: number | null;
     libraryFilter?: string;
     personFilter?: string;
     yearFilter?: number;
@@ -927,15 +932,62 @@ export class PlexMultiServerConnector {
     limit?: number;
   }): Promise<{ items: PlexMetadataDetail[]; provenance: ProvenanceEntry[] }> {
     const limit = params.limit || 6;
+    const requestedGenres =
+      params.genres && params.genres.length > 0
+        ? params.genres
+        : params.genre
+          ? [params.genre]
+          : [];
+    const genreOperator = params.genreOperator || 'or';
     const minRating = params.minRating ?? (params.personFilter || params.yearFilter ? 0 : 7.0);
     const provenance: ProvenanceEntry[] = [];
     const results: PlexMetadataDetail[] = [];
+    const seenTitleYearKeys = new Set<string>();
     const personNorm = params.personFilter?.trim().toLowerCase();
     const isHighRatingOrPastEraQuery = Boolean(
       (params.minRating && params.minRating >= 8.0) ||
         (params.minYear && params.minYear < 2022) ||
         (params.maxYear && params.maxYear < 2023)
     );
+
+    const stripAccents = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+
+    const genreEquivalents = (gRaw: string): string[] => {
+      const g = stripAccents(gRaw);
+      if (g.includes('comed')) return ['comedie', 'comedy'];
+      if (g.includes('romanc') || g.includes('romant')) return ['romance', 'romantique', 'amour'];
+      if (g.includes('dram')) return ['drame', 'drama'];
+      if (g.includes('horr') || g.includes('epouvant')) return ['horreur', 'epouvante', 'horror'];
+      if (g.includes('science') || g.includes('sci')) return ['science-fiction', 'science fiction', 'sci-fi'];
+      if (g.includes('aventur') || g.includes('adventur')) return ['aventure', 'adventure'];
+      if (g.includes('fantas')) return ['fantastique', 'fantasy'];
+      if (g.includes('polic') || g.includes('crim')) return ['policier', 'crime', 'thriller'];
+      if (g.includes('thrill') || g.includes('suspens')) return ['thriller', 'suspense', 'policier'];
+      if (g.includes('action')) return ['action'];
+      if (g.includes('anim')) return ['animation', 'anime', 'dessin'];
+      if (g.includes('document')) return ['documentaire', 'documentary'];
+      if (g.includes('famil') || g.includes('enfant')) return ['famille', 'family', 'enfants', 'jeunesse'];
+      if (g.includes('histoir') || g.includes('histor')) return ['histoire', 'historique', 'history'];
+      if (g.includes('music')) return ['musique', 'musical', 'comedie musicale', 'music'];
+      if (g.includes('myster')) return ['mystere', 'mystery'];
+      if (g.includes('guerr') || g === 'war') return ['guerre', 'war'];
+      if (g.includes('western')) return ['western'];
+      if (g.includes('biograph') || g.includes('biopic')) return ['biographie', 'biography', 'biopic'];
+      return [g];
+    };
+
+    const isComedyOrRomanceGenre = requestedGenres.some((g) => {
+      const s = stripAccents(g);
+      return s.includes('comed') || s.includes('romanc') || s.includes('romant');
+    });
+    const effectiveMinRating =
+      params.minRating ??
+      (params.personFilter || params.yearFilter ? 0 : isComedyOrRomanceGenre ? 6.0 : minRating);
 
     // NucVillers + NucBuntu couvrent 100% des 17 bibliothèques sans dupliquer 5 fois les appels sur le NAS
     const discoveryServers = this.servers.slice(0, 2);
@@ -952,32 +1004,12 @@ export class PlexMultiServerConnector {
           return 10; // 'enfants', 'serieskids', 'truecrimes', 'videodivers' en dernier si non demandés explicitement
         };
 
-        const stripAccents = (s: string) =>
-          s
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase()
-            .trim();
-
-        const genreEquivalents = (gRaw: string): string[] => {
-          const g = stripAccents(gRaw);
-          if (g.includes('comed')) return ['comedie', 'comedy'];
-          if (g.includes('dram')) return ['drame', 'drama'];
-          if (g.includes('horr') || g.includes('epouvant')) return ['horreur', 'epouvante', 'horror'];
-          if (g.includes('science') || g.includes('sci')) return ['science-fiction', 'science fiction', 'sci-fi'];
-          if (g.includes('aventur') || g.includes('adventur')) return ['aventure', 'adventure'];
-          if (g.includes('fantas')) return ['fantastique', 'fantasy'];
-          if (g.includes('polic') || g.includes('crim')) return ['policier', 'crime', 'thriller'];
-          return [g];
-        };
-
-        const isComedyGenre = Boolean(params.genre && stripAccents(params.genre).includes('comed'));
-        const effectiveMinRating =
-          params.minRating ??
-          (params.personFilter || params.yearFilter ? 0 : isComedyGenre ? 6.2 : minRating);
-
         const matchingSections = sections
           .filter((s) => {
+            const k = normalizePlexLibraryKey(s.title);
+            if (!params.libraryFilter && (k === 'progtv' || k === 'hetznersport' || k === 'videodivers')) {
+              return false;
+            }
             if (params.libraryFilter) {
               return s.title.toLowerCase().includes(params.libraryFilter.trim().toLowerCase());
             }
@@ -988,7 +1020,9 @@ export class PlexMultiServerConnector {
           .sort((a, b) => sectionPriority(a.title) - sectionPriority(b.title));
 
         const containerSize =
-          personNorm || params.yearFilter || params.minYear || params.maxYear || params.genre ? 150 : 60;
+          personNorm || params.yearFilter || params.minYear || params.maxYear || requestedGenres.length > 0
+            ? 250
+            : 80;
         const maxSectionsToInspect = isHighRatingOrPastEraQuery ? 4 : 3;
         for (const sec of matchingSections.slice(0, maxSectionsToInspect)) {
           const secKeyNorm = normalizePlexLibraryKey(sec.title);
@@ -1015,7 +1049,7 @@ export class PlexMultiServerConnector {
             MediaContainer?: { Metadata?: Array<Record<string, unknown>> };
           }>(
             srv.baseUrl,
-            `/library/sections/${encodeURIComponent(sec.key)}/all?sort=${sortOrder}${yearParam}&X-Plex-Container-Start=0&X-Plex-Container-Size=${containerSize}`
+            `/library/sections/${encodeURIComponent(sec.key)}/all?sort=${sortOrder}${yearParam}&includeGuids=1&X-Plex-Container-Start=0&X-Plex-Container-Size=${containerSize}`
           );
 
           for (const raw of data.MediaContainer?.Metadata || []) {
@@ -1023,10 +1057,28 @@ export class PlexMultiServerConnector {
             const criticRating = typeof raw.rating === 'number' ? raw.rating : null;
             const bestRating = audienceRating ?? criticRating ?? 0;
             if (bestRating < effectiveMinRating) continue;
+            if (params.maxRating !== undefined && bestRating > params.maxRating) continue;
 
             const itemYear = typeof raw.year === 'number' ? raw.year : null;
             if (params.minYear && (!itemYear || itemYear < params.minYear)) continue;
             if (params.maxYear && (!itemYear || itemYear > params.maxYear)) continue;
+
+            const durationMinutes =
+              typeof raw.duration === 'number' ? Math.round(raw.duration / 60000) : null;
+            if (
+              params.minRuntimeMinutes !== null &&
+              params.minRuntimeMinutes !== undefined &&
+              (!durationMinutes || durationMinutes < params.minRuntimeMinutes)
+            ) {
+              continue;
+            }
+            if (
+              params.maxRuntimeMinutes !== null &&
+              params.maxRuntimeMinutes !== undefined &&
+              (!durationMinutes || durationMinutes > params.maxRuntimeMinutes)
+            ) {
+              continue;
+            }
 
             const genres = ((raw.Genre as Array<{ tag?: string }> | undefined) || [])
               .map((g) => g.tag || '')
@@ -1038,15 +1090,25 @@ export class PlexMultiServerConnector {
               .slice(0, 6)
               .map((r) => r.tag || '')
               .filter(Boolean);
+            const guids = ((raw.Guid as Array<{ id?: string }> | undefined) || [])
+              .map((g) => g.id || '')
+              .filter(Boolean);
 
-            if (params.genre) {
-              const targetTerms = genreEquivalents(params.genre);
+            if (requestedGenres.length > 0) {
+              const matchesSingleGenre = (reqG: string): boolean => {
+                const targetTerms = genreEquivalents(reqG);
+                return (
+                  genres.some((g) => {
+                    const gClean = stripAccents(g);
+                    return targetTerms.some((term) => gClean.includes(term));
+                  }) ||
+                  targetTerms.some((term) => stripAccents(sec.title).includes(term))
+                );
+              };
               const matchesGenre =
-                genres.some((g) => {
-                  const gClean = stripAccents(g);
-                  return targetTerms.some((term) => gClean.includes(term));
-                }) ||
-                targetTerms.some((term) => stripAccents(sec.title).includes(term));
+                genreOperator === 'and'
+                  ? requestedGenres.every(matchesSingleGenre)
+                  : requestedGenres.some(matchesSingleGenre);
               if (!matchesGenre) continue;
             }
 
@@ -1057,23 +1119,28 @@ export class PlexMultiServerConnector {
               if (!matchesPerson) continue;
             }
 
+            const titleStr = String(raw.title || '');
+            const dedupKey = `${sec.type}:${stripAccents(titleStr)}:${itemYear ?? ''}`;
+            if (seenTitleYearKeys.has(dedupKey)) continue;
+            seenTitleYearKeys.add(dedupKey);
+
             results.push({
               serverName: srv.name,
               ratingKey: String(raw.ratingKey || ''),
               type: sec.type === 'show' ? 'show' : 'movie',
-              title: String(raw.title || ''),
+              title: titleStr,
               originalTitle: typeof raw.originalTitle === 'string' ? raw.originalTitle : null,
-              year: typeof raw.year === 'number' ? raw.year : null,
+              year: itemYear,
               summary: typeof raw.summary === 'string' ? raw.summary : null,
               librarySectionTitle: sec.title,
               isSharedAcrossAllServers: isSharedPlexLibraryName(sec.title),
-              guids: [],
+              guids,
               audienceRating,
               criticRating,
               genres,
               directors,
               cast: cast.slice(0, 4),
-              durationMinutes: typeof raw.duration === 'number' ? Math.round(raw.duration / 60000) : null
+              durationMinutes
             });
 
             const maxCollectPerLoop = isHighRatingOrPastEraQuery ? limit * 2 : limit;
@@ -1110,6 +1177,148 @@ export class PlexMultiServerConnector {
     }
 
     return { items: results.slice(0, limit), provenance };
+  }
+
+  /**
+   * Récupère directement sur les serveurs Plex les derniers films ou séries ajoutés
+   * (triés par `addedAt:desc`), en excluant les bibliothèques d'enregistrements TV (`ProgTV`, `HetznerSport`, `VideoDivers`).
+   * Permet de garantir une liste complète et fiable des derniers films/séries téléchargés même lorsque
+   * le flux Tracearr est saturé par des enregistrements TV quotidiens.
+   */
+  public async getRecentlyAddedOnPlex(params: {
+    mediaType?: 'movie' | 'tv';
+    limit?: number;
+    allowedServers?: string[];
+  }): Promise<
+    Array<{
+      title: string;
+      originalTitle: string | null;
+      year: number | null;
+      mediaType: 'movie' | 'tv';
+      tmdbId: number | null;
+      addedAt: string;
+      daysAgo: number;
+      serverNames: string[];
+      librarySectionTitle: string;
+    }>
+  > {
+    const limit = Math.min(20, Math.max(1, params.limit ?? 10));
+    const nowMs = Date.now();
+    const seenKeys = new Set<string>();
+    const results: Array<{
+      title: string;
+      originalTitle: string | null;
+      year: number | null;
+      mediaType: 'movie' | 'tv';
+      tmdbId: number | null;
+      addedAt: string;
+      addedAtMs: number;
+      daysAgo: number;
+      serverNames: string[];
+      librarySectionTitle: string;
+    }> = [];
+
+    const stripAccents = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+
+    const discoveryServers = this.servers.slice(0, 2);
+    for (const srv of discoveryServers) {
+      try {
+        const sections = await this.getServerSections(srv);
+        const matchingSections = sections.filter((s) => {
+          const k = normalizePlexLibraryKey(s.title);
+          // Exclure systématiquement les enregistrements TV / sport / vidéos diverses
+          if (k === 'progtv' || k === 'hetznersport' || k === 'videodivers') {
+            return false;
+          }
+          if (params.mediaType === 'movie') {
+            return s.type === 'movie' && (k === 'films' || k === 'films4k' || k === 'enfants');
+          }
+          if (params.mediaType === 'tv') {
+            return s.type === 'show' && (k === 'seriestv' || k === 'serieskids');
+          }
+          return (
+            k === 'films' ||
+            k === 'films4k' ||
+            k === 'seriestv' ||
+            k === 'enfants' ||
+            k === 'serieskids'
+          );
+        });
+
+        for (const sec of matchingSections) {
+          const containerSize = Math.min(40, Math.max(15, limit * 2));
+          const data = await this.fetchPlexJson<{
+            MediaContainer?: { Metadata?: Array<Record<string, unknown>> };
+          }>(
+            srv.baseUrl,
+            `/library/sections/${encodeURIComponent(sec.key)}/all?sort=addedAt:desc&includeGuids=1&X-Plex-Container-Start=0&X-Plex-Container-Size=${containerSize}`
+          );
+
+          const hostingServers = this.getServersHostingLibrary(sec.title, srv.name);
+          const visibleServers =
+            params.allowedServers && params.allowedServers.length > 0
+              ? hostingServers.filter((hs) =>
+                  params.allowedServers!.some((a) => a.toLowerCase() === hs.toLowerCase())
+                )
+              : hostingServers;
+          if (visibleServers.length === 0) continue;
+
+          for (const raw of data.MediaContainer?.Metadata || []) {
+            const title = String(raw.title || '').trim();
+            if (!title) continue;
+            const year = typeof raw.year === 'number' ? raw.year : null;
+            const mediaType: 'movie' | 'tv' = sec.type === 'show' ? 'tv' : 'movie';
+
+            const guids = ((raw.Guid as Array<{ id?: string }> | undefined) || [])
+              .map((g) => g.id || '')
+              .filter(Boolean);
+            let tmdbId: number | null = null;
+            for (const g of guids) {
+              const m = g.match(/tmdb:\/\/(\d+)/i);
+              if (m && m[1]) {
+                tmdbId = Number(m[1]);
+                break;
+              }
+            }
+
+            const dedupKey =
+              tmdbId && tmdbId > 0
+                ? `${mediaType}:tmdb:${tmdbId}`
+                : `${mediaType}:${stripAccents(title)}:${year ?? ''}`;
+            if (seenKeys.has(dedupKey)) continue;
+            seenKeys.add(dedupKey);
+
+            const addedAtSec = typeof raw.addedAt === 'number' ? raw.addedAt : Math.floor(nowMs / 1000);
+            const addedAtMs = addedAtSec * 1000;
+            const addedAtIso = new Date(addedAtMs).toISOString();
+            const daysAgo = Math.max(0, Math.floor((nowMs - addedAtMs) / (24 * 3600 * 1000)));
+
+            results.push({
+              title,
+              originalTitle: typeof raw.originalTitle === 'string' ? raw.originalTitle : null,
+              year,
+              mediaType,
+              tmdbId,
+              addedAt: addedAtIso,
+              addedAtMs,
+              daysAgo,
+              serverNames: visibleServers,
+              librarySectionTitle: sec.title
+            });
+          }
+        }
+      } catch {
+        // Ignorer un serveur temporairement injoignable
+      }
+    }
+
+    results.sort((a, b) => b.addedAtMs - a.addedAtMs);
+    return results.slice(0, limit).map(({ addedAtMs: _ms, ...rest }) => rest);
   }
 
   /**

@@ -5,6 +5,7 @@ import {
   resolveGenreSlug,
   resolveRatingSource,
   toMdblistRatingScale100,
+  matchesGenreConstraint,
   matchesRatingConstraint,
   matchesRuntimeConstraint
 } from '../../src/server/connectors/mdblist-criteria.schema.js';
@@ -985,5 +986,143 @@ describe('MDBList Dynamic Criteria Discovery & Validation Suite (Steps 2–7)', 
     expect(protoMethods.some((m) => /create|delete|modify|addList|removeList|watchlist/i.test(m))).toBe(
       false
     );
+  });
+
+  it('T-MDB-15: supports limit up to 12, enforces matchesGenreConstraint against off-genre items, and supplements on_plex_now/any from local Plex catalog', async () => {
+    const crit10 = validateAndNormalizeCriteria({
+      mediaType: 'movie',
+      genres: ['romance', 'comédie'],
+      genreOperator: 'or',
+      isRecent: true,
+      limit: 10
+    });
+    expect(crit10.ok).toBe(true);
+    if (!crit10.ok) return;
+    expect(crit10.criteria.limit).toBe(10);
+
+    // Off-genre items (Documentary, War Drama, Action Animation) are rejected when looking for Romance OR Comedy
+    expect(matchesGenreConstraint(['Documentaire'], crit10.criteria)).toBe(false);
+    expect(matchesGenreConstraint(['Drame', 'Guerre'], crit10.criteria)).toBe(false);
+    expect(matchesGenreConstraint(['Animation', 'Action'], crit10.criteria)).toBe(false);
+    expect(matchesGenreConstraint(['Drame', 'Romance'], crit10.criteria)).toBe(true);
+    expect(matchesGenreConstraint(['Comédie romantique'], crit10.criteria)).toBe(true);
+
+    // Local Plex catalog supplement when MDBList only returns 1 Plex movie
+    const mockMdblist = {
+      isConfigured: () => true,
+      searchCatalog: vi.fn().mockResolvedValue({
+        candidates: [
+          {
+            tmdbId: 801,
+            imdbId: 'tt0801801',
+            tvdbId: null,
+            traktId: null,
+            mdblistId: 'mdb-801',
+            mediaType: 'movie',
+            title: 'Off Genre War Movie',
+            originalTitle: 'Off Genre War Movie',
+            year: 2025,
+            runtimeMinutes: 110,
+            originalLanguage: 'en',
+            genres: ['war', 'drama'],
+            imdbRating: 7.5,
+            imdbVotes: 5000,
+            tmdbRating: 7.4,
+            mdblistScore: 75,
+            ratingsBySource: { imdb: { score: 7.5, votes: 5000 } }
+          }
+        ],
+        nextCursor: null,
+        hasMore: false,
+        totalResults: 1,
+        fromCache: false,
+        rateLimitRemaining: 900
+      }),
+      getMediaDetailByTmdbId: vi.fn(),
+      getMediaDetailByImdbId: vi.fn()
+    } as unknown as MdblistConnector;
+
+    const mockOverseerr = {
+      getMediaDetail: vi.fn().mockResolvedValue(
+        createBaseOverseerrDetail({
+          tmdbId: 802,
+          imdbId: 'tt0802802',
+          titleFr: 'Romance Sur Plex',
+          originalTitle: 'Romance On Plex',
+          year: 2024,
+          genres: ['Romance', 'Comédie'],
+          runtimeMinutes: 105
+        })
+      )
+    } as unknown as OverseerrConnector;
+
+    const mockPlex = {
+      discoverOnPlex: vi.fn().mockResolvedValue({
+        items: [
+          {
+            serverName: 'NucVillers',
+            ratingKey: '802',
+            type: 'movie',
+            title: 'Romance Sur Plex',
+            originalTitle: 'Romance On Plex',
+            year: 2024,
+            summary: 'Une belle romance.',
+            librarySectionTitle: 'Films',
+            isSharedAcrossAllServers: true,
+            guids: ['tmdb://802'],
+            audienceRating: 7.6,
+            criticRating: 8.0,
+            genres: ['Romance', 'Comedy'],
+            directors: ['Celine Song'],
+            cast: ['Actor A'],
+            durationMinutes: 105
+          }
+        ],
+        provenance: []
+      }),
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'available_now',
+        serversQueried: ['NucVillers'],
+        matchedDetails: [],
+        matchedItems: [
+          {
+            serverName: 'NucVillers',
+            ratingKey: '802',
+            libraryTitle: 'Films',
+            isSharedAcrossAllServers: true,
+            title: 'Romance Sur Plex',
+            originalTitle: 'Romance On Plex',
+            year: 2024
+          }
+        ],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      { getMovieByTmdbId: vi.fn().mockResolvedValue({ movie: null }) } as unknown as RadarrConnector,
+      {} as unknown as SonarrConnector,
+      {} as unknown as ProwlarrConnector,
+      mockMdblist
+    );
+
+    const res = await aggregator.discoverMediaByCriteria({
+      rawCriteria: {
+        mediaType: 'movie',
+        genres: ['romance', 'comedy'],
+        genreOperator: 'or',
+        yearFrom: 2023,
+        yearTo: 2026,
+        scope: 'on_plex_now',
+        excludeWatched: false,
+        limit: 10
+      }
+    });
+
+    expect(res.cards).toHaveLength(1);
+    expect(res.cards[0].identity.tmdbId).toBe(802);
+    expect(res.stats.rejectedByCriteriaCount).toBe(1);
   });
 });

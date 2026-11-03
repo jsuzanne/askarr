@@ -455,6 +455,9 @@ export class MdblistConnector {
         criteria.ratingComparison
       );
       queryParams.score_min = Math.max(50, Math.min(72, scaledMin - 10));
+    } else if (!criteria.ratingSource && criteria.minRating === null && criteria.sort === 'score' && criteria.order === 'desc') {
+      // Plancher qualitatif par défaut pour éviter les entrées de festival à 0 vote ou non sorties
+      queryParams.score_min = 55;
     }
 
     if (criteria.minRuntimeMinutes !== null) {

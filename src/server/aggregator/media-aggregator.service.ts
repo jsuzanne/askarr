@@ -16,6 +16,7 @@ import {
   type MdblistConnector
 } from '../connectors/mdblist.connector.js';
 import {
+  matchesGenreConstraint,
   matchesRatingConstraint,
   matchesRuntimeConstraint,
   matchesYearConstraint,
@@ -1827,7 +1828,7 @@ export class MediaAggregatorService {
     currentUserOverseerrId?: number | null;
     userAllowedServers?: string[];
   }): Promise<MediaEvidence[]> {
-    const requestedLimit = params.limit && params.limit > 0 ? Math.min(8, params.limit) : undefined;
+    const requestedLimit = params.limit && params.limit > 0 ? Math.min(12, params.limit) : undefined;
     if (params.scope === 'on_plex_now' || params.plexLibraryFilter) {
       const plexDisc = await this.plex.discoverOnPlex({
         mediaType: params.mediaType,
@@ -2330,9 +2331,9 @@ export class MediaAggregatorService {
     const stats = { ...emptyStats };
 
     const MAX_CATALOG_PAGES = 2;
-    const MAX_MDBLIST_DETAIL_CALLS = 12;
-    const MAX_EVIDENCE_ENRICHMENTS = Math.min(15, Math.max(8, criteria.limit * 3));
-    const pageLimit = Math.min(35, Math.max(15, criteria.limit * 4));
+    const MAX_MDBLIST_DETAIL_CALLS = 14;
+    const MAX_EVIDENCE_ENRICHMENTS = Math.min(30, Math.max(12, criteria.limit * 3));
+    const pageLimit = Math.min(40, Math.max(20, criteria.limit * 4));
 
     let cursor: string | null = null;
     let mdblistDetailCalls = 0;
@@ -2514,11 +2515,19 @@ export class MediaAggregatorService {
           }
         }
 
-        // 7. Vérification de la langue originale si déjà connue sur le candidat MDBList
+        // 7. Vérification de la langue originale et des genres si déjà connus sur le candidat MDBList
         if (
           criteria.originalLanguage !== null &&
           candidate.originalLanguage !== null &&
           candidate.originalLanguage.toLowerCase() !== criteria.originalLanguage.toLowerCase()
+        ) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+        if (
+          criteria.genres.length > 0 &&
+          candidate.genres.length > 0 &&
+          !matchesGenreConstraint(candidate.genres, criteria)
         ) {
           stats.rejectedByCriteriaCount += 1;
           continue;
@@ -2572,7 +2581,7 @@ export class MediaAggregatorService {
           continue;
         }
 
-        // 10. Post-vérification stricte de l'année et de la durée après enrichissement
+        // 10. Post-vérification stricte de l'année, de la durée et des genres après enrichissement
         const effectiveYear = evidence.identity.year ?? candidate.year;
         if (!matchesYearConstraint(effectiveYear, criteria)) {
           stats.rejectedByCriteriaCount += 1;
@@ -2582,6 +2591,13 @@ export class MediaAggregatorService {
         const effectiveRuntime =
           evidence.identity.runtimeMinutes ?? candidate.runtimeMinutes;
         if (!matchesRuntimeConstraint(effectiveRuntime, criteria)) {
+          stats.rejectedByCriteriaCount += 1;
+          continue;
+        }
+
+        const effectiveGenres =
+          evidence.identity.genres.length > 0 ? evidence.identity.genres : candidate.genres;
+        if (!matchesGenreConstraint(effectiveGenres, criteria)) {
           stats.rejectedByCriteriaCount += 1;
           continue;
         }
@@ -2649,6 +2665,190 @@ export class MediaAggregatorService {
         break;
       }
       cursor = catalogPage.nextCursor;
+    }
+
+    // 13. Exploration directe du catalogue Plex local (ex: 1 500 films dans 'Films' / 'Films 4K')
+    // lorsque l'utilisateur cherche des titres sur Plex (`scope: 'on_plex_now'`) ou mixtes (`scope: 'any'`)
+    // et que l'échantillon mondial MDBList n'a pas suffi à remonter assez de titres présents sur ses serveurs Plex.
+    const plexCardsAlreadyFound = verifiedCards.filter(
+      (c) =>
+        c.catalogPresence.state === 'available_now' ||
+        c.catalogPresence.state === 'partially_available'
+    ).length;
+    const minDesiredPlexInAnyScope = Math.min(4, Math.ceil(criteria.limit / 2));
+    const canSupplementFromLocalPlex =
+      typeof this.plex?.discoverOnPlex === 'function' &&
+      (criteria.scope === 'on_plex_now' || criteria.scope === 'any') &&
+      criteria.originalLanguage === null &&
+      criteria.minVotes === null &&
+      (criteria.ratingSource === null || criteria.ratingSource === 'imdb') &&
+      (verifiedCards.length < criteria.limit ||
+        (criteria.scope === 'any' && plexCardsAlreadyFound < minDesiredPlexInAnyScope));
+
+    if (canSupplementFromLocalPlex) {
+      try {
+        const localPlexLimit = Math.max(15, criteria.limit * 2);
+        const plexDisc = await this.plex.discoverOnPlex({
+          mediaType: criteria.mediaType,
+          genres: criteria.genres,
+          genreOperator: criteria.genreOperator,
+          minRating: criteria.minRating ?? undefined,
+          maxRating: criteria.maxRating ?? undefined,
+          minRuntimeMinutes: criteria.minRuntimeMinutes,
+          maxRuntimeMinutes: criteria.maxRuntimeMinutes,
+          minYear: criteria.yearFrom ?? undefined,
+          maxYear: criteria.yearTo ?? undefined,
+          limit: localPlexLimit
+        });
+        for (const p of plexDisc.provenance) {
+          provenance.push(p);
+        }
+
+        const localPlexCards: MediaEvidence[] = [];
+        const maxLocalNeeded =
+          criteria.scope === 'on_plex_now'
+            ? criteria.limit - verifiedCards.length
+            : Math.max(
+                criteria.limit - verifiedCards.length,
+                minDesiredPlexInAnyScope - plexCardsAlreadyFound
+              );
+
+        for (const item of plexDisc.items) {
+          if (localPlexCards.length >= maxLocalNeeded) break;
+
+          let resolvedTmdbId: number | null = null;
+          for (const g of item.guids || []) {
+            const m = g.match(/tmdb:\/\/(\d+)/i);
+            if (m && m[1]) {
+              resolvedTmdbId = Number(m[1]);
+              break;
+            }
+          }
+
+          if (resolvedTmdbId !== null && seenTmdbIds.has(resolvedTmdbId)) {
+            continue;
+          }
+          if (isTitleOrTmdbWatched(resolvedTmdbId, [item.title, item.originalTitle])) {
+            stats.excludedWatchedCount += 1;
+            continue;
+          }
+
+          const itemRating = item.audienceRating ?? item.criticRating ?? null;
+          if (!matchesRatingConstraint(itemRating, criteria)) {
+            continue;
+          }
+          if (item.year !== null && !matchesYearConstraint(item.year, criteria)) {
+            continue;
+          }
+          if (item.durationMinutes !== null && !matchesRuntimeConstraint(item.durationMinutes, criteria)) {
+            continue;
+          }
+          if (item.genres.length > 0 && !matchesGenreConstraint(item.genres, criteria)) {
+            continue;
+          }
+
+          if (!resolvedTmdbId && typeof this.overseerr?.search === 'function') {
+            try {
+              const searchRes = await this.overseerr.search(item.title, criteria.mediaType, {
+                includePersonFallback: false
+              });
+              const matched =
+                searchRes.find(
+                  (r) =>
+                    r.mediaType === criteria.mediaType &&
+                    (!item.year || !r.year || Math.abs(r.year - item.year) <= 1)
+                ) || searchRes[0];
+              if (matched && matched.mediaType === criteria.mediaType) {
+                resolvedTmdbId = matched.tmdbId;
+              }
+            } catch {
+              // Ignorer
+            }
+          }
+
+          if (!resolvedTmdbId || resolvedTmdbId <= 0 || seenTmdbIds.has(resolvedTmdbId)) {
+            continue;
+          }
+          seenTmdbIds.add(resolvedTmdbId);
+          stats.catalogCandidatesExamined += 1;
+          stats.enrichedCount += 1;
+
+          const hostingServers =
+            typeof this.plex.getServersHostingLibrary === 'function'
+              ? this.plex.getServersHostingLibrary(item.librarySectionTitle, item.serverName)
+              : [item.serverName];
+
+          try {
+            const ev = await this.buildMediaEvidence({
+              tmdbId: resolvedTmdbId,
+              mediaType: criteria.mediaType,
+              currentUserEmail: params.currentUserEmail,
+              currentUserOverseerrId: params.currentUserOverseerrId,
+              userAllowedServers,
+              includeSeasons: criteria.mediaType === 'tv',
+              checkIndexers: false,
+              knownPlexHint: {
+                serverNames: hostingServers,
+                libraryTitle: item.librarySectionTitle
+              },
+              externalRatings: {
+                imdbRating: itemRating
+              }
+            });
+
+            if (ev.identity.mediaType !== criteria.mediaType) continue;
+            if (
+              isTitleOrTmdbWatched(ev.identity.tmdbId, [
+                ev.identity.titleFr,
+                ev.identity.originalTitle,
+                item.title
+              ])
+            ) {
+              stats.excludedWatchedCount += 1;
+              continue;
+            }
+            if (!matchesYearConstraint(ev.identity.year ?? item.year, criteria)) continue;
+            if (!matchesRuntimeConstraint(ev.identity.runtimeMinutes ?? item.durationMinutes, criteria)) continue;
+            const effGenres = ev.identity.genres.length > 0 ? ev.identity.genres : item.genres;
+            if (!matchesGenreConstraint(effGenres, criteria)) continue;
+            if (ev.catalogPresence.accessibleToCurrentUser === false) {
+              stats.excludedUnauthorizedServerCount += 1;
+              continue;
+            }
+
+            localPlexCards.push(ev);
+          } catch {
+            continue;
+          }
+        }
+
+        if (localPlexCards.length > 0) {
+          if (criteria.scope === 'on_plex_now') {
+            verifiedCards.push(...localPlexCards);
+          } else {
+            // Pour `scope: 'any'` ("sur Plex ou pas"), placer les titres disponibles sur Plex en tête
+            // et compléter avec les meilleurs titres à demander jusqu'à `criteria.limit`
+            const existingOnPlex = verifiedCards.filter(
+              (c) =>
+                c.catalogPresence.state === 'available_now' ||
+                c.catalogPresence.state === 'partially_available'
+            );
+            const existingMissing = verifiedCards.filter(
+              (c) =>
+                c.catalogPresence.state !== 'available_now' &&
+                c.catalogPresence.state !== 'partially_available'
+            );
+            const combined = [...existingOnPlex, ...localPlexCards, ...existingMissing].slice(
+              0,
+              criteria.limit
+            );
+            verifiedCards.length = 0;
+            verifiedCards.push(...combined);
+          }
+        }
+      } catch {
+        // Ne pas interrompre si le scan direct Plex échoue
+      }
     }
 
     let shortfallReasonFr: string | null = null;
@@ -2719,5 +2919,28 @@ export class MediaAggregatorService {
         ...detail.ratingsBySource
       }
     };
+  }
+
+  public async getRecentlyAddedFromPlex(params: {
+    mediaType?: 'movie' | 'tv';
+    limit?: number;
+    allowedServers?: string[];
+  }): Promise<
+    Array<{
+      title: string;
+      originalTitle: string | null;
+      year: number | null;
+      mediaType: 'movie' | 'tv';
+      tmdbId: number | null;
+      addedAt: string;
+      daysAgo: number;
+      serverNames: string[];
+      librarySectionTitle: string;
+    }>
+  > {
+    if (typeof this.plex?.getRecentlyAddedOnPlex !== 'function') {
+      return [];
+    }
+    return this.plex.getRecentlyAddedOnPlex(params);
   }
 }

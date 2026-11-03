@@ -472,7 +472,7 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
           },
           limit: {
             type: 'integer',
-            description: 'Nombre de titres souhaités (1 si demande au singulier, 3 à 5 par défaut, max 8)'
+            description: 'Nombre de titres souhaités (1 si demande au singulier, 3 à 5 par défaut, max 12)'
           }
         },
         required: ['mediaType'],
@@ -603,7 +603,7 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
           },
           limit: {
             type: 'integer',
-            description: "Nombre d'œuvres à recommander : 1 si l'utilisateur demande UN film/série au singulier, 3 à 5 s'il demande des recommandations au pluriel"
+            description: "Nombre d'œuvres à recommander : 1 si l'utilisateur demande UN film/série au singulier, 3 à 5 s'il demande des recommandations au pluriel (max 12)"
           }
         },
         required: ['scope', 'mediaType'],
@@ -652,7 +652,7 @@ export const READ_ONLY_TOOLS_DEFINITIONS = [
           },
           limit: {
             type: 'integer',
-            description: 'Nombre de fiches visuelles à afficher (par défaut 5, max 8)'
+            description: 'Nombre de fiches visuelles à afficher (par défaut 5, max 12)'
           }
         },
         required: ['mediaType'],
@@ -1068,6 +1068,8 @@ export class DeepSeekOrchestratorService {
       { role: 'user', content: params.message + userAccessContext }
     ];
 
+    let preserveAllToolCards = false;
+
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         const allowTools = round < MAX_TOOL_ROUNDS;
@@ -1141,9 +1143,13 @@ export class DeepSeekOrchestratorService {
 
           const mediaCards =
             allCards.length > 0
-              ? this.filterRelevantCardsForReply(replyText, allCards, toolRounds).map((c) =>
-                  this.adaptCardToUserAccess(c, params.plexAccess?.askarrServerNames)
-                )
+              ? this.filterRelevantCardsForReply(
+                  replyText,
+                  allCards,
+                  toolRounds,
+                  false,
+                  preserveAllToolCards
+                ).map((c) => this.adaptCardToUserAccess(c, params.plexAccess?.askarrServerNames))
               : [];
           const costUsd = usedProvider.isFree
             ? 0
@@ -1212,6 +1218,15 @@ export class DeepSeekOrchestratorService {
 
         for (const tc of choice.tool_calls) {
           const fnName = tc.function.name;
+          if (
+            fnName === 'discover_media_by_criteria' ||
+            fnName === 'discover_and_recommend_media' ||
+            fnName === 'get_recently_added_on_plex' ||
+            fnName === 'get_my_requests' ||
+            fnName === 'search_person_filmography'
+          ) {
+            preserveAllToolCards = true;
+          }
           let args: Record<string, unknown> = {};
           try {
             args = JSON.parse(tc.function.arguments || '{}');
@@ -1263,7 +1278,13 @@ export class DeepSeekOrchestratorService {
       // Si le plafond MAX_TOOL_ROUNDS est atteint, synthèse déterministe immédiate
       const allCards = Array.from(collectedCards.values());
       const replyText = this.buildDeterministicSummary(allCards);
-      const mediaCards = this.filterRelevantCardsForReply(replyText, allCards, toolRounds);
+      const mediaCards = this.filterRelevantCardsForReply(
+        replyText,
+        allCards,
+        toolRounds,
+        false,
+        preserveAllToolCards
+      );
       const costUsd = usedProvider.isFree
         ? 0
         : this.computeCostUsd(totalCacheMissTokens, totalCacheHitTokens, totalCompletionTokens);
@@ -1759,7 +1780,7 @@ export class DeepSeekOrchestratorService {
       const minYear = typeof args.minYear === 'number' ? args.minYear : undefined;
       const maxYear = typeof args.maxYear === 'number' ? args.maxYear : undefined;
       const plexLibraryFilter = typeof args.plexLibraryFilter === 'string' ? args.plexLibraryFilter : undefined;
-      const targetLimit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : 4;
+      const targetLimit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(12, args.limit) : 4;
       const isStrictRatingOrYearQuery = Boolean(minRating >= 7.8 || minYear || maxYear);
 
       const normTitleFn = (s: string) =>
@@ -1780,7 +1801,7 @@ export class DeepSeekOrchestratorService {
           minYear,
           maxYear,
           plexLibraryFilter,
-          limit: Math.min(8, targetLimit + 3),
+          limit: Math.min(12, targetLimit + 3),
           currentUserEmail: params.userEmail,
           currentUserOverseerrId: params.overseerrUserId,
           userAllowedServers
@@ -2004,7 +2025,7 @@ export class DeepSeekOrchestratorService {
 
     if (fnName === 'get_my_requests') {
       const onlyCurrentUser = args.scope === 'mine_only';
-      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(8, args.limit) : 5;
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(12, args.limit) : 5;
       const enriched =
         typeof this.aggregator.getWaitingListAndRequests === 'function'
           ? await this.aggregator.getWaitingListAndRequests({
@@ -2030,20 +2051,114 @@ export class DeepSeekOrchestratorService {
     }
 
     if (fnName === 'get_recently_added_on_plex') {
-      const mediaType =
+      let mediaType: 'movie' | 'tv' | undefined =
         args.mediaType === 'movie' || args.mediaType === 'tv' ? args.mediaType : undefined;
+      if (!mediaType && params.userMessage) {
+        const lowerMsg = params.userMessage.toLowerCase();
+        // Gère aussi la faute de frappe fréquente "fils" pour "films" ("les 10 dernires fils telechargé")
+        const mentionsMovie = /\b(films?|fils|longs?[\s-]m[eé]trages?)\b/i.test(lowerMsg);
+        const mentionsTv = /\b(s[eé]ries?)\b/i.test(lowerMsg);
+        if (mentionsMovie && !mentionsTv) {
+          mediaType = 'movie';
+        } else if (mentionsTv && !mentionsMovie) {
+          mediaType = 'tv';
+        }
+      }
+
       const daysBack = typeof args.daysBack === 'number' && args.daysBack > 0 ? args.daysBack : 21;
-      const cardLimit = Math.min(8, Math.max(1, typeof args.limit === 'number' ? args.limit : 5));
+      const cardLimit = Math.min(12, Math.max(1, typeof args.limit === 'number' ? args.limit : 5));
       const allowedServers = userAllowedServers;
 
-      const recentItems = this.tracearr
-        ? await this.tracearr.getRecentlyAdded({
-            allowedServers,
-            daysBack,
-            mediaType,
-            limit: 15
-          })
-        : [];
+      const normTitleKey = (s: string) =>
+        s
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+      // Exclure les enregistrements TV quotidiens (ProgTV / DVR) lorsqu'on demande des films
+      const isTvRecordingTitle = (title: string): boolean => {
+        const t = normTitleKey(title);
+        return (
+          t.includes('late football club') ||
+          t.includes('canal football club') ||
+          t.includes('l amour est dans le pre') ||
+          t.includes('new york unite speciale') ||
+          t.includes('journal de 20h') ||
+          t.includes('telefoot') ||
+          t.includes('enquete exclusive') ||
+          t.includes('zone interdite') ||
+          t.includes('capital') ||
+          t.includes('quotidien') ||
+          t.includes('touche pas a mon poste')
+        );
+      };
+
+      const [tracearrItems, plexDirectItems] = await Promise.all([
+        this.tracearr
+          ? this.tracearr.getRecentlyAdded({
+              allowedServers,
+              daysBack,
+              mediaType,
+              limit: Math.max(25, cardLimit * 3)
+            })
+          : Promise.resolve([]),
+        typeof this.aggregator.getRecentlyAddedFromPlex === 'function'
+          ? this.aggregator.getRecentlyAddedFromPlex({
+              mediaType,
+              limit: Math.max(15, cardLimit * 2),
+              allowedServers
+            })
+          : Promise.resolve([])
+      ]);
+
+      type RecentMergedItem = {
+        title: string;
+        year: number | null;
+        mediaType: 'movie' | 'tv';
+        tmdbId: number | null;
+        addedAt: string;
+        daysAgo: number;
+        serverNames: string[];
+      };
+
+      const mergedByKey = new Map<string, RecentMergedItem>();
+      const addMergedItem = (it: RecentMergedItem) => {
+        if (mediaType && it.mediaType !== mediaType) return;
+        if (mediaType === 'movie' && isTvRecordingTitle(it.title)) return;
+        const key =
+          it.tmdbId && it.tmdbId > 0
+            ? `${it.mediaType}:tmdb:${it.tmdbId}`
+            : `${it.mediaType}:${normTitleKey(it.title)}`;
+        const existing = mergedByKey.get(key);
+        if (!existing) {
+          mergedByKey.set(key, {
+            ...it,
+            serverNames: [...it.serverNames]
+          });
+        } else {
+          if (!existing.tmdbId && it.tmdbId) existing.tmdbId = it.tmdbId;
+          if (!existing.year && it.year) existing.year = it.year;
+          for (const srv of it.serverNames) {
+            if (!existing.serverNames.includes(srv)) {
+              existing.serverNames.push(srv);
+            }
+          }
+        }
+      };
+
+      // Prioriser les vrais ajouts des bibliothèques Films / Séries TV de Plex, complétés par Tracearr
+      for (const pItem of plexDirectItems) {
+        addMergedItem(pItem);
+      }
+      for (const tItem of tracearrItems) {
+        addMergedItem(tItem);
+      }
+
+      const recentItems = Array.from(mergedByKey.values()).sort(
+        (a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime()
+      );
 
       const topForCards = recentItems.slice(0, cardLimit);
 
@@ -2849,7 +2964,8 @@ export class DeepSeekOrchestratorService {
     replyText: string,
     allCards: MediaEvidence[],
     toolRounds: number,
-    requireMention = false
+    requireMention = false,
+    preserveAllToolCards = false
   ): MediaEvidence[] {
     if (!requireMention && allCards.length <= 1) return allCards;
 
@@ -2898,9 +3014,29 @@ export class DeepSeekOrchestratorService {
 
     const mentionedCards = allCards.filter(isCardMentioned);
 
-    // Dès que la réponse finale cite explicitement au moins un titre parmi les cartes collectées,
-    // on n'affiche QUE les cartes réellement mentionnées dans la réponse (évite d'afficher un 3e titre
-    // vérifié en coulisse mais écarté par l'IA, ex: Boogie Nights ou Goliath non retenu).
+    // Pour une recherche par critères, une recommandation de liste, les derniers ajouts Plex ou une filmographie
+    // (`preserveAllToolCards === true` ou sélection >= 4 titres distincts), le prompt système demande au LLM
+    // de faire une synthèse fluide sans réciter les 10 titres un par un dans son texte.
+    // On conserve donc TOUTES les fiches vérifiées par l'outil (jusqu'à 12), en plaçant en tête celles mises en avant dans la réponse.
+    if (!requireMention && (preserveAllToolCards || allCards.length >= 4)) {
+      const hasRealCards = allCards.some((c) => c.identity.tmdbId > 0);
+      const eligibleCards = hasRealCards
+        ? allCards.filter((c) => c.identity.tmdbId > 0 || isCardMentioned(c))
+        : allCards;
+
+      // Vérifier s'il ne s'agit pas uniquement d'homonymes d'un même titre (ex: 4 versions du Comte de Monte-Cristo)
+      const distinctNormTitles = new Set(eligibleCards.map((c) => norm(c.identity.titleFr)));
+      if (preserveAllToolCards || distinctNormTitles.size >= 3) {
+        const mentionedSet = new Set(mentionedCards);
+        const unmentioned = eligibleCards.filter((c) => !mentionedSet.has(c));
+        return [...mentionedCards, ...unmentioned].slice(0, 12);
+      }
+    }
+
+    // Dès que la réponse finale cite explicitement au moins un titre parmi les cartes collectées
+    // (cas d'une recherche unitaire ou descriptive type `search_and_check_media` / `verify_specific_titles`),
+    // on n'affiche QUE les cartes réellement mentionnées dans la réponse (évite d'afficher un homonyme
+    // ou un 3e titre vérifié en coulisse mais écarté par l'IA, ex: Boogie Nights ou Goliath non retenu).
     if (mentionedCards.length > 0) {
       // Si plusieurs cartes homonymes portent exactement le même titre normalisé (ex: "Le Comte de Monte-Cristo" 2024 vs 1954 vs 1975)
       // et que la réponse cite explicitement l'année d'une (ou plusieurs) de ces versions, on ne garde que la/les version(s) dont l'année est citée.
@@ -2936,10 +3072,10 @@ export class DeepSeekOrchestratorService {
     const hasSyntheticPlexCards = allCards.some((c) => c.identity.tmdbId < 0);
     const realCards = allCards.filter((c) => c.identity.tmdbId > 0);
     if (realCards.length > 0 && hasSyntheticPlexCards) {
-      return realCards.slice(0, 6);
+      return realCards.slice(0, 12);
     }
 
-    return allCards.slice(0, 6);
+    return allCards.slice(0, 12);
   }
 
   public buildDeterministicSummary(cards: MediaEvidence[], isEn: boolean = false): string {

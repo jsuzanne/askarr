@@ -660,7 +660,7 @@ export function validateAndNormalizeCriteria(
       unsupportedConstraints
     };
   }
-  const limit = Math.min(8, Math.max(1, data.limit));
+  const limit = Math.min(12, Math.max(1, data.limit));
 
   const defaultSort: SortField =
     ratingSource === 'imdb'
@@ -870,6 +870,83 @@ export function matchesYearConstraint(
     return false;
   }
   return true;
+}
+
+/**
+ * Vérifie si la liste des genres réels d'un candidat satisfait les genres demandés
+ * (`genreOperator: 'or' | 'and'`). Si la liste de genres du candidat est vide,
+ * retourne `true` par défaut pour ne pas pénaliser une fiche incomplète,
+ * mais si des genres sont renseignés (ex: "Documentary" ou "War" alors qu'on cherche
+ * "romance" ou "comedy"), rejette les hors-sujets.
+ */
+export function matchesGenreConstraint(
+  actualGenres: string[] | null | undefined,
+  criteria: Pick<NormalizedDiscoveryCriteria, 'genres' | 'genreOperator'>
+): boolean {
+  if (!criteria.genres || criteria.genres.length === 0) {
+    return true;
+  }
+  if (!actualGenres || actualGenres.length === 0) {
+    return true;
+  }
+
+  const normToken = (s: string): string =>
+    s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+
+  const resolvedActualSlugs = new Set<MdblistGenreSlug>();
+  const normalizedActualTokens: string[] = [];
+
+  for (const rawGenre of actualGenres) {
+    if (!rawGenre) continue;
+    const directSlug = resolveGenreSlug(rawGenre);
+    if (directSlug) {
+      resolvedActualSlugs.add(directSlug);
+    }
+    // Gérer les genres composés TMDB FR/EN (ex: "Science-Fiction & Fantastique", "Action & Adventure", "Comédie dramatique")
+    const parts = rawGenre.split(/[,/&|]+|\bet\b|\band\b/i);
+    for (const part of parts) {
+      const partSlug = resolveGenreSlug(part);
+      if (partSlug) {
+        resolvedActualSlugs.add(partSlug);
+      }
+      const normPart = normToken(part);
+      if (normPart) {
+        normalizedActualTokens.push(normPart);
+      }
+    }
+  }
+
+  const matchesSingleRequestedGenre = (reqSlug: MdblistGenreSlug): boolean => {
+    if (resolvedActualSlugs.has(reqSlug)) return true;
+    const frLabelNorm = normToken(GENRE_FRENCH_LABEL[reqSlug] || reqSlug);
+    const slugNorm = normToken(reqSlug);
+    return normalizedActualTokens.some(
+      (tok) =>
+        tok.includes(slugNorm) ||
+        (frLabelNorm.length >= 4 && tok.includes(frLabelNorm)) ||
+        (reqSlug === 'comedy' && tok.includes('comed')) ||
+        (reqSlug === 'romance' && (tok.includes('romanc') || tok.includes('romant'))) ||
+        (reqSlug === 'drama' && tok.includes('dram')) ||
+        (reqSlug === 'sci-fi' &&
+          (tok.includes('science') || tok.includes('sci fi') || tok.includes('scifi'))) ||
+        (reqSlug === 'horror' && (tok.includes('horr') || tok.includes('epouvant'))) ||
+        (reqSlug === 'thriller' && (tok.includes('thrill') || tok.includes('suspens'))) ||
+        (reqSlug === 'crime' && (tok.includes('crim') || tok.includes('polic'))) ||
+        (reqSlug === 'documentary' && tok.includes('document')) ||
+        ((reqSlug === 'animation' || reqSlug === 'anime') &&
+          (tok.includes('anim') || tok.includes('dessin')))
+    );
+  };
+
+  if (criteria.genreOperator === 'and') {
+    return criteria.genres.every(matchesSingleRequestedGenre);
+  }
+  return criteria.genres.some(matchesSingleRequestedGenre);
 }
 
 /**
