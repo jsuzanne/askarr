@@ -2,11 +2,11 @@
 
 ### The Conversational Cinema Assistant for Plex & Overseerr
 
-[![Version](https://img.shields.io/badge/version-1.2.38-amber.svg?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-1.2.39-amber.svg?style=flat-square)](package.json)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL_v3-purple.svg?style=flat-square)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fjsuzanne%2Faskarr-blue.svg?style=flat-square)](https://github.com/jsuzanne/askarr/pkgs/container/askarr)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-emerald.svg?style=flat-square)](package.json)
-[![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen.svg?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-31%20passing-brightgreen.svg?style=flat-square)](tests/)
 [![Stack](https://img.shields.io/badge/stack-Fastify%205%20%7C%20React%2019%20%7C%20Tailwind%204%20%7C%20SQLite-red.svg?style=flat-square)](package.json)
 
 **English** | [Français](README.fr.md)

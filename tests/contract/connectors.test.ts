@@ -142,4 +142,107 @@ describe('G1 Contract Tests (Overseerr RFC3986, VOD/DVD Releases & Multi-Server 
     expect(result.matchedItems[0].isSharedAcrossAllServers).toBe(false);
     expect(result.matchedDetails[0].audienceRating).toBe(8.4);
   });
+
+  it('T-G1-OVERSEERR-FILMOGRAPHY-SORT: sorts actor filmography (Karine Viard) systematically by release_date descending', async () => {
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/v1/search?query=Karine%20Viard')) {
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                id: 19091,
+                mediaType: 'person',
+                name: 'Karine Viard',
+                knownFor: [
+                  {
+                    id: 680,
+                    mediaType: 'movie',
+                    title: 'Delicatessen',
+                    releaseDate: '1991-04-17',
+                    voteCount: 3500,
+                    popularity: 45,
+                    voteAverage: 7.6
+                  },
+                  {
+                    id: 303693,
+                    mediaType: 'movie',
+                    title: 'La Famille Bélier',
+                    releaseDate: '2014-12-17',
+                    voteCount: 2800,
+                    popularity: 50,
+                    voteAverage: 7.4
+                  }
+                ]
+              }
+            ]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.includes('/api/v1/person/19091/combined_credits')) {
+        return new Response(
+          JSON.stringify({
+            cast: [
+              {
+                id: 680,
+                mediaType: 'movie',
+                title: 'Delicatessen',
+                releaseDate: '1991-04-17',
+                voteCount: 3500,
+                popularity: 45,
+                voteAverage: 7.6,
+                character: 'Mademoiselle Plusse'
+              },
+              {
+                id: 303693,
+                mediaType: 'movie',
+                title: 'La Famille Bélier',
+                releaseDate: '2014-12-17',
+                voteCount: 2800,
+                popularity: 50,
+                voteAverage: 7.4,
+                character: 'Gigi Bélier'
+              },
+              {
+                id: 1122334,
+                mediaType: 'movie',
+                title: 'Madame de Sévigné',
+                releaseDate: '2024-02-28',
+                voteCount: 110,
+                popularity: 18,
+                voteAverage: 6.7,
+                character: 'Marquise de Sévigné'
+              },
+              {
+                id: 1456789,
+                mediaType: 'movie',
+                title: 'Nouveau Film 2026',
+                releaseDate: '2026-03-11',
+                voteCount: 25,
+                popularity: 22,
+                voteAverage: 7.1,
+                character: 'Claire'
+              }
+            ],
+            crew: []
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+
+    const overseerr = new OverseerrConnector('http://192.168.1.154:5055', 'fake-key', mockFetch);
+    const res = await overseerr.searchPersonFilmography({
+      personQuery: 'Karine Viard',
+      roleFilter: 'actor',
+      mediaType: 'movie'
+    });
+
+    expect(res.personName).toBe('Karine Viard');
+    expect(res.candidates.map((c) => c.year)).toEqual([2026, 2024, 2014, 1991]);
+    expect(res.candidates[0].titleFr).toBe('Nouveau Film 2026');
+    expect(res.candidates[1].titleFr).toBe('Madame de Sévigné');
+  });
 });

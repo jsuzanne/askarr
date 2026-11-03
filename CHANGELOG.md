@@ -5,6 +5,18 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.39] - 2026-11-03
+
+### Corrigé
+- **Interception & nettoyage des balises brutes DeepSeek `DSML` (`parseAndStripDsmlToolCalls`, `deepseek-orchestrator.service.ts`)** :
+  - Ajout d'un parseur et nettoyeur de secours dans la boucle d'agent LLM pour intercepter les appels d'outils émis en texte brut sous forme `< | DSML | calls>< | DSML | invoke name="..." ...>` / `<|DSML|invoke...>` / `<｜DSML｜invoke...>` dans `message.content` par DeepSeek V3/R1, exécuter l'outil correspondant et ne jamais transmettre ces balises brutes au client.
+- **Recherche directe par titre + année dans les bibliothèques Plex locales (`searchByTitleOnPlex`, `searchAndCheckMedia`, `buildDirectPlexMediaEvidence`)** :
+  - Lors d'un appel à `search_and_check_media` (ex: *"Obsession est il dispo sur plex ?"*), Askarr interroge désormais directement les bibliothèques Plex locales en parallèle de TMDB/Overseerr et Radarr, garantissant qu'un film présent sur Plex (ex: *Obsession* 2026) est toujours trouvé et retourné en priorité comme disponible même s'il est noyé sous d'anciens homonymes sur TMDB ou si son année/GUID diffère.
+- **Tri chronologique décroissant systématique des filmographies d'acteurs et réalisateurs (`searchPersonFilmography`, `searchByPerson`)** :
+  - Les crédits d'un acteur ou d'une actrice (ex: *Karine Viard*) sont désormais systématiquement triés par `release_date` décroissant (les films les plus récents d'abord, en écartant les documentaires auto-portraits et talk-shows) avant troncature et envoi au LLM.
+
+---
+
 ## [1.2.38] - 2026-11-02
 
 ### Ajouté

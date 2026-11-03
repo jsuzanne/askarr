@@ -96,22 +96,113 @@ export class MediaAggregatorService {
     candidates: MediaEvidence[];
   }> {
     const maxCandidates = params.maxCandidates || 4;
+    const yearInQueryMatch = params.query.match(/\b(19\d{2}|20\d{2})\b/);
+    const extractedYearFromQuery = yearInQueryMatch ? Number(yearInQueryMatch[1]) : undefined;
+    const effectiveYear = params.year ?? extractedYearFromQuery;
+
+    const strippedQuery = params.query
+      .replace(/\(\s*(?:19\d{2}|20\d{2})\s*\)/g, ' ')
+      .replace(/\b(?:19\d{2}|20\d{2})\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const cleanTitleQuery = strippedQuery.length >= 2 ? strippedQuery : params.query.trim();
+
     const localSearchQuery =
       params.userQueryContext && params.userQueryContext.trim().length > params.query.trim().length
         ? `${params.query} ${params.userQueryContext}`
         : params.query;
-    const [rawCandidates, localCatalogMatches] = await Promise.all([
-      this.overseerr.search(params.query, params.mediaType),
+
+    const [rawCandidates, localCatalogMatches, plexDirectMatches] = await Promise.all([
+      this.overseerr.search(cleanTitleQuery, params.mediaType),
       this.searchLocalCatalogByKeywords({
         query: localSearchQuery,
         mediaType: params.mediaType,
-        year: params.year,
+        year: effectiveYear,
         limit: 3
-      })
+      }),
+      typeof (this.plex as unknown as { searchByTitleOnPlex?: unknown }).searchByTitleOnPlex ===
+      'function'
+        ? this.plex
+            .searchByTitleOnPlex({
+              query: cleanTitleQuery,
+              mediaType: params.mediaType,
+              year: effectiveYear,
+              limit: 3
+            })
+            .catch(() => [])
+        : Promise.resolve([])
     ]);
+
+    const normTitle = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const normQuery = normTitle(cleanTitleQuery);
+    const currentYear = new Date().getFullYear();
+
+    const preMatchedPlexByKey = new Map<
+      string,
+      { detail: PlexMetadataDetail; allServerNames: string[] }
+    >();
+    const unmatchedDirectPlexCards: MediaEvidence[] = [];
 
     const mergedRaw: Array<{ tmdbId: number; mediaType: MediaType; year: number | null; title: string }> = [];
     const seenKeys = new Set<string>();
+
+    // 1. Priorité absolue aux résultats trouvés directement dans la bibliothèque Plex locale par titre (+ année)
+    for (const pHit of plexDirectMatches) {
+      const mType: MediaType = pHit.detail.type === 'show' ? 'tv' : 'movie';
+      const pNormTitle = normTitle(pHit.detail.title);
+      const pNormOrig = normTitle(pHit.detail.originalTitle || '');
+
+      let resolvedTmdbId: number | null = pHit.extractedTmdbId;
+      if (!resolvedTmdbId) {
+        const matchedCandidate =
+          rawCandidates.find(
+            (c) =>
+              c.mediaType === mType &&
+              (normTitle(c.titleFr) === pNormTitle ||
+                normTitle(c.originalTitle) === pNormTitle ||
+                (Boolean(pNormOrig) &&
+                  (normTitle(c.titleFr) === pNormOrig || normTitle(c.originalTitle) === pNormOrig))) &&
+              (!pHit.detail.year || !c.year || Math.abs(c.year - pHit.detail.year) <= 1)
+          ) ||
+          localCatalogMatches.find(
+            (loc) =>
+              loc.mediaType === mType &&
+              normTitle(loc.title) === pNormTitle &&
+              (!pHit.detail.year || !loc.year || Math.abs(loc.year - pHit.detail.year) <= 1)
+          );
+        if (matchedCandidate) {
+          resolvedTmdbId = matchedCandidate.tmdbId;
+        }
+      }
+
+      if (resolvedTmdbId && resolvedTmdbId > 0) {
+        const k = `${mType}:${resolvedTmdbId}`;
+        preMatchedPlexByKey.set(k, {
+          detail: pHit.detail,
+          allServerNames: pHit.allServerNames
+        });
+        if (!seenKeys.has(k)) {
+          seenKeys.add(k);
+          mergedRaw.push({
+            tmdbId: resolvedTmdbId,
+            mediaType: mType,
+            year: pHit.detail.year,
+            title: pHit.detail.title
+          });
+        }
+      } else {
+        unmatchedDirectPlexCards.push(
+          this.buildDirectPlexMediaEvidence(pHit, params.userAllowedServers)
+        );
+      }
+    }
+
     for (const loc of localCatalogMatches) {
       const k = `${loc.mediaType}:${loc.tmdbId}`;
       if (!seenKeys.has(k)) {
@@ -132,23 +223,20 @@ export class MediaAggregatorService {
       }
     }
 
-    const normTitle = (s: string) =>
-      s
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
-    const normQuery = normTitle(params.query);
-    const currentYear = new Date().getFullYear();
-
     let filtered = mergedRaw;
-    if (params.year) {
-      const yearMatches = mergedRaw.filter((c) => c.year && Math.abs(c.year - params.year!) <= 1);
+    if (effectiveYear) {
+      const yearMatches = mergedRaw.filter(
+        (c) =>
+          preMatchedPlexByKey.has(`${c.mediaType}:${c.tmdbId}`) ||
+          (c.year && Math.abs(c.year - effectiveYear) <= 1)
+      );
       if (yearMatches.length > 0) filtered = yearMatches;
     } else {
-      // Si aucune année n'est forcée, promouvoir en tête tout homonyme exact récent (sortie cinéma/VOD de l'année en cours ou précédente)
+      // Si aucune année n'est forcée, promouvoir en tête tout titre présent sur Plex ou homonyme exact récent (sortie cinéma/VOD de l'année en cours ou précédente)
       filtered = [...mergedRaw].sort((a, b) => {
+        const aOnPlex = preMatchedPlexByKey.has(`${a.mediaType}:${a.tmdbId}`) ? 1 : 0;
+        const bOnPlex = preMatchedPlexByKey.has(`${b.mediaType}:${b.tmdbId}`) ? 1 : 0;
+        if (bOnPlex !== aOnPlex) return bOnPlex - aOnPlex;
         const aExactRecent = normTitle(a.title) === normQuery && (a.year ?? 0) >= currentYear - 1 ? 1 : 0;
         const bExactRecent = normTitle(b.title) === normQuery && (b.year ?? 0) >= currentYear - 1 ? 1 : 0;
         return bExactRecent - aExactRecent;
@@ -156,19 +244,23 @@ export class MediaAggregatorService {
     }
 
     const topCandidates = filtered.slice(0, maxCandidates);
-    const enrichedRaw = await Promise.all(
-      topCandidates.map((c) =>
-        this.buildMediaEvidence({
+    const enrichedFromTmdb = await Promise.all(
+      topCandidates.map((c) => {
+        const k = `${c.mediaType}:${c.tmdbId}`;
+        return this.buildMediaEvidence({
           tmdbId: c.tmdbId,
           mediaType: c.mediaType,
           currentUserEmail: params.currentUserEmail,
           currentUserOverseerrId: params.currentUserOverseerrId,
           userAllowedServers: params.userAllowedServers,
           includeSeasons: c.mediaType === 'tv',
-          checkIndexers: false
-        })
-      )
+          checkIndexers: false,
+          preMatchedPlexHit: preMatchedPlexByKey.get(k)
+        });
+      })
     );
+
+    const enrichedRaw = [...unmatchedDirectPlexCards, ...enrichedFromTmdb];
 
     const isExactTitle = (e: MediaEvidence) =>
       normTitle(e.identity.titleFr) === normQuery ||
@@ -429,6 +521,143 @@ export class MediaAggregatorService {
     return matches.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
+  /**
+   * Construit directement une fiche `MediaEvidence` complète à partir d'un élément trouvé
+   * sur Plex (`PlexMetadataDetail`) lorsque le film/série n'a pas pu être résolu sur TMDB
+   * ou diffère d'identifiant, garantissant qu'un titre présent sur Plex est toujours affiché disponible.
+   */
+  public buildDirectPlexMediaEvidence(
+    plexHit: {
+      detail: PlexMetadataDetail;
+      extractedTmdbId?: number | null;
+      extractedTvdbId?: number | null;
+      extractedImdbId?: string | null;
+      allServerNames: string[];
+    },
+    userAllowedServers?: string[]
+  ): MediaEvidence {
+    const d = plexHit.detail;
+    const mediaType: MediaType = d.type === 'show' ? 'tv' : 'movie';
+    const availableOnServers =
+      plexHit.allServerNames.length > 0 ? plexHit.allServerNames : [d.serverName];
+    const hasExplicitAllowedList = Array.isArray(userAllowedServers) && userAllowedServers.length > 0;
+    const userAccessibleServers = hasExplicitAllowedList
+      ? availableOnServers.filter((srv) => userAllowedServers!.includes(srv))
+      : availableOnServers;
+    const accessibleToCurrentUser = hasExplicitAllowedList
+      ? userAccessibleServers.length > 0
+      : true;
+
+    const links = buildPlexDeepLinks(d.serverName, d.ratingKey);
+    const matchedItems: PlexMatchedItem[] = availableOnServers.map((srv) => {
+      const srvLinks = srv === d.serverName ? links : buildPlexDeepLinks(srv, '');
+      return {
+        serverName: srv,
+        ratingKey: srv === d.serverName ? d.ratingKey : '',
+        title: d.title,
+        originalTitle: d.originalTitle,
+        year: d.year,
+        libraryTitle: d.librarySectionTitle || (mediaType === 'tv' ? 'Séries TV' : 'Films'),
+        isSharedAcrossAllServers: availableOnServers.length > 1 || d.isSharedAcrossAllServers,
+        machineIdentifier: srvLinks.machineIdentifier,
+        plexWebUrl: srv === d.serverName ? links.plexWebUrl : 'https://app.plex.tv/desktop/',
+        plexIosDeepLink: srv === d.serverName ? links.plexIosDeepLink : 'plex://'
+      };
+    });
+
+    const serversBadgeList =
+      userAccessibleServers.length > 0 ? userAccessibleServers : availableOnServers;
+
+    return {
+      identity: {
+        tmdbId: plexHit.extractedTmdbId || 0,
+        tvdbId: plexHit.extractedTvdbId || null,
+        imdbId: plexHit.extractedImdbId || null,
+        mediaType,
+        titleFr: d.title,
+        originalTitle: d.originalTitle || d.title,
+        year: d.year,
+        overviewFr: d.summary || null,
+        posterUrl: null,
+        runtimeMinutes: d.durationMinutes,
+        genres: d.genres || [],
+        directorOrCreator: d.directors && d.directors.length > 0 ? d.directors.join(', ') : null,
+        topCast: d.cast || [],
+        ratings: {
+          tmdbVoteAverage: null,
+          criticRating: d.criticRating,
+          imdbOrAudienceRating: d.audienceRating ?? d.criticRating ?? null,
+          imdbVotes: null,
+          mdblistScore: null
+        },
+        releaseDates: {
+          inCinemas: null,
+          digitalRelease: null,
+          physicalRelease: null,
+          estimatedVodOrDvdDate: null,
+          isEstimatedDate: false,
+          nextAiring: null
+        }
+      },
+      catalogPresence: {
+        state: 'available_now',
+        serversQueried: availableOnServers,
+        availableServers: availableOnServers,
+        userAccessibleServers,
+        userAllowedServers,
+        accessibleToCurrentUser,
+        matchedItems
+      },
+      requestState: {
+        state: 'available',
+        requestId: null,
+        requestedAt: null,
+        requestedByCurrentUser: false,
+        requestedByDisplayName: null,
+        sourceOrigin: null
+      },
+      episodeCoverage: null,
+      acquisitionPipeline: {
+        state: 'imported_on_disk',
+        externalServiceId: null,
+        monitored: true,
+        hasFile: true,
+        addedAt: null,
+        estimatedAvailabilityDate: null,
+        estimatedAvailabilityReason: null,
+        queueProgressPercent: null,
+        queueTimeleft: null
+      },
+      indexerSearch: {
+        queried: false,
+        state: 'not_queried',
+        matchingReleasesCount: 0,
+        bestQualityHint: null,
+        activeIndexersCount: null
+      },
+      actionability: {
+        canRequestNow: false,
+        requestableSeasons: [],
+        blockReason: 'ALREADY_AVAILABLE_ON_PLEX',
+        userFriendlyStatusLabel: accessibleToCurrentUser
+          ? `Disponible sur Plex (${serversBadgeList.join(', ')})`
+          : `Présent sur ${availableOnServers.join(', ')} (hors de vos serveurs autorisés)`,
+        userFriendlyExplanationFr: accessibleToCurrentUser
+          ? `Ce titre est disponible immédiatement sur votre serveur Plex (${userAccessibleServers.join(', ')}).`
+          : `Ce titre est présent sur ${availableOnServers.join(', ')}, mais votre compte n'y a pas accès.`,
+        statusTone: accessibleToCurrentUser ? 'emerald' : 'amber'
+      },
+      provenance: [
+        {
+          source: `plex:${d.serverName}`,
+          status: 'ok',
+          latencyMs: 0,
+          detail: `Trouvé directement dans la bibliothèque Plex (${d.title}${d.year ? ` ${d.year}` : ''})`
+        }
+      ]
+    };
+  }
+
   public async buildMediaEvidence(params: {
     tmdbId: number;
     mediaType: MediaType;
@@ -439,6 +668,7 @@ export class MediaAggregatorService {
     checkIndexers?: boolean;
     skipPlexSearch?: boolean;
     knownPlexHint?: { serverNames: string[]; libraryTitle?: string };
+    preMatchedPlexHit?: { detail: PlexMetadataDetail; allServerNames: string[] };
     knownRequestHint?: {
       requestId: number;
       requestedAt: string | null;
@@ -465,6 +695,16 @@ export class MediaAggregatorService {
         detail: `${osDetail.titleFr} (TMDB ${osDetail.tmdbId})`
       });
     } catch (err) {
+      if (params.preMatchedPlexHit) {
+        return this.buildDirectPlexMediaEvidence(
+          {
+            detail: params.preMatchedPlexHit.detail,
+            extractedTmdbId: params.tmdbId,
+            allServerNames: params.preMatchedPlexHit.allServerNames
+          },
+          params.userAllowedServers
+        );
+      }
       const msg = err instanceof Error ? err.message : 'ERROR';
       provenance.push({
         source: 'overseerr',
@@ -479,6 +719,7 @@ export class MediaAggregatorService {
       params.knownPlexHint &&
       Array.isArray(params.knownPlexHint.serverNames) &&
       params.knownPlexHint.serverNames.length > 0;
+    const hasPreMatchedPlexHit = Boolean(params.preMatchedPlexHit);
 
     // 2. En parallèle : Fédération Multi-Serveurs Plex + Radarr (si film) ou Sonarr (si série)
     // Si le média est certifié en attente de sortie ou de téléchargement (hasFile=false / processing), on évite le scan lourd multi-serveurs
@@ -497,6 +738,49 @@ export class MediaAggregatorService {
             }
           ]
         })
+      : hasPreMatchedPlexHit
+      ? Promise.resolve((() => {
+          const pDetail = params.preMatchedPlexHit!.detail;
+          const srvs =
+            params.preMatchedPlexHit!.allServerNames.length > 0
+              ? params.preMatchedPlexHit!.allServerNames
+              : [pDetail.serverName];
+          const primaryLinks = buildPlexDeepLinks(pDetail.serverName, pDetail.ratingKey);
+          return {
+            state: 'available_now' as const,
+            serversQueried: srvs,
+            matchedDetails: [pDetail],
+            matchedItems: srvs.map((srv) => {
+              const srvLinks =
+                srv === pDetail.serverName ? primaryLinks : buildPlexDeepLinks(srv, '');
+              return {
+                serverName: srv,
+                ratingKey: srv === pDetail.serverName ? pDetail.ratingKey : '',
+                title: pDetail.title || osDetail.titleFr,
+                originalTitle: pDetail.originalTitle || osDetail.originalTitle,
+                year: pDetail.year ?? osDetail.year,
+                libraryTitle:
+                  pDetail.librarySectionTitle || (osDetail.mediaType === 'tv' ? 'Séries TV' : 'Films'),
+                isSharedAcrossAllServers: srvs.length > 1,
+                machineIdentifier: srvLinks.machineIdentifier,
+                plexWebUrl:
+                  srv === pDetail.serverName
+                    ? primaryLinks.plexWebUrl
+                    : 'https://app.plex.tv/desktop/',
+                plexIosDeepLink:
+                  srv === pDetail.serverName ? primaryLinks.plexIosDeepLink : 'plex://'
+              };
+            }),
+            provenance: [
+              {
+                source: `plex:${pDetail.serverName}`,
+                status: 'ok' as const,
+                latencyMs: 0,
+                detail: '1 correspondance directe par titre/année'
+              }
+            ]
+          };
+        })())
       : hasKnownPlexHint
       ? Promise.resolve({
           state: 'available_now' as const,
@@ -1333,8 +1617,19 @@ export class MediaAggregatorService {
       )
     );
 
-    // Put titles already available on Plex first so the user sees what they can watch immediately
+    // Trier systématiquement par date de sortie / année décroissante (les films les plus récents d'abord)
+    // avec priorité aux titres disponibles sur Plex à année identique
     enriched.sort((a, b) => {
+      const yearA = a.identity.year ?? 0;
+      const yearB = b.identity.year ?? 0;
+      if (yearA !== yearB) return yearB - yearA;
+
+      const dateA = a.identity.releaseDates.inCinemas || '';
+      const dateB = b.identity.releaseDates.inCinemas || '';
+      if (dateA && dateB && dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+
       const aAvail = a.catalogPresence.state === 'available_now' ? 1 : 0;
       const bAvail = b.catalogPresence.state === 'available_now' ? 1 : 0;
       if (aAvail !== bAvail) return bAvail - aAvail;

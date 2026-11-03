@@ -504,15 +504,40 @@ export class PlexMultiServerConnector {
         (g) => g === targetTmdbGuid || (targetTvdbGuid && g === targetTvdbGuid) || (targetImdbGuid && g === targetImdbGuid)
       );
 
-      const detailTitleNorm = detail.title.trim().toLowerCase();
-      const detailOrigNorm = (detail.originalTitle || '').trim().toLowerCase();
+      const normStr = (s: string) =>
+        s
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+      const detailTitleNorm = normStr(detail.title);
+      const detailOrigNorm = normStr(detail.originalTitle || '');
+      const cleanTitleFr = normStr(params.titleFr);
+      const cleanOrig = normStr(params.originalTitle || '');
+
+      const exactTitleMatched =
+        Boolean(detailTitleNorm) &&
+        (detailTitleNorm === cleanTitleFr ||
+          (Boolean(cleanOrig) && detailTitleNorm === cleanOrig) ||
+          (Boolean(cleanOrig) && Boolean(detailOrigNorm) && detailOrigNorm === cleanOrig) ||
+          (Boolean(detailOrigNorm) && detailOrigNorm === cleanTitleFr));
+
+      const detailTmdbGuids = detail.guids.filter((g) => g.startsWith('tmdb://'));
+      const hasConflictingTmdbGuid =
+        params.tmdbId > 0 &&
+        detailTmdbGuids.length > 0 &&
+        !detailTmdbGuids.includes(targetTmdbGuid);
+
+      const yearMatchedWithinOne =
+        !params.year || !detail.year || Math.abs(detail.year - params.year) <= 1;
+      const strictBothYearsMatchedWithinOne =
+        Boolean(params.year && detail.year && Math.abs(detail.year - params.year) <= 1);
 
       const titleAndYearMatched =
-        detail.guids.length === 0 &&
-        (detailTitleNorm === normTitleFr ||
-          (normOrig && detailTitleNorm === normOrig) ||
-          (normOrig && detailOrigNorm === normOrig)) &&
-        (!params.year || !detail.year || Math.abs(detail.year - params.year) <= 1);
+        exactTitleMatched &&
+        ((!hasConflictingTmdbGuid && yearMatchedWithinOne) || strictBothYearsMatchedWithinOne);
 
       if (guidMatched || titleAndYearMatched) {
         matched.push(detail);
@@ -520,6 +545,233 @@ export class PlexMultiServerConnector {
     }
 
     return { matched, latencyMs: Date.now() - t0 };
+  }
+
+  /**
+   * Recherche directe par titre (+ année optionnelle) dans les bibliothèques Plex locales
+   * (NucVillers + NucBuntu) en parallèle de TMDB/Radarr.
+   * Garantit qu'un film ou une série présent sur Plex (ex: "Obsession" 2026) est toujours trouvé
+   * même s'il est noyé sous des homonymes sur TMDB ou si son année/GUID TMDB diffère.
+   */
+  public async searchByTitleOnPlex(params: {
+    query: string;
+    mediaType?: 'movie' | 'tv' | 'auto';
+    year?: number | null;
+    limit?: number;
+  }): Promise<
+    Array<{
+      detail: PlexMetadataDetail;
+      extractedTmdbId: number | null;
+      extractedTvdbId: number | null;
+      extractedImdbId: string | null;
+      allServerNames: string[];
+    }>
+  > {
+    if (this.servers.length === 0) return [];
+
+    const rawQuery = (params.query || '').trim();
+    if (!rawQuery) return [];
+
+    const yearMatch = rawQuery.match(/\b(19\d{2}|20\d{2})\b/);
+    const yearFromQuery = yearMatch ? Number(yearMatch[1]) : null;
+    const effectiveYear = params.year ?? yearFromQuery;
+
+    const strippedQuery = rawQuery
+      .replace(/\(\s*(?:19\d{2}|20\d{2})\s*\)/g, ' ')
+      .replace(/\b(?:19\d{2}|20\d{2})\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const searchQuery = strippedQuery.length >= 2 ? strippedQuery : rawQuery;
+
+    const norm = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const normQuery = norm(searchQuery);
+    if (!normQuery) return [];
+
+    const currentYear = new Date().getFullYear();
+    const limit = params.limit && params.limit > 0 ? params.limit : 3;
+    const catalogServers = this.servers.slice(0, 2);
+
+    const perServerDetails = await Promise.all(
+      catalogServers.map(async (server) => {
+        try {
+          const path = `/hubs/search?query=${encodeURIComponent(searchQuery)}&limit=10&includeGuids=1`;
+          const data = await this.fetchPlexJson<{
+            MediaContainer?: {
+              Hub?: Array<{
+                type?: string;
+                Metadata?: Array<{
+                  ratingKey?: string;
+                  type?: string;
+                  title?: string;
+                  originalTitle?: string;
+                  year?: number;
+                  Guid?: Array<{ id?: string }>;
+                }>;
+              }>;
+            };
+          }>(server.baseUrl, path);
+
+          const scoredCandidates: Array<{ ratingKey: string; isShow: boolean; score: number }> = [];
+          const seenKeys = new Set<string>();
+
+          for (const hub of data.MediaContainer?.Hub || []) {
+            if (hub.type !== 'movie' && hub.type !== 'show') continue;
+            for (const m of hub.Metadata || []) {
+              if (!m.ratingKey) continue;
+              const mType = m.type || hub.type;
+              if (params.mediaType === 'movie' && mType !== 'movie') continue;
+              if (params.mediaType === 'tv' && mType !== 'show') continue;
+
+              const rk = String(m.ratingKey);
+              if (seenKeys.has(rk)) continue;
+
+              const mTitleNorm = norm(m.title || '');
+              const mOrigNorm = norm(m.originalTitle || '');
+              const isExact = mTitleNorm === normQuery || (Boolean(mOrigNorm) && mOrigNorm === normQuery);
+              const isPrefixOrSub =
+                !isExact &&
+                (mTitleNorm.startsWith(`${normQuery} `) ||
+                  mOrigNorm.startsWith(`${normQuery} `) ||
+                  (normQuery.length >= 4 &&
+                    (mTitleNorm.includes(normQuery) ||
+                      (Boolean(mOrigNorm) && mOrigNorm.includes(normQuery)))));
+
+              if (!isExact && !isPrefixOrSub) continue;
+
+              if (effectiveYear && typeof m.year === 'number' && Math.abs(m.year - effectiveYear) > 1) {
+                continue;
+              }
+
+              let score = isExact ? 100 : 50;
+              if (effectiveYear && typeof m.year === 'number') {
+                score += m.year === effectiveYear ? 40 : 25;
+              } else if (typeof m.year === 'number') {
+                if (m.year >= currentYear - 1) score += 35;
+                score += Math.max(0, m.year - 1950) * 0.15;
+              }
+
+              seenKeys.add(rk);
+              scoredCandidates.push({ ratingKey: rk, isShow: mType === 'show', score });
+            }
+          }
+
+          scoredCandidates.sort((a, b) => b.score - a.score);
+          const topKeys = scoredCandidates.slice(0, limit);
+          const details = await Promise.all(
+            topKeys.map((k) => this.getMetadataByRatingKey(server, k.ratingKey, k.isShow))
+          );
+          return details.filter((d): d is PlexMetadataDetail => d !== null);
+        } catch {
+          return [] as PlexMetadataDetail[];
+        }
+      })
+    );
+
+    const grouped = new Map<
+      string,
+      {
+        detail: PlexMetadataDetail;
+        extractedTmdbId: number | null;
+        extractedTvdbId: number | null;
+        extractedImdbId: string | null;
+        allServerNames: string[];
+        score: number;
+      }
+    >();
+
+    for (const serverDetails of perServerDetails) {
+      for (const detail of serverDetails) {
+        if (effectiveYear && detail.year && Math.abs(detail.year - effectiveYear) > 1) {
+          continue;
+        }
+        let extractedTmdbId: number | null = null;
+        let extractedTvdbId: number | null = null;
+        let extractedImdbId: string | null = null;
+
+        for (const g of detail.guids) {
+          if (g.startsWith('tmdb://')) {
+            const n = Number(g.slice('tmdb://'.length));
+            if (Number.isFinite(n) && n > 0) extractedTmdbId = n;
+          } else if (g.startsWith('tvdb://')) {
+            const n = Number(g.slice('tvdb://'.length));
+            if (Number.isFinite(n) && n > 0) extractedTvdbId = n;
+          } else if (g.startsWith('imdb://')) {
+            const id = g.slice('imdb://'.length).trim();
+            if (id) extractedImdbId = id;
+          }
+        }
+
+        const dTitleNorm = norm(detail.title);
+        const dOrigNorm = norm(detail.originalTitle || '');
+        const isExact = dTitleNorm === normQuery || (Boolean(dOrigNorm) && dOrigNorm === normQuery);
+        let score = isExact ? 100 : 50;
+        if (effectiveYear && detail.year) {
+          score += detail.year === effectiveYear ? 40 : 25;
+        } else if (detail.year) {
+          if (detail.year >= currentYear - 1) score += 35;
+          score += Math.max(0, detail.year - 1950) * 0.15;
+        }
+
+        const groupKey = extractedTmdbId
+          ? `${detail.type}:tmdb:${extractedTmdbId}`
+          : `${detail.type}:title:${dTitleNorm}:${detail.year || 0}`;
+
+        const existing = grouped.get(groupKey);
+        const allConfiguredServerNames = this.servers.map((s) => s.name);
+        if (!existing) {
+          const allServerNames =
+            detail.serverName === 'NucVillers' || detail.isSharedAcrossAllServers
+              ? allConfiguredServerNames
+              : [detail.serverName];
+          grouped.set(groupKey, {
+            detail,
+            extractedTmdbId,
+            extractedTvdbId,
+            extractedImdbId,
+            allServerNames,
+            score
+          });
+        } else {
+          if (!existing.allServerNames.includes(detail.serverName)) {
+            existing.allServerNames.push(detail.serverName);
+          }
+          if (detail.serverName === 'NucVillers' || detail.isSharedAcrossAllServers) {
+            for (const sName of allConfiguredServerNames) {
+              if (!existing.allServerNames.includes(sName)) {
+                existing.allServerNames.push(sName);
+              }
+            }
+          }
+          if (!existing.extractedTmdbId && extractedTmdbId) {
+            existing.extractedTmdbId = extractedTmdbId;
+          }
+          if (!existing.extractedTvdbId && extractedTvdbId) {
+            existing.extractedTvdbId = extractedTvdbId;
+          }
+          if (!existing.extractedImdbId && extractedImdbId) {
+            existing.extractedImdbId = extractedImdbId;
+          }
+        }
+      }
+    }
+
+    return Array.from(grouped.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ detail, extractedTmdbId, extractedTvdbId, extractedImdbId, allServerNames }) => ({
+        detail,
+        extractedTmdbId,
+        extractedTvdbId,
+        extractedImdbId,
+        allServerNames
+      }));
   }
 
   /**

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MediaAggregatorService } from '../../src/server/aggregator/media-aggregator.service.js';
+import { parseAndStripDsmlToolCalls } from '../../src/server/orchestrator/deepseek-orchestrator.service.js';
 import type { PlexMultiServerConnector } from '../../src/server/connectors/plex.connector.js';
 import type { OverseerrConnector } from '../../src/server/connectors/overseerr.connector.js';
 import type { RadarrConnector } from '../../src/server/connectors/radarr.connector.js';
@@ -457,5 +458,142 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
     expect(ev.actionability.requestableSeasons).toEqual([1]);
     expect(ev.actionability.userFriendlyStatusLabel).toContain('1/8 ép.');
     expect(ev.actionability.userFriendlyExplanationFr).toContain('7 épisode(s) manquant(s)');
+  });
+
+  it('T-DSML-01: intercepts and strips DeepSeek raw < | DSML | calls>< | DSML | invoke ...> tags from content', () => {
+    const rawIphoneContent =
+      'Je vérifie tout de suite sur Plex.\n< | DSML | calls>< | DSML | invoke name="search_and_check_media">< | DSML | parameter name="query" string="true">Obsession</ | DSML | parameter>< | DSML | parameter name="mediaType" string="true">movie</ | DSML | parameter>< | DSML | parameter name="year" string="false">2026</ | DSML | parameter></ | DSML | invoke></ | DSML | calls>';
+
+    const parsed = parseAndStripDsmlToolCalls(rawIphoneContent);
+    expect(parsed.cleanedContent).toBe('Je vérifie tout de suite sur Plex.');
+    expect(parsed.cleanedContent).not.toContain('DSML');
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0].function.name).toBe('search_and_check_media');
+    expect(JSON.parse(parsed.toolCalls[0].function.arguments)).toEqual({
+      query: 'Obsession',
+      mediaType: 'movie',
+      year: 2026
+    });
+
+    // Also test inline attribute / unclosed DSML variant
+    const rawInlineVariant =
+      '< | DSML | calls>< | DSML | invoke name="search_and_check_media" query="Obsession" mediaType="auto">';
+    const parsedInline = parseAndStripDsmlToolCalls(rawInlineVariant);
+    expect(parsedInline.cleanedContent).toBe('');
+    expect(parsedInline.toolCalls).toHaveLength(1);
+    expect(parsedInline.toolCalls[0].function.name).toBe('search_and_check_media');
+    expect(JSON.parse(parsedInline.toolCalls[0].function.arguments)).toEqual({
+      query: 'Obsession',
+      mediaType: 'auto'
+    });
+  });
+
+  it('T-AGG-OBSESSION-PLEX-01: searchAndCheckMedia finds "Obsession" (2026) directly in local Plex library even when TMDB returns older homonyms', async () => {
+    const mockPlex = {
+      searchByTitleOnPlex: vi.fn().mockResolvedValue([
+        {
+          detail: {
+            serverName: 'NucVillers',
+            ratingKey: '882026',
+            title: 'Obsession',
+            originalTitle: 'Obsession',
+            type: 'movie',
+            year: 2026,
+            librarySectionTitle: 'Films',
+            isSharedAcrossAllServers: true,
+            summary: 'Un thriller psychologique sorti en 2026.',
+            criticRating: 7.4,
+            audienceRating: 7.8,
+            durationMinutes: 108,
+            genres: ['Thriller', 'Horreur'],
+            directors: ['Curry Barker'],
+            cast: ['Michael Johnston', 'Inde Navarrette'],
+            guids: ['plex://movie/67890abc']
+          },
+          extractedTmdbId: null,
+          extractedTvdbId: null,
+          extractedImdbId: 'tt33002026',
+          allServerNames: ['NucVillers', 'NucBuntu', 'EQ12buntu', 'MacMini', 'Macmini4']
+        }
+      ]),
+      findMediaAcrossServers: vi.fn().mockResolvedValue({
+        state: 'not_in_catalog',
+        serversQueried: ['NucVillers'],
+        matchedDetails: [],
+        matchedItems: [],
+        provenance: []
+      })
+    } as unknown as PlexMultiServerConnector;
+
+    // Overseerr only returns the 1976 homonym in its top results
+    const mockOverseerr = {
+      search: vi.fn().mockResolvedValue([
+        {
+          tmdbId: 11576,
+          mediaType: 'movie',
+          titleFr: 'Obsession',
+          originalTitle: 'Obsession',
+          year: 1976,
+          overviewFr: 'Film de Brian De Palma (1976).',
+          posterUrl: null,
+          voteAverage: 6.8,
+          mediaInfoStatus: null
+        }
+      ]),
+      getMediaDetail: vi.fn().mockResolvedValue({
+        tmdbId: 11576,
+        mediaType: 'movie',
+        tvdbId: null,
+        imdbId: 'tt0074991',
+        titleFr: 'Obsession',
+        originalTitle: 'Obsession',
+        year: 1976,
+        overviewFr: 'Film de Brian De Palma (1976).',
+        posterUrl: null,
+        genres: ['Drame', 'Thriller'],
+        runtimeMinutes: 98,
+        voteAverage: 6.8,
+        directorOrCreator: 'Brian De Palma',
+        topCast: ['Cliff Robertson', 'Geneviève Bujold'],
+        tmdbReleases: { inCinemas: '1976-08-01', digitalRelease: null, physicalRelease: null },
+        totalSeasons: 0,
+        seasonsMeta: [],
+        requestInfo: {
+          mediaStatus: null,
+          latestRequestId: null,
+          latestRequestStatus: null,
+          requestedAt: null,
+          requestedByUserId: null,
+          requestedByEmail: null,
+          requestedByDisplayName: null,
+          requestedSeasons: []
+        }
+      })
+    } as unknown as OverseerrConnector;
+
+    const mockRadarr = {
+      getCatalogIndex: vi.fn().mockResolvedValue({ movies: [], latencyMs: 1 }),
+      getMovieByTmdbId: vi.fn().mockResolvedValue({ movie: null }),
+      getQueueForMovie: vi.fn().mockResolvedValue(null)
+    } as unknown as RadarrConnector;
+
+    const aggregator = new MediaAggregatorService(
+      mockOverseerr,
+      mockPlex,
+      mockRadarr,
+      {} as unknown as SonarrConnector,
+      {} as unknown as ProwlarrConnector
+    );
+
+    const res = await aggregator.searchAndCheckMedia({
+      query: 'Obsession',
+      mediaType: 'movie'
+    });
+
+    expect(res.candidates.length).toBeGreaterThanOrEqual(1);
+    expect(res.candidates[0].identity.titleFr).toBe('Obsession');
+    expect(res.candidates[0].identity.year).toBe(2026);
+    expect(res.candidates[0].catalogPresence.state).toBe('available_now');
+    expect(res.candidates[0].catalogPresence.availableServers).toContain('NucVillers');
   });
 });

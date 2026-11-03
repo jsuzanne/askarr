@@ -43,7 +43,7 @@ RÈGLES ABSOLUES DE VÉRITÉ, DE PERTINENCE ET D'EXPERTISE CINÉMA :
    - **Recherche descriptive par intrigue, mots-clés thématiques ou palmarès de festival (\`verify_specific_titles\`)** :
      -> Si l'utilisateur cherche un film à partir d'un résumé d'intrigue (*"un film où..."*), d'une combinaison réalisateur + acteur, ou d'un prix de festival (*"Palme d'Or à Cannes en 2023"*, *"César du meilleur film"*), identifie 1 à 5 films précis grâce à ta culture cinéma et appelle \`verify_specific_titles\`.
    - **Filmographie d'un réalisateur ou d'un acteur (\`search_person_filmography\`)** :
-     -> Corrige d'abord les fautes d'orthographe sur le nom ("klapish" -> "Cédric Klapisch") et appelle \`search_person_filmography\`. Ne propose jamais d'obscurs documentaires "making-of" à la place de ses longs-métrages !
+     -> Corrige d'abord les fautes d'orthographe sur le nom ("klapish" -> "Cédric Klapisch") et appelle \`search_person_filmography\`. Les résultats sont triés par date de sortie décroissante (les films les plus récents d'abord) : présente en priorité ses films récents tout en indiquant clairement lesquels sont disponibles sur Plex, sans jamais proposer d'obscurs documentaires "making-of" à la place de ses longs-métrages !
    - ZÉRO MÉLANGE HORS-SUJET : N'appelle jamais \`discover_and_recommend_media(scope='on_plex_now')\` au hasard quand l'utilisateur pose une question sur ses serveurs ou cherche un réalisateur, un acteur, un titre précis ou des critères structurés.
 4. ZÉRO INVENTION DE DISPONIBILITÉ & INTERDICTION DE CITER UN FILM SANS FICHE VÉRIFIÉE :
    - Tu ne dois JAMAIS deviner si un film ou une série est sur Plex ou dans la liste d'attente : appelle un outil (\`discover_media_by_criteria\`, \`verify_specific_titles\`, \`search_person_filmography\`, \`search_and_check_media\`, \`get_series_seasons_detail\`, \`discover_and_recommend_media\`) et base-toi exclusivement sur les preuves retournées.
@@ -132,9 +132,158 @@ ABSOLUTE RULES OF TRUTH, RELEVANCE, AND CINEMA EXPERTISE:
    - For open personalized recommendations on Plex ("what do you recommend tonight?"), call 'discover_and_recommend_media' (excluding already watched titles and highlighting popular community choices).
 10. EFFICIENCY & CONCISENESS: Be warm, natural, and concise (2 to 5 fluid sentences maximum), as rich visual cards appear right underneath your message. NEVER output internal bracketed context tags such as "[Fiches affichées : ...]" or "[Critères MDBList appliqués à ce tour : ...]" in your final reply.`;
 
+export interface ParsedDsmlToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+const DSML_NUMERIC_PARAM_KEYS = new Set([
+  'year',
+  'tmdbId',
+  'limit',
+  'daysBack',
+  'minRating',
+  'maxRating',
+  'minYear',
+  'maxYear',
+  'yearFrom',
+  'yearTo',
+  'similarToTmdbId',
+  'maxRuntimeMinutes',
+  'minRuntimeMinutes',
+  'minVotes'
+]);
+
+function coerceDsmlParamValue(key: string, rawVal: string, explicitStringAttr?: string): unknown {
+  const trimmed = rawVal.trim();
+  if (/^(true|false)$/i.test(trimmed)) {
+    return trimmed.toLowerCase() === 'true';
+  }
+  if (
+    /^-?\d+(?:\.\d+)?$/.test(trimmed) &&
+    (DSML_NUMERIC_PARAM_KEYS.has(key) || explicitStringAttr === 'false' || !explicitStringAttr)
+  ) {
+    if (key !== 'query' && key !== 'personName' && key !== 'title' && key !== 'genre') {
+      const n = Number(trimmed);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  if (
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
+/**
+ * Intercepte et nettoie les balises brutes DeepSeek DSML (`<|DSML|...>`, `< | DSML | ...>`, `<｜DSML｜...>`)
+ * parfois émises directement dans `message.content` par DeepSeek V3/R1 au lieu de `message.tool_calls`.
+ */
+export function parseAndStripDsmlToolCalls(rawContent: string | null | undefined): {
+  cleanedContent: string;
+  toolCalls: ParsedDsmlToolCall[];
+} {
+  if (!rawContent) {
+    return { cleanedContent: '', toolCalls: [] };
+  }
+
+  const hasDsml = /<\s*\/?\s*[|｜]\s*DSML\s*[|｜]/i.test(rawContent);
+  if (!hasDsml) {
+    return { cleanedContent: rawContent, toolCalls: [] };
+  }
+
+  // Normalise toutes les variantes (`< | DSML | `, `<｜DSML｜`, `</ | DSML | `) en `<|DSML|` / `</|DSML|`
+  const normalized = rawContent.replace(/<\s*(\/?)\s*[|｜]\s*DSML\s*[|｜]\s*/gi, '<$1|DSML|');
+
+  const toolCalls: ParsedDsmlToolCall[] = [];
+  const invokeRegex = /<\|DSML\|invoke\b([^>]*)>([\s\S]*?)(?:<\/\|DSML\|invoke>|(?=<\|DSML\|invoke\b)|<\/\|DSML\|(?:function_calls|calls)>|$)/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = invokeRegex.exec(normalized)) !== null) {
+    const invokeAttrs = match[1] || '';
+    const invokeBody = match[2] || '';
+
+    const nameMatch = invokeAttrs.match(/\bname\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s/>]+))/i);
+    const fnName = (nameMatch?.[1] || nameMatch?.[2] || nameMatch?.[3] || '').trim();
+    if (!fnName) continue;
+
+    const args: Record<string, unknown> = {};
+
+    // 1. Attributs inline éventuels sur la balise invoke (ex: < | DSML | invoke name="search_and_check_media" query="Obsession" mediaType="auto">)
+    const attrRegex = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+    let attrMatch: RegExpExecArray | null;
+    while ((attrMatch = attrRegex.exec(invokeAttrs)) !== null) {
+      const k = attrMatch[1];
+      if (k === 'name' || k === 'type' || k === 'string') continue;
+      const v = attrMatch[2] ?? attrMatch[3] ?? '';
+      args[k] = coerceDsmlParamValue(k, v);
+    }
+
+    // 2. Balises enfants <|DSML|parameter name="...">...</|DSML|parameter>
+    const paramRegex = /<\|DSML\|(?:parameter|param)\b([^>]*)>([\s\S]*?)(?:<\/\|DSML\|(?:parameter|param)>|(?=<\|DSML\|(?:parameter|param)\b)|$)/gi;
+    let paramMatch: RegExpExecArray | null;
+    let foundParamTags = false;
+    while ((paramMatch = paramRegex.exec(invokeBody)) !== null) {
+      const pAttrs = paramMatch[1] || '';
+      const pValRaw = paramMatch[2] || '';
+      const pNameMatch = pAttrs.match(/\b(?:name|key)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s/>]+))/i);
+      const pName = (pNameMatch?.[1] || pNameMatch?.[2] || pNameMatch?.[3] || '').trim();
+      if (!pName) continue;
+      foundParamTags = true;
+      const strAttrMatch = pAttrs.match(/\bstring\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+      const explicitStringAttr = (strAttrMatch?.[1] || strAttrMatch?.[2] || '').toLowerCase();
+      args[pName] = coerceDsmlParamValue(pName, pValRaw, explicitStringAttr);
+    }
+
+    // 3. Corps JSON direct dans invoke si aucune balise parameter n'est présente
+    if (!foundParamTags) {
+      const trimmedBody = invokeBody.replace(/<\/?\|DSML\|[^>]*>/gi, '').trim();
+      if (trimmedBody.startsWith('{') && trimmedBody.endsWith('}')) {
+        try {
+          const parsedJson = JSON.parse(trimmedBody) as Record<string, unknown>;
+          if (parsedJson && typeof parsedJson === 'object') {
+            Object.assign(args, parsedJson);
+          }
+        } catch {
+          // Ignorer si JSON partiel/invalide
+        }
+      }
+    }
+
+    toolCalls.push({
+      id: `dsml_call_${toolCalls.length + 1}`,
+      type: 'function',
+      function: {
+        name: fnName,
+        arguments: JSON.stringify(args)
+      }
+    });
+  }
+
+  const cleanedContent = normalized
+    .replace(/<\|DSML\|(?:function_calls|calls)\b[\s\S]*?<\/\|DSML\|(?:function_calls|calls)>/gi, '')
+    .replace(/<\|DSML\|invoke\b[\s\S]*?<\/\|DSML\|invoke>/gi, '')
+    .replace(/<\|DSML\|(?:function_calls|calls|invoke)\b[\s\S]*$/gi, '')
+    .replace(/<\/?\|DSML\|[^>]*>/gi, '')
+    .trim();
+
+  return { cleanedContent, toolCalls };
+}
+
 function sanitizeInternalContextTags(text: string): string {
   if (!text) return '';
-  return text
+  const withoutDsml = parseAndStripDsmlToolCalls(text).cleanedContent;
+  return withoutDsml
     .replace(/\n*\[Fiches affichées\s*:[\s\S]*$/i, '')
     .replace(/\n*\[Displayed Cards\s*:[\s\S]*$/i, '')
     .replace(/\n*\[Critères MDBList appliqués[^\n]*$/gim, '')
@@ -951,6 +1100,16 @@ export class DeepSeekOrchestratorService {
           throw new Error('DEEPSEEK_EMPTY_CHOICE');
         }
 
+        // Fallback parser/stripper DeepSeek V3/R1 : intercepte les blocs < | DSML | invoke ...> ou <|DSML|invoke...>
+        // émis par erreur dans `choice.content` (ex: sur iPhone / Safari) au lieu de `choice.tool_calls`
+        if (choice.content && /<\s*\/?\s*[|｜]\s*DSML\s*[|｜]/i.test(choice.content)) {
+          const dsmlParsed = parseAndStripDsmlToolCalls(choice.content);
+          choice.content = dsmlParsed.cleanedContent || null;
+          if ((!choice.tool_calls || choice.tool_calls.length === 0) && dsmlParsed.toolCalls.length > 0) {
+            choice.tool_calls = dsmlParsed.toolCalls;
+          }
+        }
+
         if (!choice.tool_calls || choice.tool_calls.length === 0) {
           let allCards = collectedCards.size > 0 ? Array.from(collectedCards.values()) : [];
           const replyText =
@@ -1514,12 +1673,19 @@ export class DeepSeekOrchestratorService {
         currentUserEmail: params.userEmail,
         currentUserOverseerrId: params.overseerrUserId,
         userAllowedServers,
-        maxCandidates: 5
+        maxCandidates: 6
       });
       params.onCardsCollected(res.candidates);
+      const compacted = this.compactCardsForLlm(res.candidates);
+      const currentYear = new Date().getFullYear();
+      const recentFilms = compacted.filter((c) => typeof c.year === 'number' && c.year >= currentYear - 4);
+      const classicFilms = compacted.filter((c) => typeof c.year !== 'number' || c.year < currentYear - 4);
       return {
         personName: res.personName,
-        results: this.compactCardsForLlm(res.candidates)
+        sortedBy: 'release_date_desc',
+        recentFilms,
+        classicFilms,
+        results: compacted
       };
     }
 

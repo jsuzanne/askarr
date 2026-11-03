@@ -146,28 +146,30 @@ export class OverseerrConnector {
   }
 
   private mapRawMediaCandidate(r: Record<string, unknown>, fallbackType: MediaType = 'movie'): OverseerrSearchCandidate | null {
-    const rawType = r.mediaType;
+    const rawType = r.mediaType ?? r.media_type;
     const mType: MediaType = rawType === 'tv' ? 'tv' : rawType === 'movie' ? 'movie' : fallbackType;
     const id = Number(r.id);
     if (!Number.isFinite(id) || id <= 0) return null;
 
-    const dateStr = String(r.releaseDate || r.firstAirDate || '');
+    const dateStr = String(r.releaseDate || r.firstAirDate || r.release_date || r.first_air_date || '');
     const year = dateStr.length >= 4 ? Number(dateStr.slice(0, 4)) || null : null;
+    const rawPoster = r.posterPath ?? r.poster_path;
     const posterPath =
-      typeof r.posterPath === 'string' && r.posterPath.startsWith('/')
-        ? `https://image.tmdb.org/t/p/w500${r.posterPath}`
+      typeof rawPoster === 'string' && rawPoster.startsWith('/')
+        ? `https://image.tmdb.org/t/p/w500${rawPoster}`
         : null;
     const mediaInfo = r.mediaInfo as { status?: number } | undefined;
+    const rawVoteAvg = r.voteAverage ?? r.vote_average;
 
     return {
       tmdbId: id,
       mediaType: mType,
       titleFr: String(r.title || r.name || ''),
-      originalTitle: String(r.originalTitle || r.originalName || r.title || r.name || ''),
+      originalTitle: String(r.originalTitle || r.originalName || r.original_title || r.original_name || r.title || r.name || ''),
       year,
       overviewFr: typeof r.overview === 'string' && r.overview.trim() ? r.overview.trim() : null,
       posterUrl: posterPath,
-      voteAverage: typeof r.voteAverage === 'number' ? Math.round(r.voteAverage * 10) / 10 : null,
+      voteAverage: typeof rawVoteAvg === 'number' ? Math.round(rawVoteAvg * 10) / 10 : null,
       mediaInfoStatus: typeof mediaInfo?.status === 'number' ? mediaInfo.status : null
     };
   }
@@ -195,17 +197,34 @@ export class OverseerrConnector {
     const personId = Number(personHit.id);
     const personName = String(personHit.name || params.personQuery);
     const personNameLower = personName.toLowerCase();
-    const collected = new Map<string, { candidate: OverseerrSearchCandidate; score: number }>();
+    const maxFutureIso = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const collected = new Map<
+      string,
+      {
+        candidate: OverseerrSearchCandidate;
+        releaseDateIso: string;
+        score: number;
+        isSelfOrDoc: boolean;
+      }
+    >();
 
-    const addRawItem = (raw: Record<string, unknown>, bonusScore = 0) => {
-      const mType = raw.mediaType === 'tv' ? 'tv' : 'movie';
+    const addRawItem = (raw: Record<string, unknown>, bonusScore = 0, isSelfRole = false) => {
+      const rawType = raw.mediaType ?? raw.media_type;
+      const mType: MediaType = rawType === 'tv' ? 'tv' : 'movie';
       if (params.mediaType && params.mediaType !== 'auto' && mType !== params.mediaType) return;
       const cand = this.mapRawMediaCandidate(raw, mType);
       if (!cand || !cand.titleFr) return;
 
-      // Écarter les documentaires "making-of / portrait" qui portent le nom du réalisateur dans le titre
+      // Écarter les documentaires "making-of / portrait", talk-shows ou apparitions "Self"
       const titleLower = cand.titleFr.toLowerCase();
+      const rawGenres = (raw.genreIds ?? raw.genre_ids) as number[] | undefined;
+      const isTalkOrDocGenre =
+        Array.isArray(rawGenres) &&
+        params.roleFilter === 'actor' &&
+        rawGenres.some((gid) => gid === 99 || gid === 10767 || gid === 10763 || gid === 10764);
       const isSelfDoc =
+        isSelfRole ||
+        isTalkOrDocGenre ||
         titleLower.includes(personNameLower) ||
         titleLower.startsWith('cinéma par') ||
         titleLower.startsWith('pas de deux avec');
@@ -214,54 +233,119 @@ export class OverseerrConnector {
         return;
       }
 
-      const voteCount = Number(raw.voteCount || 0);
+      const rawDateStr = String(
+        raw.releaseDate || raw.firstAirDate || raw.release_date || raw.first_air_date || ''
+      ).trim();
+      const releaseDateIso =
+        rawDateStr.length >= 10
+          ? rawDateStr.slice(0, 10)
+          : cand.year
+            ? `${cand.year}-01-01`
+            : '0000-00-00';
+
+      // Écarter les projets sans date ou rumeurs lointaines (> +6 mois) sauf si l'année est explicitement demandée
+      if (!params.year && releaseDateIso !== '0000-00-00' && releaseDateIso > maxFutureIso) {
+        return;
+      }
+
+      const voteCount = Number(raw.voteCount ?? raw.vote_count ?? 0);
       const popularity = Number(raw.popularity || 0);
       const voteAvg = cand.voteAverage || 0;
-      const score = (isSelfDoc ? -500 : 0) + bonusScore + Math.min(voteCount, 2000) * 0.1 + popularity + voteAvg * 15;
+      const score =
+        (isSelfDoc ? -500 : 0) +
+        bonusScore +
+        Math.min(voteCount, 2000) * 0.1 +
+        popularity +
+        voteAvg * 15;
       const key = `${cand.mediaType}:${cand.tmdbId}`;
       const existing = collected.get(key);
-      if (!existing || score > existing.score) {
-        collected.set(key, { candidate: cand, score });
+      if (!existing || score > existing.score || releaseDateIso > existing.releaseDateIso) {
+        collected.set(key, {
+          candidate: cand,
+          releaseDateIso:
+            existing && existing.releaseDateIso > releaseDateIso
+              ? existing.releaseDateIso
+              : releaseDateIso,
+          score: existing ? Math.max(existing.score, score) : score,
+          isSelfOrDoc: existing ? existing.isSelfOrDoc && isSelfDoc : isSelfDoc
+        });
       }
     };
 
-    // 1. Crédits complets via /api/v1/person/:id/combined_credits
-    try {
-      const credits = await this.getJson<{
-        cast?: Array<Record<string, unknown>>;
-        crew?: Array<Record<string, unknown>>;
-      }>(`/api/v1/person/${personId}/combined_credits?language=fr`);
-
+    const ingestCredits = (credits: {
+      cast?: Array<Record<string, unknown>>;
+      crew?: Array<Record<string, unknown>>;
+    }) => {
       const role = params.roleFilter || 'any';
       if (role === 'director' || role === 'any') {
         for (const c of credits.crew || []) {
           const job = String(c.job || '').toLowerCase();
           const dept = String(c.department || '').toLowerCase();
           if (job === 'director' || dept === 'directing' || job === 'creator' || job === 'writer') {
-            addRawItem(c, job === 'director' ? 120 : 60);
+            addRawItem(c, job === 'director' ? 120 : 60, false);
           }
         }
       }
       if (role === 'actor' || role === 'any') {
         for (const c of credits.cast || []) {
-          // Éviter les apparitions "Self / Lui-même" dans des documentaires
           const character = String(c.character || '').toLowerCase();
-          const isSelf = character.includes('self') || character.includes('lui-même') || character.includes('elle-même');
-          addRawItem(c, isSelf ? -200 : 80);
+          const isSelf =
+            character.includes('self') ||
+            character.includes('lui-même') ||
+            character.includes('elle-même') ||
+            character.includes('archive footage') ||
+            character.includes('uncredited');
+          addRawItem(c, isSelf ? -200 : 80, isSelf);
         }
       }
+    };
+
+    // 1. Crédits complets via /api/v1/person/:id/combined_credits (ou fallback /movie_credits)
+    try {
+      const credits = await this.getJson<{
+        cast?: Array<Record<string, unknown>>;
+        crew?: Array<Record<string, unknown>>;
+      }>(`/api/v1/person/${personId}/combined_credits?language=fr`);
+      ingestCredits(credits);
     } catch {
-      // Fallback sur knownFor si combined_credits n'est pas disponible
+      try {
+        const movieCredits = await this.getJson<{
+          cast?: Array<Record<string, unknown>>;
+          crew?: Array<Record<string, unknown>>;
+        }>(`/api/v1/person/${personId}/movie_credits?language=fr`);
+        ingestCredits(movieCredits);
+      } catch {
+        // Fallback sur knownFor si ni combined_credits ni movie_credits ne sont disponibles
+      }
     }
 
     // 2. Fallback / complément avec knownFor
     const knownFor = (personHit.knownFor as Array<Record<string, unknown>> | undefined) || [];
     for (const k of knownFor) {
-      addRawItem(k, 100);
+      addRawItem(k, 100, false);
     }
 
-    const sorted = Array.from(collected.values())
-      .sort((a, b) => b.score - a.score)
+    const allEntries = Array.from(collected.values());
+    const nonSelfDated = allEntries.filter(
+      (e) => !e.isSelfOrDoc && e.releaseDateIso !== '0000-00-00'
+    );
+    const pool =
+      nonSelfDated.length > 0
+        ? nonSelfDated
+        : allEntries.filter((e) => !e.isSelfOrDoc).length > 0
+          ? allEntries.filter((e) => !e.isSelfOrDoc)
+          : allEntries;
+
+    // Tri systématique par date de sortie (`release_date`) décroissante (films les plus récents d'abord)
+    // avant de tronquer la liste envoyée à l'agrégateur et au LLM
+    const sorted = pool
+      .sort((a, b) => {
+        const dateCmp = b.releaseDateIso.localeCompare(a.releaseDateIso);
+        if (dateCmp !== 0) return dateCmp;
+        const yearDiff = (b.candidate.year ?? 0) - (a.candidate.year ?? 0);
+        if (yearDiff !== 0) return yearDiff;
+        return b.score - a.score;
+      })
       .map((x) => x.candidate);
 
     return {
