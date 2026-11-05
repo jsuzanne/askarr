@@ -5,6 +5,32 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.41] - 2026-11-05
+
+### Amélioré
+- **Qualité conversationnelle & Concision de l'orchestrateur (`STATIC_FRENCH_SYSTEM_PROMPT`)** :
+  - Restructuration du prompt système français avec mise en avant immédiate du principe de concision (2 à 4 phrases fluides) et interdiction de répéter les métadonnées déjà affichées sur les fiches sous le message.
+  - Remplacement de la prose narrative dispersée par une **table de décision compacte de routage d'outils**.
+  - **Divulgations sobres et conditionnelles** : simplification de la présence Plex (pas d'énumération fastidieuse des noms de serveurs comme `NucBuntu` ou `MacMini` sauf demande explicite), demandeur du film (`requestedBy`) divulgué uniquement sur demande, et suppression des descriptions textuelles des boutons d'interface déjà interactifs sur les fiches.
+- **Routage disjoint et sans ambiguïté des outils (`READ_ONLY_TOOLS_DEFINITIONS`)** :
+  - Ajout de frontières négatives disjointes et explicites sur les 4 paires d'outils ambiguës (`discover_media_by_criteria` vs `discover_and_recommend_media`, `search_and_check_media` vs `verify_specific_titles`, `get_recently_added_on_plex` vs `get_watch_history_and_live_streams`, `get_my_requests` vs `diagnose_media_acquisition`).
+  - Dégradation propre et contrôlée si `MDBLIST_API_KEY` est omise.
+- **Plafond de tokens & Troncature sécurisée (`max_tokens: 900`, `handleTruncatedCompletion`)** :
+  - Alignement de la limite `max_tokens` de DeepSeek à 900 (aligné sur les autres providers).
+  - Traitement sécurisé de `finish_reason === 'length'` avec journalisation et coupe nette au dernier point de ponctuation complet pour éliminer tout mot ou phrase coupés en plein milieu.
+- **Suite de tests de régression (`tests/unit/orchestrator-tools-routing.test.ts`)** :
+  - Ajout de 10 tests de contrats et d'orchestration simulée multi-tours couvrant les invariants du prompt et la sélection d'outils sans appel réseau réel.
+
+---
+
+## [1.2.40] - 2026-11-03
+
+### Amélioré
+- **Préservation des fiches et découverte enrichie** :
+  - Préservation des fiches de découverte jusqu'à 12 éléments, complément de découverte depuis le catalogue Plex local, post-vérification stricte des genres et exclusion des enregistrements TV des listes de films récents.
+
+---
+
 ## [1.2.39] - 2026-11-03
 
 ### Corrigé
