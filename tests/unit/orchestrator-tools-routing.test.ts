@@ -457,4 +457,76 @@ describe('Lot 1 — Invariants des descriptions d’outils et routage orchestrat
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it('T-ROUTING-11: get_watch_history_and_live_streams resolves user history and falls back when allowedServers differ', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'askarr-tracearr-history-test-'));
+    const dbPath = path.join(tmpDir, 'test.db');
+    const db = new AskarrDatabase(dbPath);
+    const cfg = loadConfig();
+
+    const mockTracearr = {
+      isConfigured: vi.fn().mockReturnValue(true),
+      getWatchHistory: vi.fn().mockImplementation(async (opts) => {
+        // If allowedServers is passed and strict, returns [] (simulating discrepancy)
+        if (opts.allowedServers && opts.allowedServers.length > 0) {
+          return [];
+        }
+        // Fallback without allowedServers returns history
+        return [
+          {
+            id: 'h1',
+            title: 'Gladiator II',
+            year: 2024,
+            mediaType: 'movie',
+            tmdbId: 558449,
+            serverName: 'Plex',
+            startedAt: '2026-11-05T20:00:00Z',
+            percentComplete: 100,
+            watched: true,
+            username: 'jsuzanne'
+          }
+        ];
+      }),
+      getActiveStreams: vi.fn().mockResolvedValue({
+        total: 0,
+        transcodes: 0,
+        directPlays: 0,
+        streams: []
+      })
+    };
+
+    const orchestrator = new DeepSeekOrchestratorService(
+      cfg,
+      db,
+      {} as MediaAggregatorService,
+      {} as OverseerrConnector,
+      vi.fn() as unknown as typeof fetch,
+      mockTracearr as any
+    );
+
+    const toolResult = (await (orchestrator as any).executeReadOnlyTool({
+      fnName: 'get_watch_history_and_live_streams',
+      args: { scope: 'my_history', mediaType: 'movie' },
+      userEmail: 'jsuzanne@example.com',
+      overseerrUserId: 1,
+      plexAccess: {
+        plexUserId: 1,
+        plexUsername: 'jsuzanne',
+        askarrServerNames: ['NucVillers']
+      },
+      prowlarrCallsThisTurn: 0,
+      onProwlarrCalled: vi.fn(),
+      onCardsCollected: vi.fn(),
+      onPreparedActionCreated: vi.fn()
+    })) as any;
+
+    expect(mockTracearr.getWatchHistory).toHaveBeenCalledTimes(2);
+    expect(toolResult.scope).toBe('my_history');
+    expect(toolResult.recentWatchHistory.length).toBe(1);
+    expect(toolResult.recentWatchHistory[0].title).toBe('Gladiator II');
+    expect(toolResult.connectedUser.plexUsername).toBe('jsuzanne');
+
+    db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

@@ -2263,8 +2263,11 @@ export class DeepSeekOrchestratorService {
         return { error: 'TRACEARR_NOT_CONFIGURED' };
       }
 
-      const connectedPlexUsername = params.plexAccess?.plexUsername || undefined;
-      const [myOrGlobalHistory, liveStreams] = await Promise.all([
+      const connectedPlexUsername =
+        params.plexAccess?.plexUsername && params.plexAccess.plexUsername !== 'Propriétaire Plex'
+          ? params.plexAccess.plexUsername
+          : params.userEmail.split('@')[0] || undefined;
+      let [myOrGlobalHistory, liveStreams] = await Promise.all([
         this.tracearr.getWatchHistory({
           plexUsername: scope === 'my_history' ? connectedPlexUsername : undefined,
           allowedServers: userAllowedServers,
@@ -2273,6 +2276,37 @@ export class DeepSeekOrchestratorService {
         }),
         this.tracearr.getActiveStreams()
       ]);
+
+      // Fallback 1 : Si scope === 'my_history' et aucun résultat avec allowedServers, réessayer sans filtrer les serveurs
+      // (l'historique personnel d'un compte Plex ne doit pas être bloqué par un écart de libellé de serveur)
+      if (
+        scope === 'my_history' &&
+        myOrGlobalHistory.length === 0 &&
+        userAllowedServers &&
+        userAllowedServers.length > 0
+      ) {
+        myOrGlobalHistory = await this.tracearr.getWatchHistory({
+          plexUsername: connectedPlexUsername,
+          mediaType: mediaTypeFilter,
+          limit: 40
+        });
+      }
+
+      // Information complémentaire si aucun média n'a été trouvé avec le filtre (ex: aucun film mais des séries vues récemment)
+      let otherMediaRecent: Array<{ title: string; mediaType: 'movie' | 'tv'; startedAt: string }> = [];
+      if (scope === 'my_history' && myOrGlobalHistory.length === 0 && mediaTypeFilter) {
+        const altType = mediaTypeFilter === 'movie' ? 'tv' : 'movie';
+        const altItems = await this.tracearr.getWatchHistory({
+          plexUsername: connectedPlexUsername,
+          mediaType: altType,
+          limit: 10
+        });
+        otherMediaRecent = altItems.map((h) => ({
+          title: h.title,
+          mediaType: h.mediaType,
+          startedAt: h.startedAt
+        }));
+      }
 
       if (enrichTopCards && myOrGlobalHistory.length > 0) {
         const seenKeys = new Set<string>();
@@ -2352,7 +2386,21 @@ export class DeepSeekOrchestratorService {
           watched: h.watched,
           device: h.device,
           username: isAdmin || scope === 'my_history' ? h.username : undefined
-        }))
+        })),
+        ...(otherMediaRecent.length > 0
+          ? {
+              otherMediaWatchedRecent: otherMediaRecent.slice(0, 5).map((h) => ({
+                title: h.title,
+                mediaType: h.mediaType,
+                startedAtFrench: formatFrenchDate(h.startedAt)
+              })),
+              contextNote: `Aucun ${
+                mediaTypeFilter === 'movie' ? 'film' : 'épisode de série'
+              } trouvé dans l'historique récent de ${connectedPlexUsername}, mais l'utilisateur a récemment visionné : ${otherMediaRecent
+                .map((h) => h.title)
+                .join(', ')}.`
+            }
+          : {})
       };
     }
 

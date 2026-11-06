@@ -37,8 +37,8 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
         topCast: ['Pierre Niney', 'Bastien Bouillon', 'Anaïs Demoustier'],
         tmdbReleases: {
           inCinemas: '2026-06-28',
-          digitalRelease: '2026-10-24',
-          physicalRelease: '2026-11-06'
+          digitalRelease: '2026-12-01',
+          physicalRelease: '2026-12-15'
         },
         totalSeasons: 0,
         seasonsMeta: [],
@@ -65,8 +65,8 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
           hasFile: false,
           status: 'inCinemas',
           inCinemas: '2026-06-28',
-          digitalRelease: '2026-10-24',
-          physicalRelease: '2026-11-06'
+          digitalRelease: '2026-12-01',
+          physicalRelease: '2026-12-15'
         }
       }),
       getQueueForMovie: vi.fn().mockResolvedValue(null)
@@ -91,8 +91,8 @@ describe('MediaAggregatorService 8-Dimensional Evidence & Advisor Tests', () => 
     expect(ev.identity.ratings.tmdbVoteAverage).toBe(8.4);
     expect(ev.identity.genres).toContain('Aventure');
     expect(ev.identity.topCast).toContain('Pierre Niney');
-    expect(ev.identity.releaseDates.digitalRelease).toBe('2026-10-24');
-    expect(ev.identity.releaseDates.physicalRelease).toBe('2026-11-06');
+    expect(ev.identity.releaseDates.digitalRelease).toBe('2026-12-01');
+    expect(ev.identity.releaseDates.physicalRelease).toBe('2026-12-15');
     expect(ev.requestState.sourceOrigin).toBe('overseerr_user');
     expect(ev.requestState.requestedByDisplayName).toBe('Alice');
     expect(ev.actionability.userFriendlyStatusLabel).toContain("Dans la liste d'attente");

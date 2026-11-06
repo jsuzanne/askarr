@@ -5,6 +5,19 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.42] - 2026-11-06
+
+### Corrigé
+- **Historique de visionnage Tracearr (`TracearrConnector` & `get_watch_history_and_live_streams`)** :
+  - **Résolution serveur résiliente (`server_id` vs `server_name`)** : récupération de la table de mapping serveur Tracearr (`/api/v2/public/servers`) pour résoudre `server_id` en nom de serveur, et non-exclusion du fallback générique `'Plex'`.
+  - **Tolérance de correspondance serveur** : filtrage souple insensible à la casse et par sous-chaîne pour éviter le rejet d'entrées d'historique lors d'écarts de libellés entre serveurs Plex et Tracearr.
+  - **Extraction et correspondance du profil utilisateur** : prise en charge robuste des formats d'utilisateurs Tracearr (`raw.user.username`, `raw.user.name`, `raw.user.friendly_name`, `raw.user.email`, `raw.username`, chaînes simples) avec comparaison insensible à la casse et par préfixe d'email.
+  - **Repli automatique de l'orchestrateur (`my_history`)** : en cas d'absence de résultat avec le filtre des serveurs autorisés, réessai automatique sans restriction de serveur (l'historique personnel d'un compte Plex reflète fidèlement ses visionnages réels), et détection d'autres types de médias récemment visionnés (ex: séries si l'utilisateur demandait des films) avec note de contexte.
+- **Tests unitaires Tracearr (`tests/unit/tracearr.test.ts`)** :
+  - Ajout d'une suite complète de tests unitaires couvrant la résolution des utilisateurs, le mapping des serveurs, les filtres par type de média et l'extraction des flux en direct.
+
+---
+
 ## [1.2.41] - 2026-11-05
 
 ### Amélioré

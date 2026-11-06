@@ -76,6 +76,7 @@ interface TracearrRawRecentEntry {
 
 interface TracearrRawHistoryEntry {
   id: string;
+  server_id?: string;
   server_name?: string;
   media_type?: string;
   media_title?: string;
@@ -92,7 +93,96 @@ interface TracearrRawHistoryEntry {
   platform?: string | null;
   is_transcode?: boolean;
   resolution?: string | null;
-  user?: { username?: string };
+  user?:
+    | {
+        id?: string | number;
+        username?: string;
+        name?: string;
+        friendly_name?: string;
+        title?: string;
+        email?: string;
+      }
+    | string;
+  username?: string;
+  user_name?: string;
+}
+
+function extractTracearrUser(raw: {
+  user?:
+    | {
+        id?: string | number;
+        username?: string;
+        name?: string;
+        friendly_name?: string;
+        title?: string;
+        email?: string;
+      }
+    | string;
+  username?: string;
+  user_name?: string;
+}): { primaryUsername: string; candidates: string[] } {
+  const userObj = typeof raw.user === 'object' && raw.user !== null ? raw.user : undefined;
+  const userStr = typeof raw.user === 'string' ? raw.user : undefined;
+  const primaryUsername =
+    userObj?.username ||
+    userObj?.name ||
+    userObj?.friendly_name ||
+    userObj?.title ||
+    userStr ||
+    raw.username ||
+    raw.user_name ||
+    'inconnu';
+
+  const candidates: string[] = [];
+  const add = (val?: string | null) => {
+    if (!val || typeof val !== 'string') return;
+    const v = val.toLowerCase().trim();
+    if (v && !candidates.includes(v)) {
+      candidates.push(v);
+      const prefix = v.split('@')[0];
+      if (prefix && !candidates.includes(prefix)) {
+        candidates.push(prefix);
+      }
+    }
+  };
+
+  add(primaryUsername);
+  if (userObj) {
+    add(userObj.username);
+    add(userObj.name);
+    add(userObj.friendly_name);
+    add(userObj.title);
+    add(userObj.email);
+  }
+  add(userStr);
+  add(raw.username);
+  add(raw.user_name);
+
+  return { primaryUsername, candidates };
+}
+
+function matchesTracearrUser(candidates: string[], targetUser?: string): boolean {
+  if (!targetUser) return true;
+  const tNorm = targetUser.toLowerCase().trim();
+  const tPrefix = tNorm.split('@')[0];
+  return candidates.some(
+    (c) =>
+      c === tNorm ||
+      c === tPrefix ||
+      c.split('@')[0] === tPrefix ||
+      (c.length >= 3 && tNorm.includes(c)) ||
+      (tNorm.length >= 3 && c.includes(tNorm))
+  );
+}
+
+function matchesTracearrServer(serverName: string, allowedLower?: string[]): boolean {
+  if (!allowedLower || allowedLower.length === 0) return true;
+  const sNorm = serverName.toLowerCase().trim();
+  // Ne pas filtrer si le nom de serveur est le fallback par défaut 'plex'
+  if (sNorm === 'plex' || !sNorm) return true;
+  return allowedLower.some((allowed) =>
+    sNorm === allowed || sNorm.includes(allowed) || allowed.includes(sNorm)
+  );
 }
 
 export interface TracearrCommunityPopularItem {
@@ -349,6 +439,7 @@ export class TracearrConnector {
     if (!this.isConfigured()) return [];
 
     try {
+      const serverMapPromise = this.getServerNameMap();
       let rawEntries: TracearrRawHistoryEntry[];
       if (this.watchHistoryRawCache && Date.now() < this.watchHistoryRawCache.expiresAt) {
         rawEntries = this.watchHistoryRawCache.items;
@@ -369,21 +460,41 @@ export class TracearrConnector {
         };
       }
 
+      const serverMap = await serverMapPromise;
       const targetUser = options?.plexUsername?.toLowerCase().trim();
-      const allowedLower = options?.allowedServers?.map((s) => s.toLowerCase());
+      const allowedLower = options?.allowedServers
+        ?.map((s) => s.toLowerCase().trim())
+        .filter(Boolean);
       const items: TracearrWatchHistoryItem[] = [];
 
       for (const raw of rawEntries) {
-        const username = raw.user?.username || 'inconnu';
-        if (targetUser && username.toLowerCase() !== targetUser) continue;
+        const { primaryUsername, candidates } = extractTracearrUser(raw);
+        if (targetUser && !matchesTracearrUser(candidates, targetUser)) {
+          continue;
+        }
 
-        const serverName = raw.server_name || 'Plex';
-        if (allowedLower && allowedLower.length > 0 && !allowedLower.includes(serverName.toLowerCase())) {
+        const serverName =
+          raw.server_name ||
+          (raw.server_id ? serverMap.get(raw.server_id) : undefined) ||
+          'Plex';
+
+        if (!matchesTracearrServer(serverName, allowedLower)) {
+          continue;
+        }
+
+        const rawType = (raw.media_type || '').toLowerCase().trim();
+        if (rawType === 'track' || rawType === 'audio' || rawType === 'music') {
           continue;
         }
 
         const itemMediaType: 'movie' | 'tv' =
-          raw.show_title || raw.media_type === 'episode' || raw.media_type === 'show' ? 'tv' : 'movie';
+          Boolean(raw.show_title && raw.show_title.trim()) ||
+          rawType === 'episode' ||
+          rawType === 'show' ||
+          rawType === 'season'
+            ? 'tv'
+            : 'movie';
+
         if (options?.mediaType && itemMediaType !== options.mediaType) {
           continue;
         }
@@ -406,7 +517,7 @@ export class TracearrConnector {
           mediaType: itemMediaType,
           tmdbId: raw.tmdb_id ?? null,
           serverName,
-          username,
+          username: primaryUsername,
           startedAt: raw.started_at || new Date().toISOString(),
           stoppedAt: raw.stopped_at ?? null,
           percentComplete: Math.round(raw.percent_complete ?? 0),
@@ -492,7 +603,7 @@ export class TracearrConnector {
 
       const isMeaningfulWatch = h.watched || h.percentComplete >= 45 || h.mediaType === 'tv';
       const itemKey = h.tmdbId && h.tmdbId > 0 ? `tmdb:${h.tmdbId}` : `title:${normTitle}`;
-      const isCurrentUser = Boolean(targetUser && h.username.toLowerCase() === targetUser);
+      const isCurrentUser = Boolean(targetUser && matchesTracearrUser([h.username], targetUser));
 
       if (isCurrentUser) {
         if (h.watched || h.percentComplete >= 35) {
@@ -607,6 +718,7 @@ export class TracearrConnector {
     }
 
     try {
+      const serverMapPromise = this.getServerNameMap();
       const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/streams`, {
         headers: this.getHeaders(),
         signal: AbortSignal.timeout(5000)
@@ -615,8 +727,10 @@ export class TracearrConnector {
         return { total: 0, transcodes: 0, directPlays: 0, streams: [] };
       }
 
+      const serverMap = await serverMapPromise;
       const json = (await res.json()) as {
         data?: Array<{
+          server_id?: string;
           server_name?: string;
           media_title?: string;
           show_title?: string | null;
@@ -627,7 +741,18 @@ export class TracearrConnector {
           is_transcode?: boolean;
           percent_complete?: number;
           resolution?: string | null;
-          user?: { username?: string };
+          user?:
+            | {
+                id?: string | number;
+                username?: string;
+                name?: string;
+                friendly_name?: string;
+                title?: string;
+                email?: string;
+              }
+            | string;
+          username?: string;
+          user_name?: string;
         }>;
         summary?: {
           total?: number;
@@ -636,22 +761,30 @@ export class TracearrConnector {
         };
       };
 
-      const streams: TracearrActiveStream[] = (json.data ?? []).map((s) => ({
-        username: s.user?.username || 'inconnu',
-        title: s.show_title
-          ? `${s.show_title}${
-              s.season_number != null && s.episode_number != null
-                ? ` S${String(s.season_number).padStart(2, '0')}E${String(s.episode_number).padStart(2, '0')}`
-                : ''
-            }`
-          : s.media_title || 'Média',
-        serverName: s.server_name || 'Plex',
-        device: s.device ?? null,
-        platform: s.platform ?? null,
-        isTranscode: Boolean(s.is_transcode),
-        percentComplete: Math.round(s.percent_complete ?? 0),
-        resolution: s.resolution ?? null
-      }));
+      const streams: TracearrActiveStream[] = (json.data ?? []).map((s) => {
+        const { primaryUsername } = extractTracearrUser(s);
+        const serverName =
+          s.server_name ||
+          (s.server_id ? serverMap.get(s.server_id) : undefined) ||
+          'Plex';
+
+        return {
+          username: primaryUsername,
+          title: s.show_title
+            ? `${s.show_title}${
+                s.season_number != null && s.episode_number != null
+                  ? ` S${String(s.season_number).padStart(2, '0')}E${String(s.episode_number).padStart(2, '0')}`
+                  : ''
+              }`
+            : s.media_title || 'Média',
+          serverName,
+          device: s.device ?? null,
+          platform: s.platform ?? null,
+          isTranscode: Boolean(s.is_transcode),
+          percentComplete: Math.round(s.percent_complete ?? 0),
+          resolution: s.resolution ?? null
+        };
+      });
 
       return {
         total: json.summary?.total ?? streams.length,
