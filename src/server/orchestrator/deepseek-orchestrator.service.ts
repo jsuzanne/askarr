@@ -2,7 +2,11 @@ import type { AppConfig } from '../config/env.js';
 import type { AskarrDatabase } from '../db/database.js';
 import type { MediaAggregatorService } from '../aggregator/media-aggregator.service.js';
 import type { OverseerrConnector } from '../connectors/overseerr.connector.js';
-import type { TracearrConnector } from '../connectors/tracearr.js';
+import type {
+  TracearrConnector,
+  TracearrWatchHistoryItem,
+  TracearrActiveStream
+} from '../connectors/tracearr.js';
 import { logger } from '../utils/logger.js';
 import {
   mergeFollowUpCriteria,
@@ -2259,7 +2263,9 @@ export class DeepSeekOrchestratorService {
         args.mediaType === 'movie' || args.mediaType === 'tv' ? args.mediaType : undefined;
       const enrichTopCards = Boolean(args.enrichTopCards ?? true);
 
-      if (!this.tracearr || !this.tracearr.isConfigured()) {
+      const tracearrActive = Boolean(this.tracearr && this.tracearr.isConfigured());
+
+      if (!tracearrActive && scope === 'live_streams') {
         return { error: 'TRACEARR_NOT_CONFIGURED' };
       }
 
@@ -2267,40 +2273,84 @@ export class DeepSeekOrchestratorService {
         params.plexAccess?.plexUsername && params.plexAccess.plexUsername !== 'Propriétaire Plex'
           ? params.plexAccess.plexUsername
           : params.userEmail.split('@')[0] || undefined;
-      let [myOrGlobalHistory, liveStreams] = await Promise.all([
-        this.tracearr.getWatchHistory({
-          plexUsername: scope === 'my_history' ? connectedPlexUsername : undefined,
+
+      let myOrGlobalHistory: TracearrWatchHistoryItem[] = [];
+      let liveStreams: { total: number; transcodes: number; directPlays: number; streams: TracearrActiveStream[] } = {
+        total: 0,
+        transcodes: 0,
+        directPlays: 0,
+        streams: []
+      };
+
+      if (tracearrActive) {
+        [myOrGlobalHistory, liveStreams] = await Promise.all([
+          this.tracearr!.getWatchHistory({
+            plexUsername: scope === 'my_history' ? connectedPlexUsername : undefined,
+            allowedServers: userAllowedServers,
+            mediaType: mediaTypeFilter,
+            limit: 40
+          }),
+          this.tracearr!.getActiveStreams()
+        ]);
+
+        // Fallback 1 : Si scope === 'my_history' et aucun résultat avec allowedServers via Tracearr,
+        // réessayer sans filtrer les serveurs
+        if (
+          scope === 'my_history' &&
+          myOrGlobalHistory.length === 0 &&
+          userAllowedServers &&
+          userAllowedServers.length > 0
+        ) {
+          myOrGlobalHistory = await this.tracearr!.getWatchHistory({
+            plexUsername: connectedPlexUsername,
+            mediaType: mediaTypeFilter,
+            limit: 40
+          });
+        }
+      }
+
+      // Fallback 2 (Résilience absolue) : Si scope === 'my_history' et aucun visionnage retourné
+      // par Tracearr (ou si Tracearr n'est pas configuré), interroger directement Plex Media Server natif (/status/sessions/history/all) !
+      if (scope === 'my_history' && myOrGlobalHistory.length === 0) {
+        myOrGlobalHistory = await this.aggregator.getWatchHistoryFromPlex({
+          plexUsername: connectedPlexUsername,
           allowedServers: userAllowedServers,
           mediaType: mediaTypeFilter,
           limit: 40
-        }),
-        this.tracearr.getActiveStreams()
-      ]);
-
-      // Fallback 1 : Si scope === 'my_history' et aucun résultat avec allowedServers, réessayer sans filtrer les serveurs
-      // (l'historique personnel d'un compte Plex ne doit pas être bloqué par un écart de libellé de serveur)
-      if (
-        scope === 'my_history' &&
-        myOrGlobalHistory.length === 0 &&
-        userAllowedServers &&
-        userAllowedServers.length > 0
-      ) {
-        myOrGlobalHistory = await this.tracearr.getWatchHistory({
-          plexUsername: connectedPlexUsername,
-          mediaType: mediaTypeFilter,
-          limit: 40
         });
+        if (myOrGlobalHistory.length === 0 && userAllowedServers && userAllowedServers.length > 0) {
+          myOrGlobalHistory = await this.aggregator.getWatchHistoryFromPlex({
+            plexUsername: connectedPlexUsername,
+            mediaType: mediaTypeFilter,
+            limit: 40
+          });
+        }
+      }
+
+      // Si scope !== 'my_history' et Tracearr n'est pas configuré
+      if (!tracearrActive && scope !== 'my_history') {
+        return { error: 'TRACEARR_NOT_CONFIGURED' };
       }
 
       // Information complémentaire si aucun média n'a été trouvé avec le filtre (ex: aucun film mais des séries vues récemment)
       let otherMediaRecent: Array<{ title: string; mediaType: 'movie' | 'tv'; startedAt: string }> = [];
       if (scope === 'my_history' && myOrGlobalHistory.length === 0 && mediaTypeFilter) {
         const altType = mediaTypeFilter === 'movie' ? 'tv' : 'movie';
-        const altItems = await this.tracearr.getWatchHistory({
-          plexUsername: connectedPlexUsername,
-          mediaType: altType,
-          limit: 10
-        });
+        let altItems: TracearrWatchHistoryItem[] = [];
+        if (tracearrActive) {
+          altItems = await this.tracearr!.getWatchHistory({
+            plexUsername: connectedPlexUsername,
+            mediaType: altType,
+            limit: 10
+          });
+        }
+        if (altItems.length === 0) {
+          altItems = await this.aggregator.getWatchHistoryFromPlex({
+            plexUsername: connectedPlexUsername,
+            mediaType: altType,
+            limit: 10
+          });
+        }
         otherMediaRecent = altItems.map((h) => ({
           title: h.title,
           mediaType: h.mediaType,

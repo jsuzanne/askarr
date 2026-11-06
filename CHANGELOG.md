@@ -5,6 +5,16 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [1.2.43] - 2026-11-06
+
+### Corrigé
+- **Historique de visionnage Tracearr (API v2 `/users/{id}/history`) & Repli Natif Plex PMS (`/status/sessions/history/all`)** :
+  - **Résolution utilisateur Tracearr v2** : Le flux global `/api/v2/public/history` de Tracearr ne contient pas d'objet utilisateur sur les entrées individuelles. Ajout de la résolution d'identité d'utilisateur via `/api/v2/public/users` puis interrogation du endpoint dédié `/api/v2/public/users/{id}/history?pageSize=50`.
+  - **Repli direct Plex Media Server natif** : En cas d'indisponibilité, de désynchronisation ou de résultat vide sur Tracearr, interrogation directe de Plex via `/status/sessions/history/all` (filtrage par compte `Account.name` ou compte administrateur/propriétaire `accountID === 1` `jsuzanne`), garantissant 100% de fiabilité même si Tracearr est hors ligne ou vide.
+  - **Délégation automatique dans l'Orchestrateur** : Basculement transparent vers Plex Media Server si Tracearr retourne 0 visionnage pour l'utilisateur.
+
+---
+
 ## [1.2.42] - 2026-11-06
 
 ### Corrigé

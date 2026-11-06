@@ -2,7 +2,7 @@
 
 ### The Conversational Cinema Assistant for Plex & Overseerr
 
-[![Version](https://img.shields.io/badge/version-1.2.42-amber.svg?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-1.2.43-amber.svg?style=flat-square)](package.json)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL_v3-purple.svg?style=flat-square)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fjsuzanne%2Faskarr-blue.svg?style=flat-square)](https://github.com/jsuzanne/askarr/pkgs/container/askarr)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-emerald.svg?style=flat-square)](package.json)

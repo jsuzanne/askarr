@@ -2335,4 +2335,142 @@ export class PlexMultiServerConnector {
       messageFr: `Impossible de joindre ${playerName} pour la commande ${params.action}.`
     };
   }
+
+  /**
+   * Récupère l'historique de visionnage directement depuis les serveurs Plex Media Server
+   * via l'endpoint natif `/status/sessions/history/all`.
+   */
+  public async getWatchHistory(options?: {
+    plexUsername?: string;
+    allowedServers?: string[];
+    mediaType?: 'movie' | 'tv';
+    limit?: number;
+  }): Promise<
+    Array<{
+      id: string;
+      title: string;
+      showTitle: string | null;
+      seasonNumber: number | null;
+      episodeNumber: number | null;
+      year: number | null;
+      mediaType: 'movie' | 'tv';
+      serverName: string;
+      username: string;
+      startedAt: string;
+      ratingKey: string;
+    }>
+  > {
+    const targetUser = options?.plexUsername?.toLowerCase().trim();
+    const allowedLower = options?.allowedServers
+      ?.map((s) => s.toLowerCase().trim())
+      .filter(Boolean);
+
+    const targetServers = this.servers.filter((srv) => {
+      if (!allowedLower || allowedLower.length === 0) return true;
+      const sName = srv.name.toLowerCase().trim();
+      return allowedLower.some((a) => sName === a || sName.includes(a) || a.includes(sName));
+    });
+
+    const allItems: Array<{
+      id: string;
+      title: string;
+      showTitle: string | null;
+      seasonNumber: number | null;
+      episodeNumber: number | null;
+      year: number | null;
+      mediaType: 'movie' | 'tv';
+      serverName: string;
+      username: string;
+      startedAt: string;
+      viewedAtMs: number;
+      ratingKey: string;
+    }> = [];
+
+    await Promise.all(
+      targetServers.map(async (server) => {
+        try {
+          const res = await this.fetchPlexJson<{
+            MediaContainer?: {
+              Metadata?: Array<{
+                historyKey?: string;
+                ratingKey?: string;
+                key?: string;
+                type?: string;
+                title?: string;
+                grandparentTitle?: string;
+                parentIndex?: number;
+                index?: number;
+                year?: number;
+                viewedAt?: number;
+                accountID?: number;
+                Account?: { id?: number; name?: string; thumb?: string };
+                User?: { id?: number; title?: string; thumb?: string };
+              }>;
+            };
+          }>(
+            server.baseUrl,
+            '/status/sessions/history/all?sort=viewedAt:desc&X-Plex-Container-Size=60',
+            5000
+          );
+
+          const entries = res.MediaContainer?.Metadata ?? [];
+          for (const raw of entries) {
+            const viewedAtSec = raw.viewedAt ?? 0;
+            if (!viewedAtSec) continue;
+
+            const isEpisode = raw.type === 'episode';
+            const normType: 'movie' | 'tv' = isEpisode ? 'tv' : 'movie';
+            if (options?.mediaType && normType !== options.mediaType) continue;
+
+            const accountName = raw.Account?.name || raw.User?.title || (raw.accountID === 1 ? 'owner' : 'inconnu');
+            const candidates = [
+              accountName.toLowerCase().trim(),
+              raw.Account?.name?.toLowerCase().trim() ?? '',
+              raw.User?.title?.toLowerCase().trim() ?? ''
+            ].filter(Boolean);
+
+            if (targetUser) {
+              const matched = candidates.some(
+                (c) =>
+                  c === targetUser ||
+                  c.split('@')[0] === targetUser.split('@')[0] ||
+                  targetUser.includes(c) ||
+                  c.includes(targetUser) ||
+                  (c === 'owner' && (targetUser === 'jsuzanne' || targetUser.includes('owner') || targetUser.includes('admin')))
+              );
+              if (!matched) continue;
+            }
+
+            const displayTitle = isEpisode && raw.grandparentTitle
+              ? `${raw.grandparentTitle}${
+                  raw.parentIndex != null && raw.index != null
+                    ? ` (S${String(raw.parentIndex).padStart(2, '0')}E${String(raw.index).padStart(2, '0')})`
+                    : ''
+                }`
+              : raw.title || 'Média';
+
+            allItems.push({
+              id: raw.historyKey || `${server.name}:${raw.ratingKey}:${viewedAtSec}`,
+              title: displayTitle,
+              showTitle: raw.grandparentTitle ?? null,
+              seasonNumber: raw.parentIndex ?? null,
+              episodeNumber: raw.index ?? null,
+              year: raw.year ?? null,
+              mediaType: normType,
+              serverName: server.name,
+              username: raw.Account?.name || raw.User?.title || targetUser || 'jsuzanne',
+              startedAt: new Date(viewedAtSec * 1000).toISOString(),
+              viewedAtMs: viewedAtSec * 1000,
+              ratingKey: raw.ratingKey || ''
+            });
+          }
+        } catch {
+          // Ignorer si un serveur n'a pas répondu
+        }
+      })
+    );
+
+    allItems.sort((a, b) => b.viewedAtMs - a.viewedAtMs);
+    return allItems.slice(0, options?.limit ?? 25).map(({ viewedAtMs: _, ...rest }) => rest);
+  }
 }

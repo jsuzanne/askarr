@@ -196,6 +196,17 @@ export interface TracearrCommunityPopularItem {
   lastWatchedAt: string;
 }
 
+export interface TracearrUserIdentity {
+  id: string;
+  username: string;
+  email?: string | null;
+  accounts?: Array<{
+    server_id?: string;
+    server_type?: string;
+    username?: string;
+  }>;
+}
+
 export interface TracearrUserTasteAndTrends {
   myRecentWatched: Array<{
     title: string;
@@ -223,6 +234,10 @@ export class TracearrConnector {
     items: TracearrRawHistoryEntry[];
     expiresAt: number;
   } | null = null;
+  private usersCache: {
+    users: TracearrUserIdentity[];
+    expiresAt: number;
+  } | null = null;
 
   constructor(baseUrl: string, apiKey: string, fetchFn: typeof fetch = fetch) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
@@ -236,6 +251,7 @@ export class TracearrConnector {
     this.serverNameCache = null;
     this.recentlyAddedRawCache = null;
     this.watchHistoryRawCache = null;
+    this.usersCache = null;
   }
 
   isConfigured(): boolean {
@@ -276,6 +292,29 @@ export class TracearrConnector {
       // Silencieux si hors ligne
     }
     return map;
+  }
+
+  async getTracearrUsers(): Promise<TracearrUserIdentity[]> {
+    if (this.usersCache && Date.now() < this.usersCache.expiresAt) {
+      return this.usersCache.users;
+    }
+    if (!this.isConfigured()) return [];
+
+    try {
+      const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/users`, {
+        headers: this.getHeaders(),
+        signal: AbortSignal.timeout(5000)
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { data?: TracearrUserIdentity[] };
+        const users = json.data ?? [];
+        this.usersCache = { users, expiresAt: Date.now() + 5 * 60_000 };
+        return users;
+      }
+    } catch {
+      // Silencieux si indisponible
+    }
+    return [];
   }
 
   async checkHealth(): Promise<TracearrHealthStatus> {
@@ -440,28 +479,70 @@ export class TracearrConnector {
 
     try {
       const serverMapPromise = this.getServerNameMap();
-      let rawEntries: TracearrRawHistoryEntry[];
-      if (this.watchHistoryRawCache && Date.now() < this.watchHistoryRawCache.expiresAt) {
-        rawEntries = this.watchHistoryRawCache.items;
-      } else {
-        const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=1000`, {
-          headers: this.getHeaders(),
-          signal: AbortSignal.timeout(8000)
-        });
-        if (!res.ok) return [];
+      const targetUser = options?.plexUsername?.toLowerCase().trim();
+      let rawEntries: TracearrRawHistoryEntry[] = [];
+      let isUserSpecificFeed = false;
+      let matchedUserIdentity: TracearrUserIdentity | null = null;
+      let allTracearrUsers: TracearrUserIdentity[] = [];
 
-        const json = (await res.json()) as {
-          data?: TracearrRawHistoryEntry[];
-        };
-        rawEntries = json.data ?? [];
-        this.watchHistoryRawCache = {
-          items: rawEntries,
-          expiresAt: Date.now() + 2 * 60_000
-        };
+      if (targetUser) {
+        allTracearrUsers = await this.getTracearrUsers();
+        matchedUserIdentity =
+          allTracearrUsers.find((u) => {
+            const candidates = [
+              u.username,
+              u.email ?? '',
+              ...(u.accounts?.map((a) => a.username ?? '') ?? [])
+            ].filter(Boolean);
+            return matchesTracearrUser(candidates, targetUser);
+          }) ?? null;
+
+        if (matchedUserIdentity?.id) {
+          try {
+            const userHistoryRes = await this.fetchFn(
+              `${this.baseUrl}/api/v2/public/users/${encodeURIComponent(matchedUserIdentity.id)}/history?pageSize=50`,
+              {
+                headers: this.getHeaders(),
+                signal: AbortSignal.timeout(8000)
+              }
+            );
+            if (userHistoryRes.ok) {
+              const uJson = (await userHistoryRes.json()) as {
+                data?: TracearrRawHistoryEntry[];
+              };
+              if (Array.isArray(uJson.data) && uJson.data.length > 0) {
+                rawEntries = uJson.data;
+                isUserSpecificFeed = true;
+              }
+            }
+          } catch {
+            // Silencieux, fallback sur /api/v2/public/history
+          }
+        }
+      }
+
+      if (!isUserSpecificFeed) {
+        if (this.watchHistoryRawCache && Date.now() < this.watchHistoryRawCache.expiresAt) {
+          rawEntries = this.watchHistoryRawCache.items;
+        } else {
+          const res = await this.fetchFn(`${this.baseUrl}/api/v2/public/history?limit=1000`, {
+            headers: this.getHeaders(),
+            signal: AbortSignal.timeout(8000)
+          });
+          if (!res.ok) return [];
+
+          const json = (await res.json()) as {
+            data?: TracearrRawHistoryEntry[];
+          };
+          rawEntries = json.data ?? [];
+          this.watchHistoryRawCache = {
+            items: rawEntries,
+            expiresAt: Date.now() + 2 * 60_000
+          };
+        }
       }
 
       const serverMap = await serverMapPromise;
-      const targetUser = options?.plexUsername?.toLowerCase().trim();
       const allowedLower = options?.allowedServers
         ?.map((s) => s.toLowerCase().trim())
         .filter(Boolean);
@@ -469,8 +550,31 @@ export class TracearrConnector {
 
       for (const raw of rawEntries) {
         const { primaryUsername, candidates } = extractTracearrUser(raw);
-        if (targetUser && !matchesTracearrUser(candidates, targetUser)) {
-          continue;
+
+        // Si c'est le flux dédié à l'utilisateur (/users/{id}/history), tous les items lui appartiennent
+        let itemUsername = primaryUsername;
+        if (isUserSpecificFeed) {
+          itemUsername =
+            primaryUsername !== 'inconnu'
+              ? primaryUsername
+              : matchedUserIdentity?.username || options?.plexUsername || 'inconnu';
+        } else if (targetUser) {
+          const matches = matchesTracearrUser(candidates, targetUser);
+          if (!matches) {
+            // Si l'entrée Tracearr n'a aucun champ utilisateur ('inconnu') mais que Tracearr ne compte qu'un seul utilisateur
+            // qui correspond à targetUser (ou que targetUser est le propriétaire), ne pas jeter l'item !
+            const singleOwner =
+              allTracearrUsers.length === 1 &&
+              matchesTracearrUser(
+                [allTracearrUsers[0].username, allTracearrUsers[0].email ?? ''],
+                targetUser
+              );
+            if (primaryUsername === 'inconnu' && singleOwner) {
+              itemUsername = targetUser;
+            } else {
+              continue;
+            }
+          }
         }
 
         const serverName =
@@ -517,7 +621,7 @@ export class TracearrConnector {
           mediaType: itemMediaType,
           tmdbId: raw.tmdb_id ?? null,
           serverName,
-          username: primaryUsername,
+          username: itemUsername,
           startedAt: raw.started_at || new Date().toISOString(),
           stoppedAt: raw.stopped_at ?? null,
           percentComplete: Math.round(raw.percent_complete ?? 0),

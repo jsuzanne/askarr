@@ -6,6 +6,7 @@ import type {
   SeasonCoverageItem
 } from '../../shared/types.js';
 import type { OverseerrConnector, OverseerrEnrichedDetail } from '../connectors/overseerr.connector.js';
+import type { TracearrWatchHistoryItem } from '../connectors/tracearr.js';
 import { buildPlexDeepLinks, type PlexMultiServerConnector, type PlexMetadataDetail } from '../connectors/plex.connector.js';
 import type { RadarrConnector, RadarrMovieStatus, RadarrQueueItem } from '../connectors/radarr.connector.js';
 import type { SonarrConnector, SonarrSeriesStatus, SonarrQueueItem } from '../connectors/sonarr.connector.js';
@@ -2942,5 +2943,37 @@ export class MediaAggregatorService {
       return [];
     }
     return this.plex.getRecentlyAddedOnPlex(params);
+  }
+
+  public async getWatchHistoryFromPlex(params: {
+    plexUsername?: string;
+    allowedServers?: string[];
+    mediaType?: 'movie' | 'tv';
+    limit?: number;
+  }): Promise<TracearrWatchHistoryItem[]> {
+    if (typeof this.plex?.getWatchHistory !== 'function') {
+      return [];
+    }
+    const raw = await this.plex.getWatchHistory(params);
+    return raw.map((item) => ({
+      id: item.id,
+      title: item.title,
+      showTitle: item.showTitle,
+      seasonNumber: item.seasonNumber,
+      episodeNumber: item.episodeNumber,
+      year: item.year,
+      mediaType: item.mediaType,
+      tmdbId: null,
+      serverName: item.serverName,
+      username: item.username,
+      startedAt: item.startedAt,
+      stoppedAt: null,
+      percentComplete: 100,
+      watched: true,
+      device: null,
+      platform: null,
+      isTranscode: false,
+      resolution: null
+    }));
   }
 }

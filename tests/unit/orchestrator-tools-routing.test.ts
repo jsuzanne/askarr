@@ -529,4 +529,88 @@ describe('Lot 1 — Invariants des descriptions d’outils et routage orchestrat
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it('T-ROUTING-12: get_watch_history_and_live_streams falls back to Plex Media Server native history if Tracearr returns empty', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'askarr-plex-history-fallback-'));
+    const dbPath = path.join(tmpDir, 'test.db');
+    const db = new AskarrDatabase(dbPath);
+    const cfg = loadConfig();
+
+    const mockTracearr = {
+      isConfigured: vi.fn().mockReturnValue(true),
+      getWatchHistory: vi.fn().mockResolvedValue([]), // Tracearr returns nothing
+      getActiveStreams: vi.fn().mockResolvedValue({
+        total: 0,
+        transcodes: 0,
+        directPlays: 0,
+        streams: []
+      })
+    };
+
+    const mockAggregator = {
+      getWatchHistoryFromPlex: vi.fn().mockResolvedValue([
+        {
+          id: 'plex-hist-1',
+          title: 'Le Comte de Monte-Cristo',
+          showTitle: null,
+          seasonNumber: null,
+          episodeNumber: null,
+          year: 2024,
+          mediaType: 'movie',
+          tmdbId: null,
+          serverName: 'NucVillers',
+          username: 'jsuzanne',
+          startedAt: '2026-11-06T10:00:00Z',
+          stoppedAt: null,
+          percentComplete: 100,
+          watched: true,
+          device: null,
+          platform: null,
+          isTranscode: false,
+          resolution: null
+        }
+      ]),
+      verifySpecificTitles: vi.fn().mockResolvedValue([])
+    };
+
+    const orchestrator = new DeepSeekOrchestratorService(
+      cfg,
+      db,
+      mockAggregator as unknown as MediaAggregatorService,
+      {} as OverseerrConnector,
+      vi.fn() as unknown as typeof fetch,
+      mockTracearr as any
+    );
+
+    const toolResult = (await (orchestrator as any).executeReadOnlyTool({
+      fnName: 'get_watch_history_and_live_streams',
+      args: { scope: 'my_history', mediaType: 'movie' },
+      userEmail: 'jsuzanne@example.com',
+      overseerrUserId: 1,
+      plexAccess: {
+        plexUserId: 1,
+        plexUsername: 'jsuzanne',
+        askarrServerNames: ['NucVillers']
+      },
+      prowlarrCallsThisTurn: 0,
+      onProwlarrCalled: vi.fn(),
+      onCardsCollected: vi.fn(),
+      onPreparedActionCreated: vi.fn()
+    })) as any;
+
+    expect(mockTracearr.getWatchHistory).toHaveBeenCalled();
+    expect(mockAggregator.getWatchHistoryFromPlex).toHaveBeenCalledWith({
+      plexUsername: 'jsuzanne',
+      allowedServers: ['NucVillers'],
+      mediaType: 'movie',
+      limit: 40
+    });
+    expect(toolResult.scope).toBe('my_history');
+    expect(toolResult.recentWatchHistory.length).toBe(1);
+    expect(toolResult.recentWatchHistory[0].title).toBe('Le Comte de Monte-Cristo');
+    expect(toolResult.recentWatchHistory[0].serverName).toBe('NucVillers');
+
+    db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

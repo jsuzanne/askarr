@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { TracearrConnector } from '../../src/server/connectors/tracearr.js';
+import { PlexMultiServerConnector } from '../../src/server/connectors/plex.connector.js';
 
 describe('TracearrConnector Watch History & Telemetry Unit Tests', () => {
   const fakeBaseUrl = 'http://192.168.1.163:3999';
@@ -260,5 +261,120 @@ describe('TracearrConnector Watch History & Telemetry Unit Tests', () => {
     expect(active.streams[0].serverName).toBe('NucVillers');
     expect(active.streams[0].title).toBe('Alien: Romulus');
     expect(active.streams[0].percentComplete).toBe(42);
+  });
+
+  it('T-TRACE-05: resolves user identity via /api/v2/public/users and queries dedicated /api/v2/public/users/{id}/history', async () => {
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/api/v2/public/servers')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ server_id: 'srv-1', server_name: 'NucVillers' }]
+          })
+        };
+      }
+      if (url.includes('/api/v2/public/users/') && url.includes('/history')) {
+        // Dedicated user history feed (where raw entries might not have user sub-object)
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              {
+                id: 'play-uuid-1',
+                server_id: 'srv-1',
+                media_type: 'movie',
+                media_title: 'Oppenheimer',
+                year: 2023,
+                started_at: '2026-11-06T12:00:00Z',
+                watched: true,
+                percent_complete: 100
+              }
+            ]
+          })
+        };
+      }
+      if (url.includes('/api/v2/public/users')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              {
+                id: 'user-uuid-jsuzanne',
+                username: 'jsuzanne',
+                email: 'jsuzanne@free.fr',
+                accounts: [
+                  { server_id: 'srv-1', server_type: 'plex', username: 'jsuzanne' }
+                ]
+              }
+            ]
+          })
+        };
+      }
+      return { ok: false, status: 404 };
+    });
+
+    const connector = new TracearrConnector(fakeBaseUrl, fakeApiKey, mockFetch as unknown as typeof fetch);
+    const history = await connector.getWatchHistory({ plexUsername: 'jsuzanne' });
+
+    expect(history.length).toBe(1);
+    expect(history[0].title).toBe('Oppenheimer');
+    expect(history[0].username).toBe('jsuzanne');
+    expect(history[0].serverName).toBe('NucVillers');
+  });
+
+  it('T-TRACE-06: PlexMultiServerConnector.getWatchHistory fetches /status/sessions/history/all natively from Plex', async () => {
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/status/sessions/history/all')) {
+        return {
+          ok: true,
+          json: async () => ({
+            MediaContainer: {
+              size: 2,
+              Metadata: [
+                {
+                  ratingKey: '1001',
+                  type: 'movie',
+                  title: 'Le Comte de Monte-Cristo',
+                  year: 2024,
+                  viewedAt: 1730900000,
+                  accountID: 1,
+                  Account: { id: 1, name: 'jsuzanne' },
+                  User: { id: 1, title: 'jsuzanne' }
+                },
+                {
+                  ratingKey: '1002',
+                  type: 'episode',
+                  title: 'Épisode 1',
+                  grandparentTitle: 'Hippocrate',
+                  parentIndex: 3,
+                  index: 1,
+                  year: 2024,
+                  viewedAt: 1730800000,
+                  accountID: 2,
+                  Account: { id: 2, name: 'alice' }
+                }
+              ]
+            }
+          })
+        };
+      }
+      return { ok: false, status: 404 };
+    });
+
+    const plexConnector = new PlexMultiServerConnector(
+      [{ name: 'NucVillers', baseUrl: 'http://192.168.1.100:32400' }],
+      'mock-plex-token',
+      mockFetch as unknown as typeof fetch
+    );
+
+    const userHistory = await plexConnector.getWatchHistory({
+      plexUsername: 'jsuzanne'
+    });
+
+    expect(userHistory.length).toBe(1);
+    expect(userHistory[0].title).toBe('Le Comte de Monte-Cristo');
+    expect(userHistory[0].username).toBe('jsuzanne');
+    expect(userHistory[0].serverName).toBe('NucVillers');
+    expect(userHistory[0].mediaType).toBe('movie');
   });
 });
