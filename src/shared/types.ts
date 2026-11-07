@@ -118,6 +118,8 @@ export interface MediaEvidence {
     lastGrabbedRelease?: string | null;
     lastFailedAt?: string | null;
     canRetriggerSearch?: boolean;
+    retriggerBlockedByCooldown?: boolean;
+    retriggerCooldownEndsAt?: string | null;
   };
 
   /** 5. Couverture par saison et épisode (Séries TV) */
@@ -201,6 +203,43 @@ export interface DiscordSettingsDTO {
   domains: DiscordNotificationDomainsDTO;
 }
 
+export interface UserActionQuotaStatusDTO {
+  isAdmin: boolean;
+  isAdminUnlimited: boolean;
+  requestsUsed24h: number;
+  dailyRequestCap: number;
+  requestsRemaining24h: number | null;
+  nextRequestResetAt: string | null;
+  retriggersUsed24h: number;
+  dailyRetriggerCap: number;
+  retriggersRemaining24h: number | null;
+  nextRetriggerResetAt: string | null;
+  mediaRetriggerCooldownHours: number;
+}
+
+export interface AdminUserQuotaActivityEntryDTO {
+  email: string;
+  userEmail: string;
+  displayName: string;
+  isAdmin: boolean;
+  requestsUsed24h: number;
+  requestsUsed7d: number;
+  retriggersUsed24h: number;
+  retriggersUsed7d: number;
+  totalActions7d: number;
+  lastActionAt: string | null;
+  lastActionSummary: string | null;
+  isRequestQuotaReached: boolean;
+  isRetriggerQuotaReached: boolean;
+}
+
+export interface AdminActionQuotasSummaryDTO {
+  dailyRequestCap: number;
+  dailyRetriggerCap: number;
+  mediaRetriggerCooldownHours: number;
+  users: AdminUserQuotaActivityEntryDTO[];
+}
+
 export interface UserSessionInfo {
   email: string;
   role: UserRole;
@@ -218,6 +257,7 @@ export interface UserSessionInfo {
     askarrServerNames: string[];
     configuredServerNames: string[];
   };
+  actionQuotas?: UserActionQuotaStatusDTO;
   aiMode: 'active' | 'direct_search_fallback';
 }
 
@@ -231,6 +271,7 @@ export interface PreparedActionDTO {
   seasons?: number[];
   episodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
   summaryFr: string;
+  quotaInfoFr?: string;
   expiresAt: string;
   status: 'PENDING' | 'EXECUTED' | 'EXPIRED' | 'SUPERSEDED' | 'FAILED';
 }
@@ -364,12 +405,16 @@ export interface AdminEditableSettingsDTO {
   openrouterApiKeyConfigured?: boolean;
   aiDailyTokenCap: number;
   aiMonthlyBudgetUsd: number;
+  userDailyRequestCap?: number;
+  userDailyRetriggerCap?: number;
+  mediaRetriggerCooldownHours?: number;
 }
 
 export interface AdminSettingsDTO {
   nodeEnv: string;
   port: number;
   editableValues?: AdminEditableSettingsDTO;
+  actionQuotas?: AdminActionQuotasSummaryDTO;
   auth: {
     cfAccessTeamDomain: string;
     cfAccessAudConfigured: boolean;

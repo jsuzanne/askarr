@@ -84,6 +84,18 @@ function formatShortDate(iso: string | null, lang: 'fr' | 'en'): string | null {
   });
 }
 
+function formatShortDateTime(iso: string | null | undefined, lang: 'fr' | 'en'): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(lang === 'en' ? 'en-US' : 'fr-FR', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 function getLocalizedStatusLabel(label: string, lang: 'fr' | 'en'): string {
   if (lang === 'fr') return label;
   if (label.startsWith('Disponible sur Plex')) {
@@ -283,6 +295,9 @@ export const MediaCandidateCard: React.FC<Props> = ({
     null;
   const lastSearchDateFr = formatDate(lastSearchIso, lang);
   const lastSearchDateShortFr = formatShortDate(lastSearchIso, lang);
+  const lastSearchDateTimeFr = formatShortDateTime(acquisitionPipeline.lastSearchAt, lang);
+  const cooldownEndsDateTimeFr = formatShortDateTime(acquisitionPipeline.retriggerCooldownEndsAt, lang);
+  const retriggerBlockedByCooldown = Boolean(acquisitionPipeline.retriggerBlockedByCooldown);
   const lastSearchReports = acquisitionPipeline.lastSearchReportsDownloaded ?? null;
   const lastSearchDuration = acquisitionPipeline.lastSearchDurationSeconds ?? null;
   const searchedBeforeVodRelease = Boolean(
@@ -717,6 +732,20 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 </button>
               )}
 
+              {!canRetriggerRadarr && retriggerBlockedByCooldown && !preparedAction && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-xl border border-stone-700/80 bg-stone-900/90 px-2.5 py-1.5 text-[11px] font-medium text-stone-400 whitespace-nowrap"
+                  title={
+                    lang === 'en'
+                      ? `Already re-searched recently${lastSearchDateTimeFr ? ` (${lastSearchDateTimeFr})` : ''}${cooldownEndsDateTimeFr ? ` — Next manual retrigger available at ${cooldownEndsDateTimeFr}` : ''}`
+                      : `Déjà relancé récemment${lastSearchDateTimeFr ? ` (${lastSearchDateTimeFr}${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''})` : ''}${cooldownEndsDateTimeFr ? ` — Prochaine relance possible dès le ${cooldownEndsDateTimeFr}` : ''}`
+                  }
+                >
+                  <Clock className="h-3 w-3 text-amber-400/80 shrink-0" />
+                  <span>{lang === 'en' ? 'Cooldown' : 'Déjà relancé'}</span>
+                </span>
+              )}
+
               <button
                 type="button"
                 onClick={() => setRowExpanded((v) => !v)}
@@ -775,6 +804,12 @@ export const MediaCandidateCard: React.FC<Props> = ({
                   <p className="text-[11px] text-amber-200/90">
                     Étape 2/2 : Confirme ton ticket pour lancer l’acquisition automatique vers Plex.
                   </p>
+                  {preparedAction.quotaInfoFr && (
+                    <p className="mt-1 inline-flex items-center gap-1 rounded-md bg-black/40 border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                      <Clock className="h-2.5 w-2.5 shrink-0" />
+                      <span>{preparedAction.quotaInfoFr}</span>
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center justify-end gap-2 shrink-0">
@@ -1290,6 +1325,25 @@ export const MediaCandidateCard: React.FC<Props> = ({
                     {showAllSeasons ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                   </button>
                 )}
+                {identity.mediaType === 'tv' &&
+                  acquisitionPipeline.lastSearchSource === 'manual_retrigger' &&
+                  lastSearchDateTimeFr && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-lg bg-stone-900/90 border border-amber-500/30 px-2 py-0.5 text-[11px] text-amber-200/90"
+                      title={
+                        cooldownEndsDateTimeFr
+                          ? `Dernière relance manuelle Sonarr le ${lastSearchDateTimeFr}${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''}. Prochaine relance possible dès le ${cooldownEndsDateTimeFr}.`
+                          : `Dernière relance manuelle Sonarr le ${lastSearchDateTimeFr}${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''}.`
+                      }
+                    >
+                      <RefreshCw className="h-3 w-3 text-amber-400 shrink-0" />
+                      <span>
+                        {lang === 'en'
+                          ? `Last Sonarr search: ${lastSearchDateTimeFr}${acquisitionPipeline.lastSearchBy ? ` (${acquisitionPipeline.lastSearchBy})` : ''}`
+                          : `Dernière relance Sonarr : ${lastSearchDateTimeFr}${acquisitionPipeline.lastSearchBy ? ` (${acquisitionPipeline.lastSearchBy})` : ''}`}
+                      </span>
+                    </span>
+                  )}
               </div>
             )}
           </div>
@@ -1504,6 +1558,25 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 </span>
               </button>
             )}
+
+            {/* Indication pédagogique de Cooldown quand le titre a déjà été relancé récemment */}
+            {!canRetriggerRadarr && retriggerBlockedByCooldown && !preparedAction && (
+              <div
+                className="inline-flex items-center gap-1.5 rounded-xl border border-stone-700/80 bg-stone-900/90 px-3 py-1.5 text-xs text-stone-300"
+                title={
+                  lang === 'en'
+                    ? 'A cooldown period applies between manual indexer searches to avoid overloading indexers.'
+                    : 'Un délai de refroidissement s’applique entre deux relances manuelles pour préserver les indexeurs.'
+                }
+              >
+                <Clock className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span>
+                  {lang === 'en'
+                    ? `Re-searched ${lastSearchDateTimeFr || lastSearchDateShortFr || 'recently'}${acquisitionPipeline.lastSearchBy ? ` by ${acquisitionPipeline.lastSearchBy}` : ''}${cooldownEndsDateTimeFr ? ` • Next available: ${cooldownEndsDateTimeFr}` : ''}`
+                    : `Déjà relancé le ${lastSearchDateTimeFr || lastSearchDateShortFr || 'récemment'}${acquisitionPipeline.lastSearchBy ? ` par ${acquisitionPipeline.lastSearchBy}` : ''}${cooldownEndsDateTimeFr ? ` • Prochaine relance : ${cooldownEndsDateTimeFr}` : ''}`}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1637,6 +1710,12 @@ export const MediaCandidateCard: React.FC<Props> = ({
                 <p className="mt-0.5 text-xs text-amber-200/90 leading-relaxed">
                   Étape 2/2 : Confirme ton ticket pour lancer la recherche et l’acquisition automatique vers Plex.
                 </p>
+                {preparedAction.quotaInfoFr && (
+                  <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-black/45 border border-amber-500/35 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300">
+                    <Clock className="h-3 w-3 shrink-0" />
+                    <span>{preparedAction.quotaInfoFr}</span>
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 shrink-0">

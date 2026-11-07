@@ -1374,10 +1374,16 @@ export class DeepSeekOrchestratorService {
     mediaType: 'movie' | 'tv';
     seasons?: number[];
     episodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
+    isAdmin?: boolean;
   }): Promise<{
     evidence: MediaEvidence;
     preparedAction: PreparedActionDTO;
   }> {
+    const isAdmin =
+      params.isAdmin !== undefined
+        ? params.isAdmin
+        : this.config.adminEmails.includes(params.userEmail.trim().toLowerCase());
+
     const evidence = await this.aggregator.buildMediaEvidence({
       tmdbId: params.tmdbId,
       mediaType: params.mediaType,
@@ -1387,12 +1393,44 @@ export class DeepSeekOrchestratorService {
       checkIndexers: false
     });
 
+    const formatDateTimeFr = (iso: string | null | undefined): string | null => {
+      if (!iso) return null;
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toLocaleString('fr-FR', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    };
+
+    const buildCooldownMessageFr = (): string => {
+      const lastWhen = formatDateTimeFr(evidence.acquisitionPipeline.lastSearchAt);
+      const lastWho = evidence.acquisitionPipeline.lastSearchBy;
+      const nextWhen = formatDateTimeFr(evidence.acquisitionPipeline.retriggerCooldownEndsAt);
+      const cooldownHours = this.config.mediaRetriggerCooldownHours ?? 12;
+      const lastPart = lastWhen
+        ? ` (dernière relance le ${lastWhen}${lastWho ? ` par ${lastWho}` : ''})`
+        : '';
+      const nextPart = nextWhen ? ` Prochaine relance manuelle possible dès le ${nextWhen}.` : '';
+      return `Une relance de recherche a déjà été lancée récemment pour "${evidence.identity.titleFr}"${lastPart}. Pour préserver les indexeurs, un délai de ${cooldownHours}h s'applique entre deux relances manuelles.${nextPart}`;
+    };
+
     const isRadarrRetrigger =
       params.mediaType === 'movie' &&
       !evidence.actionability.canRequestNow &&
-      Boolean(evidence.acquisitionPipeline.canRetriggerSearch);
+      (Boolean(evidence.acquisitionPipeline.canRetriggerSearch) ||
+        (isAdmin &&
+          evidence.catalogPresence.state !== 'available_now' &&
+          (evidence.acquisitionPipeline.state === 'monitored_searching' ||
+            evidence.acquisitionPipeline.state === 'unmonitored_no_file' ||
+            evidence.acquisitionPipeline.state === 'download_warning_or_error')));
 
     if (!evidence.actionability.canRequestNow && !isRadarrRetrigger) {
+      if (!isAdmin && evidence.acquisitionPipeline.retriggerBlockedByCooldown) {
+        throw new Error(`REQUEST_NOT_ELIGIBLE:COOLDOWN_ACTIVE:${buildCooldownMessageFr()}`);
+      }
       throw new Error(
         `REQUEST_NOT_ELIGIBLE:${evidence.actionability.blockReason || 'ALREADY_HANDLED'}:${evidence.actionability.userFriendlyExplanationFr}`
       );
@@ -1439,6 +1477,58 @@ export class DeepSeekOrchestratorService {
         )
       );
 
+    const isRetriggerAction =
+      actionType === 'RADARR_MOVIE_SEARCH' ||
+      actionType === 'SONARR_EPISODE_SEARCH' ||
+      isCompletingPartialSeason;
+
+    if (!isAdmin && isRetriggerAction && evidence.acquisitionPipeline.retriggerBlockedByCooldown) {
+      throw new Error(`REQUEST_NOT_ELIGIBLE:COOLDOWN_ACTIVE:${buildCooldownMessageFr()}`);
+    }
+
+    const quota =
+      typeof this.db.getUserActionQuotaStatus === 'function'
+        ? this.db.getUserActionQuotaStatus({
+            userEmail: params.userEmail,
+            isAdmin,
+            dailyRequestCap: this.config.userDailyRequestCap ?? 5,
+            dailyRetriggerCap: this.config.userDailyRetriggerCap ?? 3,
+            mediaRetriggerCooldownHours: this.config.mediaRetriggerCooldownHours ?? 12
+          })
+        : null;
+
+    if (quota && !quota.isAdmin) {
+      if (isRetriggerAction) {
+        if (quota.retriggersRemaining24h !== null && quota.retriggersRemaining24h <= 0) {
+          const nextSlotFr = formatDateTimeFr(quota.nextRetriggerResetAt);
+          const resetHint = nextSlotFr ? ` Prochaine relance disponible dès le ${nextSlotFr}.` : '';
+          throw new Error(
+            `REQUEST_NOT_ELIGIBLE:QUOTA_EXCEEDED:Tu as atteint ta limite de ${quota.dailyRetriggerCap} relance(s) manuelle(s) sur 24 heures glissantes (${quota.retriggersUsed24h}/${quota.dailyRetriggerCap} utilisées).${resetHint} Les recherches automatiques en arrière-plan continuent normalement.`
+          );
+        }
+      } else {
+        if (quota.requestsRemaining24h !== null && quota.requestsRemaining24h <= 0) {
+          const nextSlotFr = formatDateTimeFr(quota.nextRequestResetAt);
+          const resetHint = nextSlotFr ? ` Prochaine demande disponible dès le ${nextSlotFr}.` : '';
+          throw new Error(
+            `REQUEST_NOT_ELIGIBLE:QUOTA_EXCEEDED:Tu as atteint ta limite de ${quota.dailyRequestCap} demande(s) d'ajout sur 24 heures glissantes (${quota.requestsUsed24h}/${quota.dailyRequestCap} utilisées).${resetHint}`
+          );
+        }
+      }
+    }
+
+    const quotaInfoFr = quota
+      ? quota.isAdmin
+        ? 'Mode Admin : demandes et relances illimitées'
+        : isRetriggerAction
+          ? quota.dailyRetriggerCap > 0
+            ? `Compteur relances (24h) : ${quota.retriggersUsed24h + 1}/${quota.dailyRetriggerCap} après confirmation`
+            : undefined
+          : quota.dailyRequestCap > 0
+            ? `Compteur demandes d'ajout (24h) : ${quota.requestsUsed24h + 1}/${quota.dailyRequestCap} après confirmation`
+            : undefined
+      : undefined;
+
     const episodesTxt = hasSpecificEpisodes
       ? ` — ${params.episodes!.map((e) => `S${e.seasonNumber}E${e.episodeNumber}`).join(', ')}`
       : '';
@@ -1483,6 +1573,7 @@ export class DeepSeekOrchestratorService {
       seasons: selectedSeasons,
       episodes: hasSpecificEpisodes ? params.episodes : undefined,
       summaryFr,
+      quotaInfoFr,
       expiresAt: created.expiresAt,
       status: 'PENDING'
     };
@@ -2558,6 +2649,8 @@ export class DeepSeekOrchestratorService {
         lastSearchReportsDownloaded:
           c.acquisitionPipeline.lastSearchReportsDownloaded ?? undefined,
         canRetriggerSearch: c.acquisitionPipeline.canRetriggerSearch || undefined,
+        retriggerBlockedByCooldown: c.acquisitionPipeline.retriggerBlockedByCooldown || undefined,
+        retriggerCooldownEndsAt: c.acquisitionPipeline.retriggerCooldownEndsAt || undefined,
         releaseDates:
           c.catalogPresence.state !== 'available_now' ? c.identity.releaseDates : undefined,
         seasonsSummary: c.episodeCoverage?.seasons.map((s) => ({

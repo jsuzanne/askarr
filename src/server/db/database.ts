@@ -3,8 +3,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  AdminActionQuotasSummaryDTO,
   AdminInteractionEntryDTO,
   AdminInteractionsJournalDTO,
+  AdminUserQuotaActivityEntryDTO,
   ChatMessageDTO,
   FeedbackStatsDTO,
   LlmModelBenchmarkDTO,
@@ -13,6 +15,7 @@ import type {
   ProvenanceEntry,
   QaReviewStatus,
   ResponseFeedbackDTO,
+  UserActionQuotaStatusDTO,
   UserRole
 } from '../../shared/types.js';
 
@@ -1352,6 +1355,216 @@ export class AskarrDatabase {
       tmdbId: r.tmdb_id,
       lastActionAt: r.last_action_at
     }));
+  }
+
+  public getUserActionQuotaStatus(params: {
+    userEmail: string;
+    isAdmin: boolean;
+    dailyRequestCap: number;
+    dailyRetriggerCap: number;
+    mediaRetriggerCooldownHours: number;
+  }): UserActionQuotaStatusDTO {
+    const emailLower = params.userEmail.trim().toLowerCase();
+    const rolling24hAgoMs = Date.now() - 24 * 60 * 60 * 1000;
+    const rolling24hIso = new Date(rolling24hAgoMs).toISOString();
+
+    const customResetIso = this.getAppSetting(`quota_reset_at:${emailLower}`);
+    const effectiveSinceIso =
+      customResetIso && customResetIso > rolling24hIso ? customResetIso : rolling24hIso;
+
+    const rows = this.db
+      .prepare(
+        `SELECT event_type, created_at
+         FROM media_workflow_events
+         WHERE LOWER(actor_email) = ?
+           AND created_at >= ?
+         ORDER BY created_at ASC`
+      )
+      .all(emailLower, effectiveSinceIso) as Array<{
+      event_type: string;
+      created_at: string;
+    }>;
+
+    const requestEvents = rows.filter((r) => r.event_type === 'OVERSEERR_REQUESTED');
+    const retriggerEvents = rows.filter(
+      (r) => r.event_type === 'RADARR_SEARCH_TRIGGERED' || r.event_type === 'SONARR_SEARCH_TRIGGERED'
+    );
+
+    const requestsUsed24h = requestEvents.length;
+    const retriggersUsed24h = retriggerEvents.length;
+
+    const reqCap = Math.max(0, params.dailyRequestCap);
+    const retCap = Math.max(0, params.dailyRetriggerCap);
+
+    const requestsRemaining24h =
+      params.isAdmin || reqCap === 0 ? null : Math.max(0, reqCap - requestsUsed24h);
+    const retriggersRemaining24h =
+      params.isAdmin || retCap === 0 ? null : Math.max(0, retCap - retriggersUsed24h);
+
+    const nextRequestResetAt =
+      !params.isAdmin && reqCap > 0 && requestsUsed24h >= reqCap && requestEvents[0]?.created_at
+        ? new Date(new Date(requestEvents[0].created_at).getTime() + 24 * 60 * 60 * 1000).toISOString()
+        : null;
+
+    const nextRetriggerResetAt =
+      !params.isAdmin && retCap > 0 && retriggersUsed24h >= retCap && retriggerEvents[0]?.created_at
+        ? new Date(new Date(retriggerEvents[0].created_at).getTime() + 24 * 60 * 60 * 1000).toISOString()
+        : null;
+
+    return {
+      isAdmin: params.isAdmin,
+      isAdminUnlimited: params.isAdmin,
+      requestsUsed24h,
+      dailyRequestCap: reqCap,
+      requestsRemaining24h,
+      nextRequestResetAt,
+      retriggersUsed24h,
+      dailyRetriggerCap: retCap,
+      retriggersRemaining24h,
+      nextRetriggerResetAt,
+      mediaRetriggerCooldownHours: Math.max(0, params.mediaRetriggerCooldownHours)
+    };
+  }
+
+  public resetUserActionQuota(userEmail: string): string {
+    const emailLower = userEmail.trim().toLowerCase();
+    const resetAt = new Date().toISOString();
+    this.setAppSetting(`quota_reset_at:${emailLower}`, resetAt);
+    return resetAt;
+  }
+
+  public getAllUsersQuotaSummary(params: {
+    dailyRequestCap: number;
+    dailyRetriggerCap: number;
+    mediaRetriggerCooldownHours: number;
+    adminEmails: string[];
+  }): AdminActionQuotasSummaryDTO {
+    const sevenDaysIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const rolling24hIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const adminSet = new Set(params.adminEmails.map((e) => e.trim().toLowerCase()));
+
+    const rows = this.db
+      .prepare(
+        `SELECT actor_email, actor_display_name, event_type, media_type, tmdb_id, details_json, created_at
+         FROM media_workflow_events
+         WHERE created_at >= ?
+         ORDER BY created_at DESC`
+      )
+      .all(sevenDaysIso) as Array<{
+      actor_email: string;
+      actor_display_name: string | null;
+      event_type: string;
+      media_type: string;
+      tmdb_id: number;
+      details_json: string | null;
+      created_at: string;
+    }>;
+
+    const byUser = new Map<
+      string,
+      {
+        displayName: string;
+        requestsUsed24h: number;
+        requestsUsed7d: number;
+        retriggersUsed24h: number;
+        retriggersUsed7d: number;
+        totalActions7d: number;
+        lastActionAt: string | null;
+        lastActionSummary: string | null;
+      }
+    >();
+
+    for (const r of rows) {
+      const email = r.actor_email.trim().toLowerCase();
+      const customResetIso = this.getAppSetting(`quota_reset_at:${email}`);
+      const effectiveSinceIso =
+        customResetIso && customResetIso > rolling24hIso ? customResetIso : rolling24hIso;
+      const countsIn24h = r.created_at >= effectiveSinceIso;
+
+      let entry = byUser.get(email);
+      if (!entry) {
+        let summaryLabel =
+          r.event_type === 'OVERSEERR_REQUESTED'
+            ? `Ajout demandé (${r.media_type.toUpperCase()} #${r.tmdb_id})`
+            : r.event_type === 'RADARR_SEARCH_TRIGGERED'
+              ? `Relance Radarr (Film #${r.tmdb_id})`
+              : `Relance Sonarr (Série #${r.tmdb_id})`;
+        if (r.details_json) {
+          try {
+            const parsed = JSON.parse(r.details_json) as { title?: string };
+            if (parsed.title) {
+              summaryLabel =
+                r.event_type === 'OVERSEERR_REQUESTED'
+                  ? `Ajout : "${parsed.title}"`
+                  : r.event_type === 'RADARR_SEARCH_TRIGGERED'
+                    ? `Relance Radarr : "${parsed.title}"`
+                    : `Relance Sonarr : "${parsed.title}"`;
+            }
+          } catch {
+            // ignore
+          }
+        }
+        entry = {
+          displayName: r.actor_display_name || email.split('@')[0] || email,
+          requestsUsed24h: 0,
+          requestsUsed7d: 0,
+          retriggersUsed24h: 0,
+          retriggersUsed7d: 0,
+          totalActions7d: 0,
+          lastActionAt: r.created_at,
+          lastActionSummary: summaryLabel
+        };
+        byUser.set(email, entry);
+      }
+
+      entry.totalActions7d++;
+      if (r.event_type === 'OVERSEERR_REQUESTED') {
+        entry.requestsUsed7d++;
+        if (countsIn24h) entry.requestsUsed24h++;
+      } else if (
+        r.event_type === 'RADARR_SEARCH_TRIGGERED' ||
+        r.event_type === 'SONARR_SEARCH_TRIGGERED'
+      ) {
+        entry.retriggersUsed7d++;
+        if (countsIn24h) entry.retriggersUsed24h++;
+      }
+    }
+
+    const reqCap = Math.max(0, params.dailyRequestCap);
+    const retCap = Math.max(0, params.dailyRetriggerCap);
+
+    const users: AdminUserQuotaActivityEntryDTO[] = Array.from(byUser.entries())
+      .map(([userEmail, data]) => {
+        const isAdmin = adminSet.has(userEmail);
+        return {
+          email: userEmail,
+          userEmail,
+          displayName: data.displayName,
+          isAdmin,
+          requestsUsed24h: data.requestsUsed24h,
+          requestsUsed7d: data.requestsUsed7d,
+          retriggersUsed24h: data.retriggersUsed24h,
+          retriggersUsed7d: data.retriggersUsed7d,
+          totalActions7d: data.totalActions7d,
+          lastActionAt: data.lastActionAt,
+          lastActionSummary: data.lastActionSummary,
+          isRequestQuotaReached: !isAdmin && reqCap > 0 && data.requestsUsed24h >= reqCap,
+          isRetriggerQuotaReached: !isAdmin && retCap > 0 && data.retriggersUsed24h >= retCap
+        };
+      })
+      .sort((a, b) => {
+        const aTotal24 = a.requestsUsed24h + a.retriggersUsed24h;
+        const bTotal24 = b.requestsUsed24h + b.retriggersUsed24h;
+        if (bTotal24 !== aTotal24) return bTotal24 - aTotal24;
+        return (b.lastActionAt || '').localeCompare(a.lastActionAt || '');
+      });
+
+    return {
+      dailyRequestCap: reqCap,
+      dailyRetriggerCap: retCap,
+      mediaRetriggerCooldownHours: Math.max(0, params.mediaRetriggerCooldownHours),
+      users
+    };
   }
 
   public close(): void {

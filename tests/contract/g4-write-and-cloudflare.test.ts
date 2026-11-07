@@ -308,4 +308,247 @@ describe('Phase G4: 2-Step Confirmation Token & Cloudflare Access Sync Tests', (
     db.close();
     await app.close();
   });
+
+  it('T-G4-03: enforces rolling 24h request & retrigger quotas, per-media cooldown, Admin No Limit, and Admin quota reset', async () => {
+    const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || 'GET').toUpperCase();
+
+      if (url.includes('/api/v1/user')) {
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                id: 42,
+                email: 'ami.plex@example.com',
+                plexUsername: 'AmiPlex',
+                displayName: 'Ami Plex',
+                userType: 1,
+                permissions: 32,
+                requestCount: 1
+              }
+            ]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/movie/101') || url.includes('/api/v1/movie/102') || url.includes('/api/v1/movie/103')) {
+        const id = url.includes('/101') ? 101 : url.includes('/102') ? 102 : 103;
+        return new Response(
+          JSON.stringify({
+            id,
+            title: `Film Test #${id}`,
+            originalTitle: `Film Test #${id}`,
+            releaseDate: '2024-01-15',
+            runtime: 120,
+            voteAverage: 7.5,
+            overview: 'Film de test quota.',
+            genres: [{ name: 'Drame' }],
+            mediaInfo: undefined
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/movie/555')) {
+        return new Response(
+          JSON.stringify({
+            id: 555,
+            title: 'Film En Attente Radarr',
+            originalTitle: 'Film En Attente Radarr',
+            releaseDate: '2023-05-10',
+            runtime: 115,
+            voteAverage: 7.9,
+            overview: 'Déjà demandé mais sans fichier.',
+            genres: [{ name: 'Action' }],
+            mediaInfo: {
+              status: 3,
+              requests: [
+                {
+                  id: 88,
+                  status: 2,
+                  createdAt: '2026-01-10T10:00:00.000Z',
+                  requestedBy: { email: 'ami.plex@example.com', plexUsername: 'AmiPlex' }
+                }
+              ]
+            }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/request') && method === 'POST') {
+        const body = JSON.parse(String(init?.body || '{}'));
+        return new Response(
+          JSON.stringify({
+            id: 900 + Number(body.mediaId || 0),
+            status: 2,
+            createdAt: new Date().toISOString(),
+            media: { status: 3, tmdbId: body.mediaId }
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes(':32400/')) {
+        return new Response(JSON.stringify({ MediaContainer: { size: 0, Metadata: [], Directory: [] } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.includes(':7878/api/v3/movie')) {
+        if (url.includes('tmdbId=') && !url.includes('tmdbId=555')) {
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        return new Response(
+          JSON.stringify([
+            {
+              id: 55,
+              tmdbId: 555,
+              title: 'Film En Attente Radarr',
+              year: 2023,
+              monitored: true,
+              hasFile: false,
+              status: 'released',
+              inCinemas: '2023-05-10',
+              digitalRelease: '2023-09-10',
+              added: '2026-01-10T10:00:00.000Z'
+            }
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes(':7878/api/v3/queue')) {
+        return new Response(JSON.stringify({ records: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.includes(':7878/api/v3/history')) {
+        return new Response(JSON.stringify({ records: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as typeof fetch;
+
+    const config = loadConfig({
+      NODE_ENV: 'test',
+      ALLOW_DEV_AUTH_HEADER: 'true',
+      ADMIN_EMAILS: 'admin@example.com',
+      SQLITE_DB_PATH: ':memory:',
+      PLEX_SERVERS: 'NucVillers|http://192.168.1.163:32400',
+      PLEX_TOKEN: 'fake-plex',
+      OVERSEERR_BASE_URL: 'http://192.168.1.154:5055',
+      OVERSEERR_API_KEY: 'fake-overseerr',
+      RADARR_BASE_URL: 'http://192.168.1.154:7878',
+      RADARR_API_KEY: 'fake-radarr',
+      USER_DAILY_REQUEST_CAP: '2',
+      USER_DAILY_RETRIGGER_CAP: '1',
+      MEDIA_RETRIGGER_COOLDOWN_HOURS: '12'
+    });
+
+    const { app, db } = await createApp({ config, fetchImpl: mockFetch });
+
+    // Request #1 & #2 for ami.plex@example.com succeed
+    for (const tmdbId of [101, 102]) {
+      const prep = await app.inject({
+        method: 'POST',
+        url: '/api/requests/prepare',
+        headers: { 'x-dev-user-email': 'ami.plex@example.com' },
+        payload: { tmdbId, mediaType: 'movie' }
+      });
+      expect(prep.statusCode).toBe(200);
+      expect(prep.json().preparedAction.quotaInfoFr).toContain('/2');
+
+      const conf = await app.inject({
+        method: 'POST',
+        url: '/api/requests/confirm',
+        headers: { 'x-dev-user-email': 'ami.plex@example.com' },
+        payload: { actionId: prep.json().preparedAction.actionId }
+      });
+      expect(conf.statusCode).toBe(200);
+    }
+
+    // Request #3 for ami.plex@example.com is blocked by 24h quota (cap = 2)
+    const blockedPrep = await app.inject({
+      method: 'POST',
+      url: '/api/requests/prepare',
+      headers: { 'x-dev-user-email': 'ami.plex@example.com' },
+      payload: { tmdbId: 103, mediaType: 'movie' }
+    });
+    expect(blockedPrep.statusCode).toBe(409);
+    expect(blockedPrep.json().message).toContain('limite de 2 demande(s)');
+
+    // Admin is NOT limited ("Admin No Limit")
+    const adminPrep = await app.inject({
+      method: 'POST',
+      url: '/api/requests/prepare',
+      headers: { 'x-dev-user-email': 'admin@example.com' },
+      payload: { tmdbId: 103, mediaType: 'movie' }
+    });
+    expect(adminPrep.statusCode).toBe(200);
+    expect(adminPrep.json().preparedAction.quotaInfoFr).toContain('Admin');
+
+    // Admin resets ami.plex@example.com's 24h quota -> user can immediately request #103
+    const resetRes = await app.inject({
+      method: 'POST',
+      url: '/api/admin/quotas/reset-user',
+      headers: { 'x-dev-user-email': 'admin@example.com' },
+      payload: { email: 'ami.plex@example.com' }
+    });
+    expect(resetRes.statusCode).toBe(200);
+    expect(resetRes.json().ok).toBe(true);
+
+    const afterResetPrep = await app.inject({
+      method: 'POST',
+      url: '/api/requests/prepare',
+      headers: { 'x-dev-user-email': 'ami.plex@example.com' },
+      payload: { tmdbId: 103, mediaType: 'movie' }
+    });
+    expect(afterResetPrep.statusCode).toBe(200);
+    expect(afterResetPrep.json().preparedAction.quotaInfoFr).toContain('1/2');
+
+    // Cooldown test on movie #555: record a manual retrigger 30 minutes ago
+    db.recordMediaWorkflowEvent({
+      mediaType: 'movie',
+      tmdbId: 555,
+      actorEmail: 'autre.ami@example.com',
+      actorDisplayName: 'AutreAmi',
+      eventType: 'RADARR_SEARCH_TRIGGERED',
+      details: { title: 'Film En Attente Radarr', commandId: 123 }
+    });
+
+    // Standard user sees retriggerBlockedByCooldown=true and gets pedagogical cooldown message
+    const cooldownPrep = await app.inject({
+      method: 'POST',
+      url: '/api/requests/prepare',
+      headers: { 'x-dev-user-email': 'ami.plex@example.com' },
+      payload: { tmdbId: 555, mediaType: 'movie' }
+    });
+    expect(cooldownPrep.statusCode).toBe(409);
+    expect(cooldownPrep.json().message).toContain('délai de 12h');
+
+    // Admin bypasses the per-movie cooldown
+    const adminRetriggerPrep = await app.inject({
+      method: 'POST',
+      url: '/api/requests/prepare',
+      headers: { 'x-dev-user-email': 'admin@example.com' },
+      payload: { tmdbId: 555, mediaType: 'movie' }
+    });
+    expect(adminRetriggerPrep.statusCode).toBe(200);
+    expect(adminRetriggerPrep.json().preparedAction.actionType).toBe('RADARR_MOVIE_SEARCH');
+
+    db.close();
+    await app.close();
+  });
 });

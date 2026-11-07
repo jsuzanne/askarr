@@ -64,6 +64,9 @@ export function addDaysIso(isoDate: string, days: number): string | null {
 }
 
 export class MediaAggregatorService {
+  private retriggerCooldownHours = 12;
+  private adminEmails: string[] = [];
+
   constructor(
     private readonly overseerr: OverseerrConnector,
     private readonly plex: PlexMultiServerConnector,
@@ -79,6 +82,15 @@ export class MediaAggregatorService {
     this.mdblist = mdblist;
     if (recentYearsWindow !== undefined && Number.isFinite(recentYearsWindow)) {
       this.recentYearsWindow = Math.max(1, Math.min(15, recentYearsWindow));
+    }
+  }
+
+  public setQuotaPolicy(params: { retriggerCooldownHours?: number; adminEmails?: string[] }): void {
+    if (params.retriggerCooldownHours !== undefined && Number.isFinite(params.retriggerCooldownHours)) {
+      this.retriggerCooldownHours = Math.max(0, Math.min(720, Math.round(params.retriggerCooldownHours)));
+    }
+    if (Array.isArray(params.adminEmails)) {
+      this.adminEmails = params.adminEmails.map((e) => e.trim().toLowerCase()).filter(Boolean);
     }
   }
 
@@ -1212,6 +1224,8 @@ export class MediaAggregatorService {
     let lastGrabbedRelease: string | null = null;
     let lastFailedAt: string | null = null;
     let canRetriggerSearch = false;
+    let retriggerBlockedByCooldown = false;
+    let retriggerCooldownEndsAt: string | null = null;
 
     const workflowSummary =
       this.db && typeof this.db.getMediaWorkflowSummary === 'function'
@@ -1223,6 +1237,23 @@ export class MediaAggregatorService {
         workflowSummary?.followerEmails.includes(params.currentUserEmail.toLowerCase())
     );
     const effectiveRequestedByCurrentUser = requestedByCurrentUser || isFollowedByCurrentUser;
+
+    const isUserAdmin = Boolean(
+      params.currentUserEmail &&
+        this.adminEmails.includes(params.currentUserEmail.trim().toLowerCase())
+    );
+    const recentCooldownMs = Math.max(0, this.retriggerCooldownHours) * 60 * 60 * 1000;
+    const lastManualTs = workflowSummary?.lastManualSearchAt
+      ? new Date(workflowSummary.lastManualSearchAt).getTime()
+      : NaN;
+    const recentlyRetriggered = Boolean(
+      recentCooldownMs > 0 &&
+        Number.isFinite(lastManualTs) &&
+        Date.now() - lastManualTs < recentCooldownMs
+    );
+    if (recentlyRetriggered && Number.isFinite(lastManualTs)) {
+      retriggerCooldownEndsAt = new Date(lastManualTs + recentCooldownMs).toISOString();
+    }
 
     if (osDetail.mediaType === 'movie' && radarrMovie && !radarrMovie.hasFile && catalogState !== 'available_now') {
       const initialSearchIso = overseerrRequestedAt || arrAddedAt || null;
@@ -1263,13 +1294,19 @@ export class MediaAggregatorService {
         acqState === 'unmonitored_no_file' ||
         acqState === 'download_warning_or_error';
 
-      const recentCooldownMs = 10 * 60 * 1000;
-      const recentlyRetriggered = Boolean(
-        workflowSummary?.lastManualSearchAt &&
-          Date.now() - new Date(workflowSummary.lastManualSearchAt).getTime() < recentCooldownMs
-      );
-
-      canRetriggerSearch = isReleasedAndWaiting && !recentlyRetriggered;
+      retriggerBlockedByCooldown = isReleasedAndWaiting && recentlyRetriggered && !isUserAdmin;
+      canRetriggerSearch = isReleasedAndWaiting && (!recentlyRetriggered || isUserAdmin);
+    } else if (osDetail.mediaType === 'tv' && workflowSummary) {
+      manualSearchCount = workflowSummary.manualSearchCount;
+      if (workflowSummary.lastManualSearchAt) {
+        lastSearchAt = workflowSummary.lastManualSearchAt;
+        lastSearchSource = 'manual_retrigger';
+        lastSearchBy = workflowSummary.lastManualSearchBy;
+        lastSearchReportsDownloaded = workflowSummary.lastManualSearchReportsDownloaded;
+        lastSearchDurationSeconds = workflowSummary.lastManualSearchDurationSeconds;
+        lastSearchCommandId = workflowSummary.lastManualSearchCommandId;
+      }
+      retriggerBlockedByCooldown = recentlyRetriggered && !isUserAdmin;
     }
 
     const actionability = this.computeUserFriendlyActionability({
@@ -1371,7 +1408,9 @@ export class MediaAggregatorService {
         lastGrabbedAt,
         lastGrabbedRelease,
         lastFailedAt,
-        canRetriggerSearch
+        canRetriggerSearch,
+        retriggerBlockedByCooldown,
+        retriggerCooldownEndsAt
       },
       episodeCoverage,
       indexerSearch,

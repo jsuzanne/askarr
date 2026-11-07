@@ -71,6 +71,9 @@ export interface AppConfig {
   openrouterModel?: string;
   aiDailyTokenCap: number;
   aiMonthlyBudgetUsd: number;
+  userDailyRequestCap: number;
+  userDailyRetriggerCap: number;
+  mediaRetriggerCooldownHours: number;
 }
 
 export function parsePlexServers(
@@ -195,6 +198,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     openrouterApiKey: env.OPENROUTER_API_KEY || '',
     openrouterModel: env.OPENROUTER_MODEL || 'openrouter/free',
     aiDailyTokenCap: Number(env.AI_DAILY_TOKEN_CAP || 2500000),
-    aiMonthlyBudgetUsd: Number(env.AI_MONTHLY_BUDGET_USD || 10.0)
+    aiMonthlyBudgetUsd: Number(env.AI_MONTHLY_BUDGET_USD || 10.0),
+    userDailyRequestCap:
+      env.USER_DAILY_REQUEST_CAP !== undefined && env.USER_DAILY_REQUEST_CAP.trim() !== ''
+        ? Math.max(0, Number(env.USER_DAILY_REQUEST_CAP))
+        : 5,
+    userDailyRetriggerCap:
+      env.USER_DAILY_RETRIGGER_CAP !== undefined && env.USER_DAILY_RETRIGGER_CAP.trim() !== ''
+        ? Math.max(0, Number(env.USER_DAILY_RETRIGGER_CAP))
+        : 3,
+    mediaRetriggerCooldownHours:
+      env.MEDIA_RETRIGGER_COOLDOWN_HOURS !== undefined && env.MEDIA_RETRIGGER_COOLDOWN_HOURS.trim() !== ''
+        ? Math.max(0, Number(env.MEDIA_RETRIGGER_COOLDOWN_HOURS))
+        : 12
   };
 }

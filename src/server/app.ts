@@ -247,6 +247,19 @@ export async function createApp(deps: AppDependencies): Promise<{
     if (saved.cfg_ai_monthly_budget_usd && Number(saved.cfg_ai_monthly_budget_usd) > 0) {
       config.aiMonthlyBudgetUsd = Number(saved.cfg_ai_monthly_budget_usd);
     }
+    if (saved.cfg_user_daily_request_cap !== undefined && Number.isFinite(Number(saved.cfg_user_daily_request_cap)) && Number(saved.cfg_user_daily_request_cap) >= 0) {
+      config.userDailyRequestCap = Math.round(Number(saved.cfg_user_daily_request_cap));
+    }
+    if (saved.cfg_user_daily_retrigger_cap !== undefined && Number.isFinite(Number(saved.cfg_user_daily_retrigger_cap)) && Number(saved.cfg_user_daily_retrigger_cap) >= 0) {
+      config.userDailyRetriggerCap = Math.round(Number(saved.cfg_user_daily_retrigger_cap));
+    }
+    if (saved.cfg_media_retrigger_cooldown_hours !== undefined && Number.isFinite(Number(saved.cfg_media_retrigger_cooldown_hours)) && Number(saved.cfg_media_retrigger_cooldown_hours) >= 0) {
+      config.mediaRetriggerCooldownHours = Math.round(Number(saved.cfg_media_retrigger_cooldown_hours));
+    }
+    aggregator.setQuotaPolicy({
+      retriggerCooldownHours: config.mediaRetriggerCooldownHours,
+      adminEmails: config.adminEmails
+    });
   }
 
   // Appliquer immédiatement les éventuelles surcharges SQLite au démarrage
@@ -316,6 +329,14 @@ export async function createApp(deps: AppDependencies): Promise<{
       plexAccess = undefined;
     }
 
+    const actionQuotas = db.getUserActionQuotaStatus({
+      userEmail: principal.email,
+      isAdmin: principal.role === 'admin',
+      dailyRequestCap: config.userDailyRequestCap,
+      dailyRetriggerCap: config.userDailyRetriggerCap,
+      mediaRetriggerCooldownHours: config.mediaRetriggerCooldownHours
+    });
+
     return {
       principal,
       session: {
@@ -329,7 +350,8 @@ export async function createApp(deps: AppDependencies): Promise<{
           userType: overseerrUser?.userType ?? (alias || plexAccess ? 1 : null)
         },
         plexAccess,
-        aiMode
+        aiMode,
+        actionQuotas
       }
     };
   }
@@ -567,7 +589,8 @@ export async function createApp(deps: AppDependencies): Promise<{
         tmdbId: body.tmdbId,
         mediaType: body.mediaType,
         seasons: body.seasons,
-        episodes: body.episodes
+        episodes: body.episodes,
+        isAdmin: session.role === 'admin'
       });
       return {
         preparedAction,
@@ -632,8 +655,54 @@ export async function createApp(deps: AppDependencies): Promise<{
       checkIndexers: false
     });
 
+    const isPartialSeasonCompletion =
+      record.payload.mediaType === 'tv' &&
+      Boolean(
+        record.payload.seasons?.some((sNum) =>
+          freshEvidence.episodeCoverage?.seasons.some(
+            (s) => s.seasonNumber === sNum && s.state === 'partially_available'
+          )
+        )
+      );
+    const isRetriggerConfirm =
+      record.actionType === 'RADARR_MOVIE_SEARCH' ||
+      record.actionType === 'SONARR_EPISODE_SEARCH' ||
+      isPartialSeasonCompletion;
+
+    if (session.role !== 'admin') {
+      const currentQuota = db.getUserActionQuotaStatus({
+        userEmail: session.email,
+        isAdmin: false,
+        dailyRequestCap: config.userDailyRequestCap,
+        dailyRetriggerCap: config.userDailyRetriggerCap,
+        mediaRetriggerCooldownHours: config.mediaRetriggerCooldownHours
+      });
+      if (isRetriggerConfirm && currentQuota.retriggersRemaining24h !== null && currentQuota.retriggersRemaining24h <= 0) {
+        return reply.code(429).send({
+          error: 'QUOTA_EXCEEDED',
+          message: `Tu as atteint ta limite de ${currentQuota.dailyRetriggerCap} relance(s) manuelle(s) sur 24 heures glissantes (${currentQuota.retriggersUsed24h}/${currentQuota.dailyRetriggerCap}).`
+        });
+      }
+      if (!isRetriggerConfirm && currentQuota.requestsRemaining24h !== null && currentQuota.requestsRemaining24h <= 0) {
+        return reply.code(429).send({
+          error: 'QUOTA_EXCEEDED',
+          message: `Tu as atteint ta limite de ${currentQuota.dailyRequestCap} demande(s) d'ajout sur 24 heures glissantes (${currentQuota.requestsUsed24h}/${currentQuota.dailyRequestCap}).`
+        });
+      }
+    }
+
     if (record.actionType === 'RADARR_MOVIE_SEARCH') {
-      if (freshEvidence.catalogPresence.state === 'available_now' || !freshEvidence.acquisitionPipeline.canRetriggerSearch) {
+      const canAdminRetrigger =
+        session.role === 'admin' &&
+        freshEvidence.catalogPresence.state !== 'available_now' &&
+        (freshEvidence.acquisitionPipeline.state === 'monitored_searching' ||
+          freshEvidence.acquisitionPipeline.state === 'unmonitored_no_file' ||
+          freshEvidence.acquisitionPipeline.state === 'download_warning_or_error');
+
+      if (
+        freshEvidence.catalogPresence.state === 'available_now' ||
+        (!freshEvidence.acquisitionPipeline.canRetriggerSearch && !canAdminRetrigger)
+      ) {
         db.completePreparedAction({
           token: record.token,
           status: 'SUPERSEDED',
@@ -661,6 +730,7 @@ export async function createApp(deps: AppDependencies): Promise<{
           actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
           eventType: 'RADARR_SEARCH_TRIGGERED',
           details: {
+            title: record.payload.title,
             radarrMovieId: radarrRes.radarrMovieId,
             commandId: radarrRes.commandId,
             commandStatus: radarrRes.commandStatus,
@@ -784,6 +854,19 @@ export async function createApp(deps: AppDependencies): Promise<{
         });
       }
 
+      db.recordMediaWorkflowEvent({
+        mediaType: 'tv',
+        tmdbId: record.payload.tmdbId,
+        actorEmail: session.email,
+        actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
+        eventType: 'SONARR_SEARCH_TRIGGERED',
+        details: {
+          title: record.payload.title,
+          sonarrSeriesId: sonarrResult.seriesId,
+          searchedEpisodes: sonarrResult.searchedEpisodes
+        }
+      });
+
       db.completePreparedAction({
         token: record.token,
         status: 'EXECUTED',
@@ -814,13 +897,22 @@ export async function createApp(deps: AppDependencies): Promise<{
         status: 'SUCCESS'
       });
 
+      const updatedEvidence = await aggregator.buildMediaEvidence({
+        tmdbId: record.payload.tmdbId,
+        mediaType: 'tv',
+        currentUserEmail: session.email,
+        currentUserOverseerrId: session.overseerr.overseerrUserId,
+        includeSeasons: true,
+        checkIndexers: false
+      });
+
       const responseMessageFr = `La recherche directe dans Sonarr pour ${epLabels} de "${record.payload.title}" a bien été lancée ! L'épisode sera disponible sur Plex dès la fin du téléchargement.`;
 
       return {
         actionId: record.token,
         status: 'EXECUTED',
         messageFr: responseMessageFr,
-        evidence: freshEvidence
+        evidence: updatedEvidence
       };
     }
 
@@ -917,17 +1009,36 @@ export async function createApp(deps: AppDependencies): Promise<{
           sonarrMonitoredEpisodes: sonarrSearchResult.monitoredEpisodesCount
         }
       });
-      db.recordMediaWorkflowEvent({
-        mediaType: record.payload.mediaType,
-        tmdbId: record.payload.tmdbId,
-        actorEmail: session.email,
-        actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
-        eventType: 'OVERSEERR_REQUESTED',
-        details: {
-          overseerrRequestId: createdReq.requestId,
-          seasons: seasonsToRequest
-        }
-      });
+      if (sonarrSearchResult.ok && isPartialSeasonCompletion) {
+        db.recordMediaWorkflowEvent({
+          mediaType: 'tv',
+          tmdbId: record.payload.tmdbId,
+          actorEmail: session.email,
+          actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
+          eventType: 'SONARR_SEARCH_TRIGGERED',
+          details: {
+            title: record.payload.title,
+            overseerrRequestId: createdReq.requestId,
+            seasons: seasonsToRequest,
+            sonarrSeriesId: sonarrSearchResult.seriesId,
+            searchedSeasons: sonarrSearchResult.searchedSeasons,
+            monitoredEpisodesCount: sonarrSearchResult.monitoredEpisodesCount
+          }
+        });
+      } else {
+        db.recordMediaWorkflowEvent({
+          mediaType: record.payload.mediaType,
+          tmdbId: record.payload.tmdbId,
+          actorEmail: session.email,
+          actorDisplayName: session.overseerr.plexUsername || session.email.split('@')[0] || session.email,
+          eventType: 'OVERSEERR_REQUESTED',
+          details: {
+            title: record.payload.title,
+            overseerrRequestId: createdReq.requestId,
+            seasons: seasonsToRequest
+          }
+        });
+      }
       waitingListCache.clear();
 
       db.recordAuditLog({
@@ -1972,10 +2083,19 @@ export async function createApp(deps: AppDependencies): Promise<{
         openrouterApiKeyMasked: maskSecret(config.openrouterApiKey || ''),
         openrouterApiKeyConfigured: Boolean(config.openrouterApiKey),
         aiDailyTokenCap: config.aiDailyTokenCap,
-        aiMonthlyBudgetUsd: config.aiMonthlyBudgetUsd
+        aiMonthlyBudgetUsd: config.aiMonthlyBudgetUsd,
+        userDailyRequestCap: config.userDailyRequestCap,
+        userDailyRetriggerCap: config.userDailyRetriggerCap,
+        mediaRetriggerCooldownHours: config.mediaRetriggerCooldownHours
       },
       smtp: smtpInvite.getPublicSummary(),
-      discord: discord.getPublicSummary()
+      discord: discord.getPublicSummary(),
+      actionQuotas: db.getAllUsersQuotaSummary({
+        dailyRequestCap: config.userDailyRequestCap,
+        dailyRetriggerCap: config.userDailyRetriggerCap,
+        mediaRetriggerCooldownHours: config.mediaRetriggerCooldownHours,
+        adminEmails: config.adminEmails
+      })
     };
 
     return settings;
@@ -2017,7 +2137,10 @@ export async function createApp(deps: AppDependencies): Promise<{
     openrouterModel: z.string().optional(),
     openrouterApiKey: z.string().optional(),
     aiDailyTokenCap: z.coerce.number().int().positive().optional().catch(undefined),
-    aiMonthlyBudgetUsd: z.coerce.number().positive().optional().catch(undefined)
+    aiMonthlyBudgetUsd: z.coerce.number().positive().optional().catch(undefined),
+    userDailyRequestCap: z.coerce.number().int().min(0).max(500).optional().catch(undefined),
+    userDailyRetriggerCap: z.coerce.number().int().min(0).max(500).optional().catch(undefined),
+    mediaRetriggerCooldownHours: z.coerce.number().int().min(0).max(720).optional().catch(undefined)
   });
 
   function persistRuntimeSettingsBody(body: z.infer<typeof saveRuntimeSettingsSchema>): void {
@@ -2087,9 +2210,54 @@ export async function createApp(deps: AppDependencies): Promise<{
     if (body.aiMonthlyBudgetUsd) {
       db.setAppSetting('cfg_ai_monthly_budget_usd', String(body.aiMonthlyBudgetUsd));
     }
+    if (body.userDailyRequestCap !== undefined) {
+      db.setAppSetting('cfg_user_daily_request_cap', String(body.userDailyRequestCap));
+    }
+    if (body.userDailyRetriggerCap !== undefined) {
+      db.setAppSetting('cfg_user_daily_retrigger_cap', String(body.userDailyRetriggerCap));
+    }
+    if (body.mediaRetriggerCooldownHours !== undefined) {
+      db.setAppSetting('cfg_media_retrigger_cooldown_hours', String(body.mediaRetriggerCooldownHours));
+    }
 
     applySavedSettingsToRuntime();
   }
+
+  const resetUserQuotaSchema = z.object({
+    email: z.string().min(3)
+  });
+
+  app.post('/api/admin/quotas/reset-user', async (req, reply: FastifyReply) => {
+    const { principal } = await resolveUserSession(req);
+    if (!requireAdmin(principal, reply)) return;
+    const body = resetUserQuotaSchema.parse(req.body);
+    const resetAt = db.resetUserActionQuota(body.email);
+
+    db.recordAuditLog({
+      actorEmail: principal.email,
+      actorRole: 'admin',
+      actionType: 'USER_QUOTA_RESET',
+      targetService: 'sqlite',
+      summaryFr: `Réinitialisation du compteur 24h (ajouts & relances) pour ${body.email.trim().toLowerCase()}`,
+      diffRedacted: {
+        targetUserEmail: body.email.trim().toLowerCase(),
+        resetAt
+      },
+      status: 'SUCCESS'
+    });
+
+    return {
+      ok: true,
+      resetAt,
+      messageFr: `Le compteur 24h de ${body.email} a été remis à zéro.`,
+      actionQuotas: db.getAllUsersQuotaSummary({
+        dailyRequestCap: config.userDailyRequestCap,
+        dailyRetriggerCap: config.userDailyRetriggerCap,
+        mediaRetriggerCooldownHours: config.mediaRetriggerCooldownHours,
+        adminEmails: config.adminEmails
+      })
+    };
+  });
 
   app.post('/api/admin/settings/save', async (req, reply: FastifyReply) => {
     const { principal } = await resolveUserSession(req);

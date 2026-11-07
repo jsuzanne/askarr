@@ -455,8 +455,12 @@ export function App() {
     openrouterModel: 'openrouter/free',
     openrouterApiKey: '',
     aiDailyTokenCap: 2500000,
-    aiMonthlyBudgetUsd: 10
+    aiMonthlyBudgetUsd: 10,
+    userDailyRequestCap: 5,
+    userDailyRetriggerCap: 3,
+    mediaRetriggerCooldownHours: 12
   });
+  const [resettingUserQuotaEmail, setResettingUserQuotaEmail] = useState<string | null>(null);
   const [configSaving, setConfigSaving] = useState(false);
   const [configDiscovering, setConfigDiscovering] = useState(false);
   const [configBanner, setConfigBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -653,7 +657,15 @@ export function App() {
             openrouterModel: ev.openrouterModel || prev.openrouterModel,
             openrouterApiKey: '',
             aiDailyTokenCap: ev.aiDailyTokenCap || prev.aiDailyTokenCap,
-            aiMonthlyBudgetUsd: ev.aiMonthlyBudgetUsd || prev.aiMonthlyBudgetUsd
+            aiMonthlyBudgetUsd: ev.aiMonthlyBudgetUsd || prev.aiMonthlyBudgetUsd,
+            userDailyRequestCap:
+              ev.userDailyRequestCap !== undefined ? ev.userDailyRequestCap : prev.userDailyRequestCap,
+            userDailyRetriggerCap:
+              ev.userDailyRetriggerCap !== undefined ? ev.userDailyRetriggerCap : prev.userDailyRetriggerCap,
+            mediaRetriggerCooldownHours:
+              ev.mediaRetriggerCooldownHours !== undefined
+                ? ev.mediaRetriggerCooldownHours
+                : prev.mediaRetriggerCooldownHours
           }));
         }
         if (data.discord) {
@@ -3012,6 +3024,7 @@ export function App() {
                                       : null
                                   }
                                   onAskSimilar={handleAskSimilar}
+                                  onEvidenceUpdated={() => void fetchSession()}
                                   showTechnicalTrace={showInlineDebug}
                                   plexPlayers={plexPlayers}
                                   selectedPlayerId={selectedPlayerId}
@@ -3364,6 +3377,57 @@ export function App() {
                   <p className="text-xs sm:text-sm text-stone-300 mt-0.5">
                     Suivi en direct de tes films et séries demandés sur Plex.
                   </p>
+                  {session?.actionQuotas && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                      {session.actionQuotas.isAdmin && !isViewerPreview ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-950/60 border border-emerald-500/35 px-2.5 py-1 text-emerald-300 font-semibold">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <span>Accès Admin : demandes d&apos;ajout et relances illimitées</span>
+                        </span>
+                      ) : (
+                        <>
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-medium ${
+                              session.actionQuotas.requestsRemaining24h === 0
+                                ? 'bg-rose-950/60 border-rose-500/45 text-rose-200'
+                                : 'bg-stone-900/90 border-amber-500/30 text-amber-200'
+                            }`}
+                            title="Compteur glissant sur 24 heures pour les nouvelles demandes d'ajout via Overseerr"
+                          >
+                            <Ticket className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <span>
+                              Demandes (24h) :{' '}
+                              <strong>
+                                {session.actionQuotas.requestsUsed24h}/
+                                {session.actionQuotas.dailyRequestCap > 0
+                                  ? session.actionQuotas.dailyRequestCap
+                                  : '∞'}
+                              </strong>
+                            </span>
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-medium ${
+                              session.actionQuotas.retriggersRemaining24h === 0
+                                ? 'bg-rose-950/60 border-rose-500/45 text-rose-200'
+                                : 'bg-stone-900/90 border-amber-500/30 text-amber-200'
+                            }`}
+                            title={`Compteur glissant sur 24 heures pour les relances manuelles Radarr/Sonarr (délai de ${session.actionQuotas.mediaRetriggerCooldownHours}h entre 2 relances d'un même titre)`}
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <span>
+                              Relances (24h) :{' '}
+                              <strong>
+                                {session.actionQuotas.retriggersUsed24h}/
+                                {session.actionQuotas.dailyRetriggerCap > 0
+                                  ? session.actionQuotas.dailyRetriggerCap
+                                  : '∞'}
+                              </strong>
+                            </span>
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => void fetchMyRequests(true)}
@@ -3615,6 +3679,7 @@ export function App() {
                           key={req.requestId}
                           evidence={req.evidence}
                           onAskSimilar={handleAskSimilar}
+                          onEvidenceUpdated={() => void fetchSession()}
                           showTechnicalTrace={showInlineDebug}
                           compactRowMode={reqLayoutMode === 'compact'}
                           rankNumber={reqLayoutMode === 'compact' ? idx + 1 : undefined}
@@ -5282,6 +5347,97 @@ export function App() {
                         />
                       </div>
                     </div>
+
+                    {/* Section 5 : Quotas Utilisateurs & Anti-Abus (Overseerr / Radarr / Sonarr) */}
+                    <div className="p-4 rounded-xl bg-amber-950/15 border border-amber-500/35 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-amber-200 text-xs sm:text-sm flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-amber-400" />
+                            <span>
+                              5. Quotas Utilisateurs & Anti-Abus (Demandes d&apos;ajout Overseerr & Relances Radarr/Sonarr)
+                            </span>
+                          </div>
+                          <p className="text-xs text-stone-400 mt-0.5">
+                            Protège tes indexeurs et ton stockage contre les abus. Les comptes figurant dans{' '}
+                            <code className="text-emerald-300">Emails Administrateurs</code> bénéficient automatiquement du mode{' '}
+                            <strong className="text-emerald-300">Admin No Limit (illimité)</strong>. Mets{' '}
+                            <code className="text-amber-300">0</code> pour désactiver une limite.
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-mono px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-300">
+                          Admin = Illimité ∞
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                        <div>
+                          <label className="block text-stone-300 font-semibold mb-1">
+                            Plafond Demandes d&apos;ajout / 24h (Overseerr)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={500}
+                            value={configForm.userDailyRequestCap}
+                            onChange={(e) =>
+                              setConfigForm((p) => ({
+                                ...p,
+                                userDailyRequestCap: Math.max(0, Number(e.target.value) || 0)
+                              }))
+                            }
+                            className="w-full rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                          />
+                          <p className="text-[11px] text-stone-400 mt-1">
+                            Défaut recommandé : <strong>5</strong> demandes / 24h glissantes par ami Plex.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-stone-300 font-semibold mb-1">
+                            Plafond Relances manuelles / 24h (Radarr & Sonarr)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={500}
+                            value={configForm.userDailyRetriggerCap}
+                            onChange={(e) =>
+                              setConfigForm((p) => ({
+                                ...p,
+                                userDailyRetriggerCap: Math.max(0, Number(e.target.value) || 0)
+                              }))
+                            }
+                            className="w-full rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                          />
+                          <p className="text-[11px] text-stone-400 mt-1">
+                            Défaut recommandé : <strong>3</strong> relances d&apos;indexeurs / 24h glissantes.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-stone-300 font-semibold mb-1">
+                            Délai entre 2 relances d&apos;un même titre (heures)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={720}
+                            value={configForm.mediaRetriggerCooldownHours}
+                            onChange={(e) =>
+                              setConfigForm((p) => ({
+                                ...p,
+                                mediaRetriggerCooldownHours: Math.max(0, Number(e.target.value) || 0)
+                              }))
+                            }
+                            className="w-full rounded-xl bg-stone-900 border border-stone-700 px-3 py-2 text-amber-200 font-mono text-xs"
+                          />
+                          <p className="text-[11px] text-stone-400 mt-1">
+                            Défaut recommandé : <strong>12h</strong> (affiche la date de dernière relance sur la fiche).
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </form>
 
                   {/* Carte dédiée : Notifications Discord (Webhook & Domaines cochables) */}
@@ -6143,10 +6299,166 @@ export function App() {
                   <div className="font-bold text-amber-200">Garanties actives :</div>
                   <div>• Fédération Multi-Serveurs Plex (`NucVillers` + `NucBuntu` Cinéphile/4K)</div>
                   <div>• Programmation en 2 étapes avec gestion idempotente Overseerr (HTTP 409 géré)</div>
+                  <div>• Quotas anti-abus pédagogiques (Overseerr + Relances Radarr/Sonarr) & Admin No Limit</div>
                   <div>• Redaction automatique des clés API et tokens dans le Traceur API</div>
                   <div>• Synchronisation Cloudflare Access (`userType === 1` Plex uniquement) + Rollback SQLite</div>
                 </div>
               </div>
+            </div>
+
+            {/* Carte pleine largeur : Suivi des Quotas Utilisateurs & Anti-Abus (24h glissantes & 7 jours) */}
+            <div className="md:col-span-2 cinema-screen-card rounded-2xl p-6 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Ticket className="w-5 h-5 text-amber-400" />
+                    <span>Quotas & Anti-Abus Utilisateurs (Ajouts Overseerr & Relances Radarr/Sonarr)</span>
+                  </h2>
+                  <p className="text-xs sm:text-sm text-stone-400 mt-0.5">
+                    Suivi des compteurs sur 24h glissantes et 7 jours. La réinitialisation d&apos;un compteur 24h débloque immédiatement l&apos;utilisateur sans effacer l&apos;historique affiché sur les fiches films/séries.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/35 text-amber-200 font-mono">
+                    Ajouts :{' '}
+                    {(adminSettings?.actionQuotas?.dailyRequestCap ?? configForm.userDailyRequestCap) > 0
+                      ? `${adminSettings?.actionQuotas?.dailyRequestCap ?? configForm.userDailyRequestCap}/24h`
+                      : 'Illimité'}
+                  </span>
+                  <span className="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/35 text-amber-200 font-mono">
+                    Relances :{' '}
+                    {(adminSettings?.actionQuotas?.dailyRetriggerCap ?? configForm.userDailyRetriggerCap) > 0
+                      ? `${adminSettings?.actionQuotas?.dailyRetriggerCap ?? configForm.userDailyRetriggerCap}/24h`
+                      : 'Illimité'}
+                  </span>
+                  <span className="px-3 py-1 rounded-full bg-stone-900 border border-stone-700 text-stone-300 font-mono">
+                    Cooldown titre :{' '}
+                    {adminSettings?.actionQuotas?.mediaRetriggerCooldownHours ??
+                      configForm.mediaRetriggerCooldownHours}
+                    h
+                  </span>
+                  <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 font-mono">
+                    Admin : No Limit ∞
+                  </span>
+                </div>
+              </div>
+
+              {!adminSettings?.actionQuotas || adminSettings.actionQuotas.users.length === 0 ? (
+                <div className="p-4 rounded-xl bg-black/50 border border-stone-800 text-xs sm:text-sm text-stone-400">
+                  Aucune demande d&apos;ajout ou relance manuelle enregistrée sur les 7 derniers jours.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                    <thead>
+                      <tr className="border-b border-stone-800 text-stone-400 text-[11px] uppercase tracking-wider">
+                        <th className="py-2.5 px-3">Utilisateur</th>
+                        <th className="py-2.5 px-3">Statut</th>
+                        <th className="py-2.5 px-3">Demandes d&apos;ajout (24h / 7j)</th>
+                        <th className="py-2.5 px-3">Relances Indexeurs (24h / 7j)</th>
+                        <th className="py-2.5 px-3">Dernière activité</th>
+                        <th className="py-2.5 px-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/70">
+                      {adminSettings.actionQuotas.users.map((u) => {
+                        const reqCap = adminSettings.actionQuotas?.dailyRequestCap ?? configForm.userDailyRequestCap;
+                        const retCap =
+                          adminSettings.actionQuotas?.dailyRetriggerCap ?? configForm.userDailyRetriggerCap;
+                        const isReqMaxed = !u.isAdmin && reqCap > 0 && u.requestsUsed24h >= reqCap;
+                        const isRetMaxed = !u.isAdmin && retCap > 0 && u.retriggersUsed24h >= retCap;
+                        return (
+                          <tr key={u.email} className="hover:bg-stone-900/40">
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-white">{u.displayName}</div>
+                              <div className="text-[11px] text-stone-400 font-mono">{u.email}</div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {u.isAdmin ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/35">
+                                  Admin (Illimité)
+                                </span>
+                              ) : isReqMaxed || isRetMaxed ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                                  Plafond 24h atteint
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-800 text-stone-300 border border-stone-700">
+                                  Standard
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono">
+                              <span className={isReqMaxed ? 'text-rose-400 font-bold' : 'text-amber-200 font-semibold'}>
+                                {u.requestsUsed24h} / {u.isAdmin ? '∞' : reqCap > 0 ? reqCap : '∞'}
+                              </span>
+                              <span className="text-stone-500 text-xs ml-2">({u.requestsUsed7d} sur 7j)</span>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono">
+                              <span className={isRetMaxed ? 'text-rose-400 font-bold' : 'text-amber-200 font-semibold'}>
+                                {u.retriggersUsed24h} / {u.isAdmin ? '∞' : retCap > 0 ? retCap : '∞'}
+                              </span>
+                              <span className="text-stone-500 text-xs ml-2">({u.retriggersUsed7d} sur 7j)</span>
+                            </td>
+                            <td className="py-2.5 px-3 text-xs text-stone-300">
+                              {u.lastActionAt ? (
+                                <div>
+                                  <div>
+                                    {new Date(u.lastActionAt).toLocaleString('fr-FR', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </div>
+                                  {u.lastActionSummary && (
+                                    <div className="text-[11px] text-stone-400 truncate max-w-[220px]">
+                                      {u.lastActionSummary}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              {!u.isAdmin && (u.requestsUsed24h > 0 || u.retriggersUsed24h > 0) && (
+                                <button
+                                  type="button"
+                                  disabled={resettingUserQuotaEmail === u.email}
+                                  onClick={async () => {
+                                    setResettingUserQuotaEmail(u.email);
+                                    try {
+                                      const res = await fetch('/api/admin/quotas/reset-user', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ email: u.email })
+                                      });
+                                      if (res.ok) {
+                                        await fetchSettings();
+                                        await fetchSession();
+                                      }
+                                    } finally {
+                                      setResettingUserQuotaEmail(null);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-stone-900 hover:bg-stone-800 border border-amber-500/40 text-amber-200 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>
+                                    {resettingUserQuotaEmail === u.email ? 'Remise à 0...' : 'Réinitialiser 24h'}
+                                  </span>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
